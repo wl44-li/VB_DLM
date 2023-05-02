@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.13
+# v0.19.22
 
 using Markdown
 using InteractiveUtils
@@ -245,7 +245,7 @@ $Q_t = (R^{-1} - R^{-1}CΣ_tC^TR^{-1})^{-1}$
 
 $f_t = Q_tR^{-1}CΣ_tA\mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1}$
 
-N.B. compared to `Dynamic Linear Model with R` Chap 2.7.2, results above have not been simplified, this is a delibrate choice in order to get an analog with Variational Bayesian derviation next.
+N.B. Unlike `Dynamic Linear Model with R` Chap 2.7.2, results above taken from Beal's thesis have not been simplified, this is a purposeful choice in order to get an analog with the **Variational Bayesian derviation** next.
 """
 
 # ╔═╡ 59bcc9bf-276c-47e1-b6a9-86f90571c0fb
@@ -514,8 +514,18 @@ function error_metrics(true_means, smoothed_means)
     return mse, mad, mape
 end
 
+# ╔═╡ 8bd60367-2007-4d50-9d25-c12acd73be96
+md"""
+MSE, MAD, MAPE error with Kalman Filter
+"""
+
 # ╔═╡ f1cea551-4feb-44b4-a77e-03621c9b37b9
 error_metrics(x_true, x_hat)
+
+# ╔═╡ 4c8259f1-d3ae-4400-93cb-0a09b22a14ae
+md"""
+MSE, MAD, MAPE error with **Kalman smoother**
+"""
 
 # ╔═╡ a3677e9f-837b-4ba0-a29f-e60bf3712323
 let
@@ -615,7 +625,7 @@ end
 
 # ╔═╡ 9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
 md"""
-### Hyper-param learning
+### Hyper-param learning 
 
 Our prior specification involves a few hyper-parameters $\mathbf{α}, \mathbf{γ}$, and the prior parameters $Σ_0$ and $μ_0$
 
@@ -629,8 +639,9 @@ $Σ_0 = Υ_{0, 0}$
 
 $μ_0 = ω_0$
 
+(optional) ?
 The **+ve** hyperparameters $a, b$ governing the prior distribution over the output noise,
-$R = diag (\mathbf{ρ})$, are set to the fixed point of the equations [Beal Appendix C.2]:
+$R = diag (\mathbf{ρ})$, are set to the fixed point of the equations [See Beal Appendix C.2 for how to solve]:
 
 $ψ(a) = \ln b + \frac{1}{D} \sum_{s=1}^D \bar{\ln ρ_s}$
 
@@ -1757,7 +1768,7 @@ version = "1.4.1+0"
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
 # ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
-# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╟─5c221210-e1df-4015-b959-6d330b47be29
 # ╟─7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
@@ -1770,8 +1781,10 @@ version = "1.4.1+0"
 # ╟─abf89539-38db-4e7a-9dc0-94ea10372803
 # ╟─0164a3d4-7801-4bb2-95f5-8323928f1769
 # ╠═ca825009-564e-43e0-9014-cce87c46533b
-# ╠═f1cea551-4feb-44b4-a77e-03621c9b37b9
-# ╠═a3677e9f-837b-4ba0-a29f-e60bf3712323
+# ╟─8bd60367-2007-4d50-9d25-c12acd73be96
+# ╟─f1cea551-4feb-44b4-a77e-03621c9b37b9
+# ╟─4c8259f1-d3ae-4400-93cb-0a09b22a14ae
+# ╟─a3677e9f-837b-4ba0-a29f-e60bf3712323
 # ╟─c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
 # ╟─d5457335-bc65-4bf1-b6ed-796dd5e2ab69
 # ╟─14d4e0a3-8db0-4c57-bb33-497e1bd3c64c

@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.22
+# v0.19.25
 
 using Markdown
 using InteractiveUtils
@@ -158,11 +158,13 @@ The VBM Step computes the expected natural parameter: $\langle ϕ(\mathbf{θ}) \
 
 # ╔═╡ 9381e183-5b4e-489f-a109-4e606212986e
 # hidden state sufficient statistics
-struct hss
-	W_A
-	S_A
-	W_C
-	S_C
+struct HSS
+    W_A::Matrix{Float64}
+    S_A::Matrix{Float64}
+    W_C::Matrix{Float64}
+    S_C::Matrix{Float64}
+
+	# can be extended to incorporate driving input/ HSSMs
 end
 
 # ╔═╡ 45b0255d-72fd-4fa7-916a-4f73e730f4d5
@@ -170,33 +172,29 @@ end
 struct Exp_ϕ
 	A
 	AAᵀ
+	C
+	R⁻¹
 	CᵀR⁻¹C
 	R⁻¹C
-	R⁻¹
+	CᵀR⁻¹
+
+	# not sure if needed?
+	"""
 	log_det_R⁻¹
-	
 	ρ_s
 	log_ρ_s
-	CᵀR⁻¹
+	"""
 end
 
-# ╔═╡ a8b50581-e5f3-449e-803e-ab31e6e0b812
-function vb_m(ys, Λ_hp, ss::hss)
-	# infer parameter posterior q_θ(θ)
-	
-	W_A = ss.W_A
-	S_A = ss.S_A
-	W_C = ss.W_C
-	S_C = ss.S_C
-
-	# compute q(A), q(ρ), q(C|ρ)
-
-
-	# compute Exp_ϕ 
-
-	
-	# return expected natural parameters :: Exp_ϕ (for e-step)
-	
+# ╔═╡ 6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
+# hyper-prior parameters
+struct HPP
+    α::Vector{Float64}
+    γ::Vector{Float64}
+    a::Float64
+    b::Float64
+    μ_0::Vector{Float64}
+    Σ_0::Matrix{Float64}
 end
 
 # ╔═╡ 01b6b048-6bd6-4c5a-8586-066cecf3ed51
@@ -286,6 +284,9 @@ function kalman_filter(ys, A, C, R, μ₀, Σ₀)
     return μs, Σs, fs, Qs
 end
 
+# ╔═╡ 03f4f5f6-bace-42de-a9b9-32e8c0ec1b4f
+ρ = rand.(Gamma.(ones(2), 1 ./ ones(2)))
+
 # ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
 begin
 	function gen_data(A, C, R, μ_0, Σ_0, T)
@@ -323,6 +324,54 @@ begin
 	# Test the Kalman filter
 	x_hat, Px, y_hat, Py = kalman_filter(y, A, C, R, μ_0, Σ_0)
 end;
+
+# ╔═╡ a8b50581-e5f3-449e-803e-ab31e6e0b812
+# input: data, hyperprior, and e-step suff stats
+function vb_m(ys, hps::HPP, ss::HSS)
+	# infer parameter posterior q_θ(θ)
+	D, T = size(ys)
+
+	W_A = ss.W_A
+	S_A = ss.S_A
+	W_C = ss.W_C
+	S_C = ss.S_C
+
+	α = hps.α
+	γ = hps.γ
+	a = hps.a
+	b = hps.b
+
+	# compute q(A), q(ρ), q(C|ρ)
+    Σ_A = inv(diagm(α) + W_A)
+	Σ_C = inv(diagm(γ) + W_C)
+	
+	G = sum(y[:, t] * y[:, t]' for t in 1:T) - S_C * Σ_C * S_C'
+	
+	a_ = a + 0.5 * T
+    b_ = [b + 0.5 * G[i, i] for i in 1:D]
+
+	a_ρ = a_ * ones(D)
+	ρ = rand.(Gamma.(a_ρ, 1 ./ b_)) # get ρ vector (dim=D), each element is gamma distributed
+	
+	# used to recover model parameters (after convergence?)
+	"""
+	m_A = [V_A * S_A[:, j] for j in 1:K]
+    V_C = [Σ_C * ρ[s]^(-1) for s in 1:D]
+    m_C = [V_C[s] * S_C[:, s] for s in 1:D]
+	"""
+	
+	# compute Exp_ϕ (how about log_ρs and ρs ?)
+	Exp_A = S_A'*Σ_A
+	Exp_AᵀA = inv(Exp_A)*Exp_A + K*Σ_A
+	Exp_C = S_C'*Σ_C
+	Exp_R⁻¹ = diagm(mean(ρ) * ones(D))
+	Exp_CᵀR⁻¹C = Exp_C'*Exp_R⁻¹*Exp_C + D*Σ_C
+	Exp_R⁻¹C = Exp_R⁻¹*Exp_C
+	Exp_CᵀR⁻¹ = Exp_C'*Exp_R⁻¹
+	
+	# return expected natural parameters :: Exp_ϕ (for e-step)
+	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹)
+end
 
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
 let
@@ -505,7 +554,7 @@ end
 # ╔═╡ ca825009-564e-43e0-9014-cce87c46533b
 function error_metrics(true_means, smoothed_means)
     T = size(true_means, 2)
-
+	diagm
     mse = sum((true_means .- smoothed_means).^2) / T
     mad = sum(abs.(true_means .- smoothed_means)) / T
     mape = sum(abs.((true_means .- smoothed_means) ./ true_means)) / T * 100
@@ -576,7 +625,7 @@ We get **pairwise beliefs** ($\mathbf{ξ}$) as:
 $\begin{align}
 p(x_t, x_{t+1}|y_{1:T}) &\propto p(x_t|y_{1:t}) \ p(x_{t+1}|x_t)\ p(y_{t+1}|x_{t+1})\ p(y_{t+2:T}|x_{t+1}) \\
 &= α_t(x_t)\ p(x_{t+1}|x_t) \ p(y_{t+1}|x_{t+1}) \ β_{t+1}(x_{t+1}) \\
-&\xrightarrow{VB} α_t(x_t) \exp \langle \ln p(x_{t+1}|x_t) + \ln p(y_{t+1}|x_{t+1}) \rangle β_{t+1}(x_{t+1}) \\
+&\xrightarrow{VB} α_t(x_t) \ \exp \langle \ln p(x_{t+1}|x_t) + \ln p(y_{t+1}|x_{t+1}) \rangle \ β_{t+1}(x_{t+1}) \\
 &= \mathcal N(\begin{bmatrix} x_t \\ x_{t+1} \end{bmatrix}|\begin{bmatrix} ω_t \\ ω_{t+1} \end{bmatrix}, \begin{bmatrix} Υ_{t,t} \ \ Υ_{t,t+1} \\ Υ_{t,t+1}^T \ \ Υ_{t+1,t+1}\end{bmatrix})\\
 \end{align}$
 
@@ -604,7 +653,7 @@ $S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
 """
 
 # ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
-function vb_e(ys, ϕ̄ :: Exp_ϕ)
+function vb_e(ys, ϕ̄::Exp_ϕ)
 	# infer hidden state distribution q_x(x_0:T)
 
 
@@ -1764,10 +1813,12 @@ version = "1.4.1+0"
 # ╟─74482089-10fe-446b-b3f6-dc1b81b1a424
 # ╠═9381e183-5b4e-489f-a109-4e606212986e
 # ╠═45b0255d-72fd-4fa7-916a-4f73e730f4d5
+# ╠═6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
 # ╠═a8b50581-e5f3-449e-803e-ab31e6e0b812
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
 # ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
+# ╠═03f4f5f6-bace-42de-a9b9-32e8c0ec1b4f
 # ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╟─5c221210-e1df-4015-b959-6d330b47be29

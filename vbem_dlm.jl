@@ -171,14 +171,14 @@ end
 # expected natural parameters
 struct Exp_ϕ
 	A
-	AAᵀ
+	AᵀA
 	C
 	R⁻¹
 	CᵀR⁻¹C
 	R⁻¹C
 	CᵀR⁻¹
 
-	# not sure if needed?
+	# TO-DO: ELBO computation and Convergence check
 	"""
 	log_det_R⁻¹
 	ρ_s
@@ -195,6 +195,54 @@ struct HPP
     b::Float64
     μ_0::Vector{Float64}
     Σ_0::Matrix{Float64}
+end
+
+# ╔═╡ a8b50581-e5f3-449e-803e-ab31e6e0b812
+# input: data, hyperprior, and e-step suff stats
+function vb_m(ys, hps::HPP, ss::HSS)
+	# infer parameter posterior q_θ(θ)
+	D, T = size(ys)
+
+	W_A = ss.W_A
+	S_A = ss.S_A
+	W_C = ss.W_C
+	S_C = ss.S_C
+
+	α = hps.α
+	γ = hps.γ
+	a = hps.a
+	b = hps.b
+
+	# compute q(A), q(ρ), q(C|ρ)
+    Σ_A = inv(diagm(α) + W_A)
+	Σ_C = inv(diagm(γ) + W_C)
+	
+	G = sum(ys .* ys, dims=2) - S_C * Σ_C * S_C'
+	
+	a_ = a + 0.5 * T
+    b_ = [b + 0.5 * G[i, i] for i in 1:D]
+
+	a_ρ = a_ * ones(D)
+	ρ = rand.(Gamma.(a_ρ, 1 ./ b_)) # get ρ vector (dim=D), each element is gamma distributed
+	
+	# used to recover model parameters (after convergence)
+	"""
+	m_A = [V_A * S_A[:, j] for j in 1:K]
+    V_C = [Σ_C * ρ[s]^(-1) for s in 1:D]
+    m_C = [V_C[s] * S_C[:, s] for s in 1:D]
+	"""
+	
+	# compute Exp_ϕ 
+	Exp_A = S_A'*Σ_A
+	Exp_AᵀA = inv(Exp_A)*Exp_A + K*Σ_A
+	Exp_C = S_C'*Σ_C
+	Exp_R⁻¹ = diagm(mean(ρ) * ones(D))
+	Exp_CᵀR⁻¹C = Exp_C'*Exp_R⁻¹*Exp_C + D*Σ_C
+	Exp_R⁻¹C = Exp_R⁻¹*Exp_C
+	Exp_CᵀR⁻¹ = Exp_C'*Exp_R⁻¹
+	
+	# return expected natural parameters :: Exp_ϕ (for e-step)
+	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹)
 end
 
 # ╔═╡ 01b6b048-6bd6-4c5a-8586-066cecf3ed51
@@ -284,9 +332,6 @@ function kalman_filter(ys, A, C, R, μ₀, Σ₀)
     return μs, Σs, fs, Qs
 end
 
-# ╔═╡ 03f4f5f6-bace-42de-a9b9-32e8c0ec1b4f
-ρ = rand.(Gamma.(ones(2), 1 ./ ones(2)))
-
 # ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
 begin
 	function gen_data(A, C, R, μ_0, Σ_0, T)
@@ -324,54 +369,6 @@ begin
 	# Test the Kalman filter
 	x_hat, Px, y_hat, Py = kalman_filter(y, A, C, R, μ_0, Σ_0)
 end;
-
-# ╔═╡ a8b50581-e5f3-449e-803e-ab31e6e0b812
-# input: data, hyperprior, and e-step suff stats
-function vb_m(ys, hps::HPP, ss::HSS)
-	# infer parameter posterior q_θ(θ)
-	D, T = size(ys)
-
-	W_A = ss.W_A
-	S_A = ss.S_A
-	W_C = ss.W_C
-	S_C = ss.S_C
-
-	α = hps.α
-	γ = hps.γ
-	a = hps.a
-	b = hps.b
-
-	# compute q(A), q(ρ), q(C|ρ)
-    Σ_A = inv(diagm(α) + W_A)
-	Σ_C = inv(diagm(γ) + W_C)
-	
-	G = sum(y[:, t] * y[:, t]' for t in 1:T) - S_C * Σ_C * S_C'
-	
-	a_ = a + 0.5 * T
-    b_ = [b + 0.5 * G[i, i] for i in 1:D]
-
-	a_ρ = a_ * ones(D)
-	ρ = rand.(Gamma.(a_ρ, 1 ./ b_)) # get ρ vector (dim=D), each element is gamma distributed
-	
-	# used to recover model parameters (after convergence?)
-	"""
-	m_A = [V_A * S_A[:, j] for j in 1:K]
-    V_C = [Σ_C * ρ[s]^(-1) for s in 1:D]
-    m_C = [V_C[s] * S_C[:, s] for s in 1:D]
-	"""
-	
-	# compute Exp_ϕ (how about log_ρs and ρs ?)
-	Exp_A = S_A'*Σ_A
-	Exp_AᵀA = inv(Exp_A)*Exp_A + K*Σ_A
-	Exp_C = S_C'*Σ_C
-	Exp_R⁻¹ = diagm(mean(ρ) * ones(D))
-	Exp_CᵀR⁻¹C = Exp_C'*Exp_R⁻¹*Exp_C + D*Σ_C
-	Exp_R⁻¹C = Exp_R⁻¹*Exp_C
-	Exp_CᵀR⁻¹ = Exp_C'*Exp_R⁻¹
-	
-	# return expected natural parameters :: Exp_ϕ (for e-step)
-	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹)
-end
 
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
 let
@@ -440,6 +437,40 @@ $μ_t = Σ_t (\langle C^TR^{-1} \rangle y_t + \langle A \rangle \mathbf{Σ^*}Σ_
 where $t = \{1, ... T\}$
 """
 
+# ╔═╡ cb1a9949-59e1-4ccb-8efc-aa2ffbadaab2
+function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
+    D, T = size(ys)
+    K = size(exp_np.A, 1)
+
+    μs = zeros(K, T)
+    Σs = zeros(K, K, T)
+
+	# TO-DO: for ELBO and convergence check
+	#Qs = zeros(D, D, T)
+	#fs = zeros(D, T)
+
+	# Extract μ_0 and Σ_0 from the HPP struct
+    μ_0 = hpp.μ_0
+    Σ_0 = hpp.Σ_0
+
+	# initialise for t=1
+	Σ₀_ = inv(inv(Σ₀) + exp_np.AᵀA)
+	
+    Σs[:, :, 1] = inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σ₀_*exp_np.A')
+    μs[:, 1] = Σs[:, :, 1]*(exp_np.CᵀR⁻¹*ys[:, 1] + exp_np.A*Σ₀_*inv(Σ₀)μ₀)
+
+	# iterate over T
+	for t in 2:T
+		Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + exp_np.AᵀA)
+		
+		Σs[:, :, t] = inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σₜ₋₁_*exp_np.A')
+    	μs[:, t] = Σs[:, :, t]*(exp_np.CᵀR⁻¹*ys[:, t] + exp_np.A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
+
+	end
+
+	return μs, Σs
+end
+
 # ╔═╡ c417e618-41c2-454c-9b27-470988215d48
 md"""
 Aside, **Point-parameter** Parallel Smoother
@@ -470,37 +501,9 @@ $η_{t-1} = Ψ_{t-1}A^T\mathbf{Ψ_t^*}(C^TR^{-1}y_t + Ψ_t^{-1}η_t)$
 
 """
 
-# ╔═╡ 8950aa50-22b2-4299-83b2-b9abfd1d5303
-function parallel_backward(A, C, R, y)
-	D, T = size(y)
-	K = size(A, 1)
-
-	ηs = zeros(K, T)
-    Ψs = zeros(K, K, T)
-
-    # Initialize the filter, t=T
-    Ψs[:, :, T] = zeros(K, K)
-    ηs[:, T] = ones(K)
-
-	Ψₜ₊₁ = inv(I + C'inv(R)C)
-	
-	Ψs[:, :, T-1] = inv(A'A - A'*Ψₜ₊₁*A)
-	ηs[:, T-1] = Ψs[:, :, T-1]*A'Ψₜ₊₁*C'inv(R)y[:, T]
-
-	
-	for t in (T - 2):-1:1
-		
-		Ψₜ₊₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, t+1]))
-		
-		Ψs[:, :, t] = inv(A'A - A'*Ψₜ₊₁*A)
-		ηs[:, t] = Ψs[:, :, t]A'Ψₜ₊₁*(C'inv(R)y[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
-	end
-	
-	return ηs, Ψs
-end
-
 # ╔═╡ 96ff4afb-fe7f-471a-b15e-26676c600090
-# combine forward (kalman-filter) and backward (parallel)
+# combine forward (kalman-filter) and backward pass
+# compute the marginals (REUSE)
 function parallel_smoother(μs, Σs, ηs, Ψs)
 	K, T = size(μs)
 
@@ -517,38 +520,6 @@ function parallel_smoother(μs, Σs, ηs, Ψs)
 	end
 
 	return ωs, Υs
-end
-
-# ╔═╡ 9b85ce96-4a7e-4418-881c-e3f54445eab1
-let
-	ηs, Ψs = parallel_backward(A, C, R, y)
-	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
-
-	T = size(y, 2)
-	p1 = plot(1:T, x_true[1, :], label="True xs[1]", linewidth=2)
-	plot!(1:T, x_hat[1, :], label="Filtered xs[1]", linewidth=2, linestyle=:dash)
-	plot!(1:T, ωs[1, :], label="Smoothed xs[1]", linewidth=2, linestyle=:dash)
-end
-
-# ╔═╡ abf89539-38db-4e7a-9dc0-94ea10372803
-let
-	ηs, Ψs = parallel_backward(A, C, R, y)
-	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
-
-	T = size(y, 2)
-	p1 = plot(1:T, x_true[2, :], label="True xs[2]", linewidth=2)
-	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
-	plot!(1:T, ωs[2, :], label="Smoothed xs[2]", linewidth=2, linestyle=:dash)
-end
-
-# ╔═╡ 0164a3d4-7801-4bb2-95f5-8323928f1769
-let
-	ηs, Ψs = parallel_backward(A, C, R, y)
-	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
-
-	T = size(y, 2)
-	p2 = plot(1:T, ωs[2, :], label="Smoothed xs[2]", linewidth=2)
-	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
 end
 
 # ╔═╡ ca825009-564e-43e0-9014-cce87c46533b
@@ -576,13 +547,6 @@ md"""
 MSE, MAD, MAPE error with **Kalman smoother**
 """
 
-# ╔═╡ a3677e9f-837b-4ba0-a29f-e60bf3712323
-let
-	ηs, Ψs = parallel_backward(A, C, R, y)
-	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
-	error_metrics(x_true, ωs) #lower error compared to filtered xs
-end
-
 # ╔═╡ c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
 md"""
 ### Backward recursion (smoothing)
@@ -600,6 +564,128 @@ $η_{t-1} = Ψ_{t-1} \langle A \rangle^T \mathbf{Ψ_t^*}(\langle C^TR^{-1} \rang
 
 where, $t = \{T, ..., 1\}$
 """
+
+# ╔═╡ 8950aa50-22b2-4299-83b2-b9abfd1d5303
+function parallel_backward(A, C, R, y)
+	D, T = size(y)
+	K = size(A, 1)
+
+	ηs = zeros(K, T)
+    Ψs = zeros(K, K, T)
+
+    # Initialize the filter, t=T
+    Ψs[:, :, T] = zeros(K, K)
+    ηs[:, T] = ones(K)
+
+	Ψₜ₊₁ = inv(I + C'inv(R)C)
+	
+	Ψs[:, :, T-1] = inv(A'A - A'*Ψₜ₊₁*A)
+	ηs[:, T-1] = Ψs[:, :, T-1]*A'Ψₜ₊₁*C'inv(R)y[:, T]
+
+	for t in (T - 2):-1:1
+		
+		Ψₜ₊₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, t+1]))
+		
+		Ψs[:, :, t] = inv(A'A - A'*Ψₜ₊₁*A)
+		ηs[:, t] = Ψs[:, :, t]A'Ψₜ₊₁*(C'inv(R)y[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
+	end
+	
+	return ηs, Ψs
+end
+
+# ╔═╡ 13d8eec6-c419-4102-ba34-c15a53261d2d
+let 
+	ηs, Ψs = parallel_backward(A, C, R, y)
+end
+
+# ╔═╡ a3677e9f-837b-4ba0-a29f-e60bf3712323
+let
+	ηs, Ψs = parallel_backward(A, C, R, y)
+	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
+	error_metrics(x_true, ωs) #lower error compared to filtered xs
+end
+
+# ╔═╡ cab38477-d81b-4f06-ba2d-7b59f1aa357a
+# from t=T-1 to 0
+function p_backward(y, A, C, R, μ₀, Σ₀)
+	D, T = size(y)
+	K = size(A, 1)
+
+	ηs = zeros(K, T)
+    Ψs = zeros(K, K, T)
+
+	Ψₜ₊₁ = inv(I + C'inv(R)C)
+	
+	# t = T, this should correspond to β(x_T-1)
+	Ψs[:, :, T] = inv(A'A - A'*Ψₜ₊₁*A)
+	ηs[:, T] = Ψs[:, :, T]*A'*Ψₜ₊₁*C'inv(R)*y[:, T]
+
+	for t in T:-1:2 # β(x_T-2) to  β(x_1)
+		Ψₜ = inv(I + C'inv(R)C + inv(Ψs[:, :, t]))
+		
+		Ψs[:, :, t-1] = inv(A'A - A'*Ψₜ*A)
+		ηs[:, t-1] = Ψs[:, :, t-1]*A'*Ψₜ*(C'inv(R)*y[:, t] + inv(Ψs[:, :, t])ηs[:, t])
+	end
+
+	# for t=1, this correspond to β(x_0)
+	Ψ₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, 1]))
+		
+	Ψs[:, :, 1] = inv(A'A - A'*Ψ₁*A)
+	ηs[:, 1] = Ψs[:, :, 1]*A'Ψ₁*(C'inv(R)y[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
+	
+	return ηs, Ψs
+end
+
+# ╔═╡ d3a8beaf-b84c-415c-82a2-fdfbd72f4cb5
+let
+	ηs, Ψs = p_backward(y, A, C, R, μ_0, Σ_0)
+end
+
+# ╔═╡ 0164a3d4-7801-4bb2-95f5-8323928f1769
+let
+	ηs, Ψs = p_backward(y, A, C, R, μ_0, Σ_0)
+	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
+
+	T = size(y, 2)
+	p2 = plot(1:T, ωs[2, :], label="Smoothed xs[2]", linewidth=2)
+	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
+end
+
+# ╔═╡ d05b4847-99ac-4194-8e11-58996112203d
+let
+	ηs, Ψs = p_backward(y, A, C, R, μ_0, Σ_0)
+	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
+	error_metrics(x_true, ωs) #lower error compared to filtered xs
+end
+
+# ╔═╡ 8cb62a79-7dbc-4c94-ae7b-2e2cc12764f4
+function v_backward(ys::Matrix{Float64}, exp_np::Exp_ϕ)
+    D, T = size(ys)
+    K = size(exp_np.A, 1)
+
+	ηs = zeros(K, T)
+    Ψs = zeros(K, K, T)
+
+    # Initialize the filter, t=T, β(x_T-1)
+	Ψₜ₊₁ = inv(I + exp_np.CᵀR⁻¹C)
+	Ψs[:, :, T] = inv(exp_np.AᵀA - exp_np.A'*Ψₜ₊₁*exp_np.A)
+	ηs[:, T] = Ψs[:, :, T]*exp_np.A'*Ψₜ₊₁*exp_np.CᵀR⁻¹*ys[:, T]
+	
+	for t in T:-1:2
+		Ψₜ = inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, t]))
+		
+		Ψs[:, :, t-1] = inv(exp_np.AᵀA - exp_np.A'*Ψₜ*exp_np.A)
+		ηs[:, t-1] = Ψs[:, :, t-1]*exp_np.A'*Ψₜ*(exp_np.CᵀR⁻¹*ys[:, t] + inv(Ψs[:, :, t])ηs[:, t])
+	end
+
+	# for t=1, this correspond to β(x_0)
+	Ψ₁ = inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, 1]))
+		
+	Ψs[:, :, 1] = inv(exp_np.AᵀA - exp_np.A'*Ψ₁*exp_np.A)
+	ηs[:, 1] = Ψs[:, :, 1]*exp_np.A'Ψ₁*(exp_np.CᵀR⁻¹*ys[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
+	
+	return ηs, Ψs
+end
 
 # ╔═╡ d5457335-bc65-4bf1-b6ed-796dd5e2ab69
 md"""
@@ -653,15 +739,14 @@ $S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
 """
 
 # ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
-function vb_e(ys, ϕ̄::Exp_ϕ)
-	# infer hidden state distribution q_x(x_0:T)
-
+# infer hidden state distribution q_x(x_0:T)
+function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
 
 	# compute forward pass α_t(x_t)
-
+	μs, Σs = v_forward(ys, exp_np, hpp)
 
 	# compute backward pass β_t(x_t)
-
+	ηs, Ψs = v_backward(ys, exp_np)
 
 	# compute marginal, pairwise beliefs 
 
@@ -1818,25 +1903,28 @@ version = "1.4.1+0"
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
 # ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
-# ╠═03f4f5f6-bace-42de-a9b9-32e8c0ec1b4f
 # ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╟─5c221210-e1df-4015-b959-6d330b47be29
 # ╟─7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
 # ╟─e02d0dd5-6bab-4548-8bbe-d9b1759688c5
 # ╟─781d041c-1e4d-4354-b240-12511207bde0
+# ╠═cb1a9949-59e1-4ccb-8efc-aa2ffbadaab2
 # ╟─c417e618-41c2-454c-9b27-470988215d48
-# ╠═8950aa50-22b2-4299-83b2-b9abfd1d5303
+# ╠═13d8eec6-c419-4102-ba34-c15a53261d2d
+# ╠═d3a8beaf-b84c-415c-82a2-fdfbd72f4cb5
 # ╠═96ff4afb-fe7f-471a-b15e-26676c600090
-# ╟─9b85ce96-4a7e-4418-881c-e3f54445eab1
-# ╟─abf89539-38db-4e7a-9dc0-94ea10372803
-# ╟─0164a3d4-7801-4bb2-95f5-8323928f1769
-# ╠═ca825009-564e-43e0-9014-cce87c46533b
+# ╠═0164a3d4-7801-4bb2-95f5-8323928f1769
+# ╟─ca825009-564e-43e0-9014-cce87c46533b
 # ╟─8bd60367-2007-4d50-9d25-c12acd73be96
 # ╟─f1cea551-4feb-44b4-a77e-03621c9b37b9
 # ╟─4c8259f1-d3ae-4400-93cb-0a09b22a14ae
 # ╟─a3677e9f-837b-4ba0-a29f-e60bf3712323
+# ╠═d05b4847-99ac-4194-8e11-58996112203d
 # ╟─c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
+# ╟─8950aa50-22b2-4299-83b2-b9abfd1d5303
+# ╠═cab38477-d81b-4f06-ba2d-7b59f1aa357a
+# ╠═8cb62a79-7dbc-4c94-ae7b-2e2cc12764f4
 # ╟─d5457335-bc65-4bf1-b6ed-796dd5e2ab69
 # ╟─14d4e0a3-8db0-4c57-bb33-497e1bd3c64c
 # ╟─6749ddf8-633b-498e-aecb-9e1592050ed2

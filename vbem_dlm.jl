@@ -444,7 +444,7 @@ function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
 
     μs = zeros(K, T)
     Σs = zeros(K, K, T)
-
+	Σs_ = zeros(K, K, T)
 	# TO-DO: for ELBO and convergence check
 	#Qs = zeros(D, D, T)
 	#fs = zeros(D, T)
@@ -455,6 +455,7 @@ function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
 
 	# initialise for t=1
 	Σ₀_ = inv(inv(Σ_0) + exp_np.AᵀA)
+	Σs_[:, :, 1] = Σ₀_
 	
     Σs[:, :, 1] = inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σ₀_*exp_np.A')
     μs[:, 1] = Σs[:, :, 1]*(exp_np.CᵀR⁻¹*ys[:, 1] + exp_np.A*Σ₀_*inv(Σ_0)μ_0)
@@ -462,13 +463,14 @@ function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
 	# iterate over T
 	for t in 2:T
 		Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + exp_np.AᵀA)
+		Σs_[:, :, t] = Σₜ₋₁
 		
 		Σs[:, :, t] = inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σₜ₋₁_*exp_np.A')
     	μs[:, t] = Σs[:, :, t]*(exp_np.CᵀR⁻¹*ys[:, t] + exp_np.A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
 
 	end
 
-	return μs, Σs
+	return μs, Σs, Σs_
 end
 
 # ╔═╡ c417e618-41c2-454c-9b27-470988215d48
@@ -502,7 +504,7 @@ $η_{t-1} = Ψ_{t-1}A^T\mathbf{Ψ_t^*}(C^TR^{-1}y_t + Ψ_t^{-1}η_t)$
 """
 
 # ╔═╡ 96ff4afb-fe7f-471a-b15e-26676c600090
-# combine forward (kalman-filter) and backward pass (parallel)
+# combine forward and backward pass
 # compute the marginals (REUSE - for variational bayesian)
 function parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
 	K, T = size(μs)
@@ -607,36 +609,6 @@ let
 	error_metrics(x_true, ωs) #lower error compared to filtered xs
 end
 
-# ╔═╡ cab38477-d81b-4f06-ba2d-7b59f1aa357a
-function p_backward(y, A, C, R, μ₀, Σ₀)
-	D, T = size(y)
-	K = size(A, 1)
-
-	ηs = zeros(K, T)
-    Ψs = zeros(K, K, T)
-
-	Ψₜ₊₁ = inv(I + C'inv(R)C)
-	
-	# t = T, this should correspond to β(x_T-1)
-	Ψs[:, :, T] = inv(A'A - A'*Ψₜ₊₁*A)
-	ηs[:, T] = Ψs[:, :, T]*A'*Ψₜ₊₁*C'inv(R)*y[:, T]
-
-	for t in T:-1:2 # β(x_T-2) to β(x_1)
-		Ψₜ = inv(I + C'inv(R)C + inv(Ψs[:, :, t]))
-		
-		Ψs[:, :, t-1] = inv(A'A - A'*Ψₜ*A)
-		ηs[:, t-1] = Ψs[:, :, t-1]*A'*Ψₜ*(C'inv(R)*y[:, t] + inv(Ψs[:, :, t])ηs[:, t])
-	end
-
-	# for t=1, this correspond to β(x_0), the probability of all the data given the setting of the auxiliary x_0 variable.
-	Ψ₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, 1]))
-		
-	Ψ_0 = inv(A'A - A'*Ψ₁*A)
-	η_0 = Ψs[:, :, 1]*A'Ψ₁*(C'inv(R)y[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
-	
-	return ηs, Ψs, η_0, Ψ_0
-end
-
 # ╔═╡ 8cb62a79-7dbc-4c94-ae7b-2e2cc12764f4
 function v_backward(ys::Matrix{Float64}, exp_np::Exp_ϕ)
     D, T = size(ys)
@@ -707,6 +679,24 @@ In summary, VBE Step consists of a forward pass (α_messages) and a backward pas
 N.B. **calculating marginals straight after each $β_t(x_t)$ could be more efficient**
 """
 
+# ╔═╡ c1640ff6-3047-42a5-a5cd-d0c77aa41179
+function pairwise_x(Σs_, exp_np::Exp_ϕ, Ψs)
+	T = size(Σs_, 3)
+    K = size(exp_np.A, 1)
+
+	# cross-covariance is then computed for all time steps t = {0, . . . , T − 1}
+	Υ_ₜ₋ₜ₊₁ = zeros(K, K, T)
+	
+	for t in 1:T-1
+		Υ_ₜ₋ₜ₊₁[:, :, t+1] = Σs_[:, :, t+1]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, t+1]) - exp_np.A*Σs_[:, :, t+1]*exp_np.A')
+	end
+
+	# t=0, the cross-covariance between the zeroth and first hidden states.
+	Υ_ₜ₋ₜ₊₁[:, :, 1] = Σs_[:, :, 1]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, 1]) - exp_np.A*Σs_[:, :, 1]*exp_np.A')
+	
+	return Υ_ₜ₋ₜ₊₁
+end
+
 # ╔═╡ 6749ddf8-633b-498e-aecb-9e1592050ed2
 md"""
 ### Expected sufficient statistics $W_A, S_A, W_C, S_C$
@@ -725,18 +715,27 @@ $S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
 function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
 
 	# compute forward pass α_t(x_t)
-	μs, Σs = v_forward(ys, exp_np, hpp)
+	μs, Σs, Σs_ = v_forward(ys, exp_np, hpp)
 
 	# compute backward pass β_t(x_t)
 	ηs, Ψs, η₀, Ψ₀ = v_backward(ys, exp_np)
 
-	# compute marginal, pairwise beliefs 
+	# compute marginal (Smoothed) means, covs, and pairwise beliefs 
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η₀, Ψ₀, hpp.μ_0, hpp.Σ_0)
 
-
+	Υ_ₜ₋ₜ₊₁ = pairwise_x(Σs_, exp_np, Ψs)
+	
 	# compute hidden state sufficient stats hss
+	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
+	W_A += Υ_0 + ω_0*ω_0'
 
-
-	# return hss (for m-step)
+	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
+	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
+	
+	W_C = sum(Υs[:,:,t] + ωs[:,t] * ωs[:,t]' for t in 1:T)
+	S_C = sum(ωs[:,t] * ys[:,t]' for t in 1:T)
+	
+	return HSS(W_A, S_A, W_C, S_C)
 end
 
 # ╔═╡ 9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
@@ -1885,7 +1884,7 @@ version = "1.4.1+0"
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
 # ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
-# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╟─5c221210-e1df-4015-b959-6d330b47be29
 # ╟─7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
@@ -1901,10 +1900,10 @@ version = "1.4.1+0"
 # ╟─a3677e9f-837b-4ba0-a29f-e60bf3712323
 # ╟─c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
 # ╠═8950aa50-22b2-4299-83b2-b9abfd1d5303
-# ╟─cab38477-d81b-4f06-ba2d-7b59f1aa357a
 # ╠═8cb62a79-7dbc-4c94-ae7b-2e2cc12764f4
 # ╟─d5457335-bc65-4bf1-b6ed-796dd5e2ab69
 # ╟─14d4e0a3-8db0-4c57-bb33-497e1bd3c64c
+# ╠═c1640ff6-3047-42a5-a5cd-d0c77aa41179
 # ╟─6749ddf8-633b-498e-aecb-9e1592050ed2
 # ╠═fbc24a7c-48a0-43cc-9dd2-440acfb41c39
 # ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f

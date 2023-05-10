@@ -536,16 +536,38 @@ $W_C = \sum_{t=1}^T \langle x_t x_t^T \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_
 $S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
 """
 
+# ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
+# infer hidden state distribution q_x(x_0:T)
+function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
+    _, T = size(ys)
+	# compute forward pass α_t(x_t)
+	μs, Σs, Σs_ = v_forward(ys, exp_np, hpp)
+
+	# compute backward pass β_t(x_t)
+	ηs, Ψs, η₀, Ψ₀ = v_backward(ys, exp_np)
+
+	# compute marginal (Smoothed) means, covs, and pairwise beliefs 
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η₀, Ψ₀, hpp.μ_0, hpp.Σ_0)
+
+	Υ_ₜ₋ₜ₊₁ = v_pairwise_x(Σs_, exp_np, Ψs)
+	
+	# compute hidden state sufficient stats hss
+	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
+	W_A += Υ_0 + ω_0*ω_0'
+
+	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
+	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
+	
+	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
+	S_C = sum(ωs[:, t] * ys[:, t]' for t in 1:T)
+	
+	return HSS(W_A, S_A, W_C, S_C)
+end
+
 # ╔═╡ a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
 md"""
 Testing E-step
 """
-
-# ╔═╡ 1902c1f1-1246-4ab3-88e6-35619d685cdd
-function vb_dlm(ys::Matrix{Float64}, hpp::HPP)
-
-
-end
 
 # ╔═╡ 9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
 md"""
@@ -571,6 +593,59 @@ $R = diag (\mathbf{ρ})$, are set to the fixed point of the equations [See Beal 
 $ψ(a) = \ln b + \frac{1}{D} \sum_{s=1}^D \bar{\ln ρ_s}$
 
 $\frac{1}{b} = \frac{1}{D \times a} \sum_{s=1}^D \bar{ρ_s}$
+
+**TO-DO**: 
+These are also updated during learning, note for a valid gamma distribution, both a and b needs to be positive! 
+"""
+
+# ╔═╡ b0b1f14d-4fbd-4995-845f-f19990460329
+md"""
+## VB DLM
+"""
+
+# ╔═╡ 1902c1f1-1246-4ab3-88e6-35619d685cdd
+function vb_dlm(ys::Matrix{Float64}, hpp::HPP, max_iter=100)
+	D, T = size(ys)
+	K = length(hpp.α)
+	
+	Random.seed!(123)
+
+	# specify initial hidden state suff stats
+	W_A = rand(K, K)
+	S_A = rand(K, K)
+	W_C = rand(K, K)
+	S_C = rand(K, D)
+	
+	hss = HSS(W_A, S_A, W_C, S_C)
+	exp_np = missing
+
+	# debug: Need to update hyperparameter struct after vb_m
+	for i in 1:max_iter
+
+		""" current error: positivity constraint broken for gamma prior (a, b)
+		try		
+			exp_np = vb_m(ys, hpp, hss)
+			hss = vb_e(ys, exp_np, hpp)
+		catch e
+			println(i)
+			println(e)
+			println(exp_np)
+			break
+		end
+		"""
+	end
+
+	return exp_np
+end
+
+# ╔═╡ 3c63b27b-76e3-4edc-9b56-345738b97c41
+md"""
+Ground truth values of DLM parameters
+"""
+
+# ╔═╡ dc2c58de-98b9-4621-b465-064e8ab3caf1
+md"""
+Result from VB treatment
 """
 
 # ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
@@ -583,10 +658,9 @@ md"""
 function kalman_filter(ys, A, C, R, μ₀, Σ₀)
     D, T = size(ys)
     K = size(A, 1)
-
+	
     μs = zeros(K, T)
     Σs = zeros(K, K, T)
-
 	Σs_ = zeros(K, K, T)
 	Qs = zeros(D, D, T)
 	fs = zeros(D, T)
@@ -607,7 +681,6 @@ function kalman_filter(ys, A, C, R, μ₀, Σ₀)
 		Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + A'A)
 		Σs_[:, :, 1] = Σₜ₋₁_
 
-		
         Σs[:, :, t] = inv(I + C'inv(R)C - A*Σₜ₋₁_*A')
 		μs[:, t] = Σs[:, :, t]*(C'inv(R)ys[:, t] + A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
 
@@ -621,44 +694,11 @@ function kalman_filter(ys, A, C, R, μ₀, Σ₀)
     return μs, Σs, fs, Qs, Σs_
 end
 
-# ╔═╡ 8950aa50-22b2-4299-83b2-b9abfd1d5303
-# from t=T-1 to 0, point-parameter approach cf. Beal pg 180
-function parallel_backward(y, A, C, R)
-	D, T = size(y)
-	K = size(A, 1)
-
-	ηs = zeros(K, T)
-    Ψs = zeros(K, K, T)
-
-    # Initialize the filter, t=T
-    Ψs[:, :, T] = zeros(K, K)
-    ηs[:, T] = ones(K)
-
-	Ψₜ = inv(I + C'inv(R)C)
-	
-	Ψs[:, :, T-1] = inv(A'A - A'*Ψₜ*A)
-	ηs[:, T-1] = Ψs[:, :, T-1]*A'*Ψₜ*C'inv(R)y[:, T]
-
-	for t in (T - 2):-1:1
-		Ψₜ₊₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, t+1]))
-		
-		Ψs[:, :, t] = inv(A'A - A'*Ψₜ₊₁*A)
-		ηs[:, t] = Ψs[:, :, t]*A'*Ψₜ₊₁*(C'inv(R)y[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
-	end
-
-	Ψ₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, 1]))
-	Ψ_0 = inv(A'A - A'*Ψ₁*A)
-	η_0 = Ψs[:, :, 1]*A'Ψ₁*(C'inv(R)y[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
-	
-	return ηs, Ψs, η_0, Ψ_0
-end
-
 # ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
 begin
 	function gen_data(A, C, R, μ_0, Σ_0, T)
 	    K, _ = size(A)
 	    D, _ = size(C)
-	    
 	    x = zeros(K, T)
 	    y = zeros(D, T)
 	
@@ -673,51 +713,51 @@ begin
 	    return y, x
 	end
 	
-	# Parameters for the toy dataset
+	# Ground truth values
 	A = [0.8 -0.1; 0.1 0.9]
 	C = [1.0 0.0; 0.0 1.0]
 	
 	R = Diagonal([0.1, 0.1]) # prefer small R to get better filtered accuracy, c.f signal to noise ratio (DLM with R Chap 2)
 	
 	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([0.5, 0.5])
-	T = 50
+	Σ_0 = Diagonal([1, 1])
+	T = 5000
 	
 	# Generate the toy dataset
-	Random.seed!(123)
+	Random.seed!(100)
 	y, x_true = gen_data(A, C, R, μ_0, Σ_0, T)
 	
 	# Test the Kalman filter
 	x_hat, Px, y_hat, Py, _ = kalman_filter(y, A, C, R, μ_0, Σ_0)
 end;
 
-# ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
-# infer hidden state distribution q_x(x_0:T)
-function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
+# ╔═╡ 003cf83b-1c92-4368-970b-5e02f79ed699
+A, C, R
 
-	# compute forward pass α_t(x_t)
-	μs, Σs, Σs_ = v_forward(ys, exp_np, hpp)
-
-	# compute backward pass β_t(x_t)
-	ηs, Ψs, η₀, Ψ₀ = v_backward(ys, exp_np)
-
-	# compute marginal (Smoothed) means, covs, and pairwise beliefs 
-	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η₀, Ψ₀, hpp.μ_0, hpp.Σ_0)
-
-	Υ_ₜ₋ₜ₊₁ = v_pairwise_x(Σs_, exp_np, Ψs)
+# ╔═╡ 079cd7ef-632d-41d0-866d-6678808a8f4c
+# ╠═╡ disabled = true
+#=╠═╡
+let
+	K = size(A, 1)
+	D = size(y, 1)
 	
-	# compute hidden state sufficient stats hss
-	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
-	W_A += Υ_0 + ω_0*ω_0'
+	# specify priors hpp
+	α = ones(K)
+	γ = ones(D)
+	a = 1.0
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
 
-	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
-	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
-	
-	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
-	S_C = sum(ωs[:, t] * ys[:, t]' for t in 1:T)
-	
-	return HSS(W_A, S_A, W_C, S_C)
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	# incomplete
+	vb_dlm(y, hpp, 5)
 end
+  ╠═╡ =#
+
+# ╔═╡ 1a129b6f-74f0-404c-ae4f-3ae39c8431aa
+y
 
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
 let
@@ -753,6 +793,38 @@ let
 
 	p2 = plot(1:T, y[2, :], label="True y[2]", linewidth=2)
 	plot!(1:T, y_hat[2, :], label="Filtered y[2]", linewidth=2, linestyle=:dash)
+end
+
+# ╔═╡ 8950aa50-22b2-4299-83b2-b9abfd1d5303
+# from t=T-1 to 0, point-parameter approach cf. Beal pg 180
+function parallel_backward(y, A, C, R)
+	D, T = size(y)
+	K = size(A, 1)
+
+	ηs = zeros(K, T)
+    Ψs = zeros(K, K, T)
+
+    # Initialize the filter, t=T
+    Ψs[:, :, T] = zeros(K, K)
+    ηs[:, T] = ones(K)
+
+	Ψₜ = inv(I + C'inv(R)C)
+	
+	Ψs[:, :, T-1] = inv(A'A - A'*Ψₜ*A)
+	ηs[:, T-1] = Ψs[:, :, T-1]*A'*Ψₜ*C'inv(R)y[:, T]
+
+	for t in (T - 2):-1:1
+		Ψₜ₊₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, t+1]))
+		
+		Ψs[:, :, t] = inv(A'A - A'*Ψₜ₊₁*A)
+		ηs[:, t] = Ψs[:, :, t]*A'*Ψₜ₊₁*(C'inv(R)y[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
+	end
+
+	Ψ₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, 1]))
+	Ψ_0 = inv(A'A - A'*Ψ₁*A)
+	η_0 = Ψs[:, :, 1]*A'Ψ₁*(C'inv(R)y[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
+	
+	return ηs, Ψs, η_0, Ψ_0
 end
 
 # ╔═╡ 30502079-9684-4144-8bcd-a70f2cb5928a
@@ -802,7 +874,6 @@ let
 	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
 	
 	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
-	
 	S_C = sum(ωs[:, t] * y[:, t]' for t in 1:T)
 
 	hss = HSS(W_A, S_A, W_C, S_C)
@@ -818,7 +889,7 @@ let
 
 	# should recover close to true values of A, C, R
 	exp_np = vb_m(y, hpp, hss)
-end;
+end
 
 # ╔═╡ 8a73d154-236d-4660-bb21-24681ed7d315
 let
@@ -864,7 +935,6 @@ end
 # ╔═╡ ca825009-564e-43e0-9014-cce87c46533b
 function error_metrics(true_means, smoothed_means)
     T = size(true_means, 2)
-	diagm
     mse = sum((true_means .- smoothed_means).^2) / T
     mad = sum(abs.(true_means .- smoothed_means)) / T
     mape = sum(abs.((true_means .- smoothed_means) ./ true_means)) / T * 100
@@ -888,7 +958,7 @@ MSE, MAD, MAPE error with **Kalman smoother**
 
 # ╔═╡ a3677e9f-837b-4ba0-a29f-e60bf3712323
 let
-	ηs, Ψs , η_0 , Ψ_0 = parallel_backward(y, A, C, R)
+	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
 	ωs, Υs, ω_0, Υ_0 = parallel_smoother(x_hat, Px, ηs, Ψs, η_0 , Ψ_0, μ_0, Σ_0)
 	error_metrics(x_true, ωs) #lower error compared to filtered xs
 end
@@ -2028,16 +2098,22 @@ version = "1.4.1+0"
 # ╠═fbc24a7c-48a0-43cc-9dd2-440acfb41c39
 # ╟─a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
 # ╠═8a73d154-236d-4660-bb21-24681ed7d315
-# ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
 # ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
+# ╟─b0b1f14d-4fbd-4995-845f-f19990460329
+# ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
+# ╟─3c63b27b-76e3-4edc-9b56-345738b97c41
+# ╠═003cf83b-1c92-4368-970b-5e02f79ed699
+# ╟─dc2c58de-98b9-4621-b465-064e8ab3caf1
+# ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
+# ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa
+# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
 # ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╟─5c221210-e1df-4015-b959-6d330b47be29
 # ╟─7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
 # ╟─e02d0dd5-6bab-4548-8bbe-d9b1759688c5
 # ╠═8950aa50-22b2-4299-83b2-b9abfd1d5303
-# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╠═30502079-9684-4144-8bcd-a70f2cb5928a
 # ╠═ca825009-564e-43e0-9014-cce87c46533b
 # ╟─8bd60367-2007-4d50-9d25-c12acd73be96

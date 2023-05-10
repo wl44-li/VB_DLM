@@ -145,13 +145,13 @@ $q(C|\mathbf{ρ}) = \prod_{s=1}^D \mathcal N(c_s|Λ_C^{-1} S_{C, s}, \ ρ_s^{-1}
 
 where $Λ_C = diag(\mathbf{γ}) + W_C$, $S_{C,s}$ is the sth column of matrix $S_C$,
 
-$G = \sum_{t=1}^T y_t y_t^T - S_C Λ_C^{-1} S_C$
+$G = \sum_{t=1}^T y_t y_t^T - S_C^T Λ_C^{-1} S_C$
 
 After integrating out the precision vector $\mathbf{ρ}$, full marginal of C should be Student-t distributed.
 
 ### Natural parameterisation
 
-$ϕ(\mathbf{θ}) = ϕ(A, C, R) = \{A, \ A^TA, \ C^TR^{-1}C, \ R^{-1}C, \ R^{-1}, \ \ln|R^{-1}|\}$
+$ϕ(\mathbf{θ}) = ϕ(A, C, R) = \{A, \ A^TA, \ C, \ R^{-1},  C^TR^{-1}C, \ R^{-1}C \}$
 
 The VBM Step computes the expected natural parameter: $\langle ϕ(\mathbf{θ}) \rangle_{q_θ(θ)}$
 """
@@ -181,8 +181,6 @@ struct Exp_ϕ
 	# TO-DO: ELBO computation and Convergence check
 	"""
 	log_det_R⁻¹
-	ρ_s
-	log_ρ_s
 	"""
 end
 
@@ -214,12 +212,12 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	b = hps.b
 
 	K = length(α)
+	
 	# compute q(A), q(ρ), q(C|ρ)
     Σ_A = inv(diagm(α) + W_A)
 	Σ_C = inv(diagm(γ) + W_C)
 	
-	G = sum(ys[:, t] * ys[:, t]' for t in 1:T) - S_C * Σ_C * S_C'
-	
+	G = sum(ys[:, t] * ys[:, t]' for t in 1:T) - S_C' * Σ_C * S_C
 	a_ = a + 0.5 * T
     b_ = [b + 0.5 * G[i, i] for i in 1:D]
 
@@ -234,9 +232,17 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	Exp_CᵀR⁻¹C = Exp_C'*Exp_R⁻¹*Exp_C + D*Σ_C
 	Exp_R⁻¹C = Exp_R⁻¹*Exp_C
 	Exp_CᵀR⁻¹ = Exp_C'*Exp_R⁻¹
+
+	# update hyperparameter (after m-step)
+	α_n = [K/((K*Σ_A + Σ_A*S_A*S_A'*Σ_A)[j, j]) for j in 1:K]
+	γ_n = [D/((D*Σ_C + Σ_C*S_C*Exp_R⁻¹*S_C'*Σ_C)[j, j]) for j in 1:K]
+
+	# for updating a, b 
+	exp_ρ = a_ρ ./ b_
+	exp_log_ρ = [digamma(a_) - log(b_[i]) for i in 1:D]
 	
 	# return expected natural parameters :: Exp_ϕ (for e-step)
-	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹)
+	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹), α_n, γ_n, exp_ρ, exp_log_ρ
 end
 
 # ╔═╡ 85e2ada1-0adc-41a8-ab34-8043379ca0a4
@@ -395,7 +401,6 @@ $η_{t-1} = Ψ_{t-1}A^T\mathbf{Ψ_t^*}(C^TR^{-1}y_t + Ψ_t^{-1}η_t)$
 # compute the marginals (REUSE - for variational bayesian)
 function parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
 	K, T = size(μs)
-
 	Υs = zeros(K, K, T)
 	ωs = zeros(K, T)
 
@@ -561,7 +566,7 @@ function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
 	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
 	S_C = sum(ωs[:, t] * ys[:, t]' for t in 1:T)
 	
-	return HSS(W_A, S_A, W_C, S_C)
+	return HSS(W_A, S_A, W_C, S_C), ω_0, Υ_0
 end
 
 # ╔═╡ a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
@@ -571,7 +576,7 @@ Testing E-step
 
 # ╔═╡ 9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
 md"""
-### Hyper-param learning 
+### Hyper-param learning - Hierachical Model
 
 N.B. should be cautious with model comparison and structure discovery tasks.
 
@@ -596,7 +601,45 @@ $\frac{1}{b} = \frac{1}{D \times a} \sum_{s=1}^D \bar{ρ_s}$
 
 **TO-DO**: 
 These are also updated during learning, note for a valid gamma distribution, both a and b needs to be positive! 
+
+Using properties of Gamma distribution (shape $a$, inverse scale $b$), expectation and log expectation are given by:
+
+$\bar{ρ_s} \equiv \langle ρ_s \rangle = \frac{a + 0.5 T}{b + 0.5 G_{ss}}$
+
+$\bar{\ln ρ_s} \equiv \langle \ln ρ_s \rangle = ψ(a + 0.5T) - \ln(b + 0.5 G_{ss})$
+
+To avoid solving for -ve values of $a$, we can re-parameterize $a$ to $a'$ such that $a = \exp(a')$ to ensure $a$ is always positive, and then solve a different fixed point equation for $a'$:
+
 """
+
+# ╔═╡ 87667a9e-02aa-4104-b5a0-0f6b9e98ba96
+# cf. Newton's method
+function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64})
+    D = length(exp_ρ)
+    d = mean(exp_ρ)
+    c = mean(exp_log_ρ)
+    
+    # Update `a` using "fixed point" iteration
+	a = hpp.a		
+
+    for _ in 1:100
+        ψ_a = digamma(a)
+        ψ_a_p = trigamma(a)
+        
+        a_new = a * exp(-(ψ_a - log(a) + log(d) - c) / (a * ψ_a_p - 1))
+		a = a_new
+
+		# check convergence
+        if abs(a_new - a) < 1e-6
+            break
+        end
+    end
+    
+    # Update `b` using the converged value of `a`
+    b = a/d
+
+	return a, b
+end
 
 # ╔═╡ b0b1f14d-4fbd-4995-845f-f19990460329
 md"""
@@ -604,7 +647,7 @@ md"""
 """
 
 # ╔═╡ 1902c1f1-1246-4ab3-88e6-35619d685cdd
-function vb_dlm(ys::Matrix{Float64}, hpp::HPP, max_iter=100)
+function vb_dlm(ys::Matrix{Float64}, hpp::HPP, max_iter=200)
 	D, T = size(ys)
 	K = length(hpp.α)
 	
@@ -619,20 +662,16 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, max_iter=100)
 	hss = HSS(W_A, S_A, W_C, S_C)
 	exp_np = missing
 
-	# debug: Need to update hyperparameter struct after vb_m
+	# DEBUG: Need to update hyperparameter (hpp) struct, current update yield worse learning of A, C, R
 	for i in 1:max_iter
 
-		""" current error: positivity constraint broken for gamma prior (a, b)
-		try		
-			exp_np = vb_m(ys, hpp, hss)
-			hss = vb_e(ys, exp_np, hpp)
-		catch e
-			println(i)
-			println(e)
-			println(exp_np)
-			break
-		end
-		"""
+		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ = vb_m(ys, hpp, hss)
+		
+		#a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+		
+		hss, ω_0, Υ_0 = vb_e(ys, exp_np, hpp)
+		
+		#hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0) 
 	end
 
 	return exp_np
@@ -735,26 +774,22 @@ end;
 A, C, R
 
 # ╔═╡ 079cd7ef-632d-41d0-866d-6678808a8f4c
-# ╠═╡ disabled = true
-#=╠═╡
 let
 	K = size(A, 1)
 	D = size(y, 1)
 	
-	# specify priors hpp
+	# specify initial priors (hyper-params)
 	α = ones(K)
-	γ = ones(D)
+	γ = ones(K)
 	a = 1.0
-	b = 0.1
+	b = 1.0
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	# incomplete
-	vb_dlm(y, hpp, 5)
+	vb_dlm(y, hpp, 50) # C update needs checking
 end
-  ╠═╡ =#
 
 # ╔═╡ 1a129b6f-74f0-404c-ae4f-3ae39c8431aa
 y
@@ -879,7 +914,7 @@ let
 	hss = HSS(W_A, S_A, W_C, S_C)
 
 	α = ones(K)
-	γ = ones(D)
+	γ = ones(K)
 	a = 1.0
 	b = 1.0
 	μ_0 = zeros(K)
@@ -888,7 +923,7 @@ let
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	# should recover close to true values of A, C, R
-	exp_np = vb_m(y, hpp, hss)
+	exp_np, _, _, _, _ = vb_m(y, hpp, hss)
 end
 
 # ╔═╡ 8a73d154-236d-4660-bb21-24681ed7d315
@@ -920,16 +955,16 @@ let
 	hss = HSS(W_A, S_A, W_C, S_C)
 
 	α = ones(K)
-	γ = ones(D)
+	γ = ones(K)
 	a = 1.0
 	b = 1.0
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	exp_np = vb_m(y, hpp, hss)
+	exp_np, _ , _, _, _ = vb_m(y, hpp, hss)
 
-	hss_ = vb_e(y, exp_np, hpp)
+	hss_, _, _ = vb_e(y, exp_np, hpp)
 end
 
 # ╔═╡ ca825009-564e-43e0-9014-cce87c46533b
@@ -2082,7 +2117,7 @@ version = "1.4.1+0"
 # ╠═6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
 # ╠═a8b50581-e5f3-449e-803e-ab31e6e0b812
 # ╟─85e2ada1-0adc-41a8-ab34-8043379ca0a4
-# ╠═d9cb7c74-007d-4229-a576-a7a41fff565b
+# ╟─d9cb7c74-007d-4229-a576-a7a41fff565b
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
 # ╟─781d041c-1e4d-4354-b240-12511207bde0
@@ -2097,8 +2132,9 @@ version = "1.4.1+0"
 # ╟─6749ddf8-633b-498e-aecb-9e1592050ed2
 # ╠═fbc24a7c-48a0-43cc-9dd2-440acfb41c39
 # ╟─a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
-# ╠═8a73d154-236d-4660-bb21-24681ed7d315
+# ╟─8a73d154-236d-4660-bb21-24681ed7d315
 # ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
+# ╠═87667a9e-02aa-4104-b5a0-0f6b9e98ba96
 # ╟─b0b1f14d-4fbd-4995-845f-f19990460329
 # ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
 # ╟─3c63b27b-76e3-4edc-9b56-345738b97c41

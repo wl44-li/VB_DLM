@@ -213,24 +213,18 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	a = hps.a
 	b = hps.b
 
+	K = length(α)
 	# compute q(A), q(ρ), q(C|ρ)
     Σ_A = inv(diagm(α) + W_A)
 	Σ_C = inv(diagm(γ) + W_C)
 	
-	G = sum(ys .* ys, dims=2) - S_C * Σ_C * S_C'
+	G = sum(ys[:, t] * ys[:, t]' for t in 1:T) - S_C * Σ_C * S_C'
 	
 	a_ = a + 0.5 * T
     b_ = [b + 0.5 * G[i, i] for i in 1:D]
 
 	a_ρ = a_ * ones(D)
 	ρ = rand.(Gamma.(a_ρ, 1 ./ b_)) # get ρ vector (dim=D), each element is gamma distributed
-	
-	# used to recover model parameters (after convergence)
-	"""
-	m_A = [V_A * S_A[:, j] for j in 1:K]
-    V_C = [Σ_C * ρ[s]^(-1) for s in 1:D]
-    m_C = [V_C[s] * S_C[:, s] for s in 1:D]
-	"""
 	
 	# compute Exp_ϕ 
 	Exp_A = S_A'*Σ_A
@@ -244,6 +238,11 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	# return expected natural parameters :: Exp_ϕ (for e-step)
 	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹)
 end
+
+# ╔═╡ 85e2ada1-0adc-41a8-ab34-8043379ca0a4
+md"""
+Testing M-step
+"""
 
 # ╔═╡ 01b6b048-6bd6-4c5a-8586-066cecf3ed51
 md"""
@@ -293,118 +292,6 @@ $f_t = Q_tR^{-1}CΣ_tA\mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1}$
 
 N.B. Unlike `Dynamic Linear Model with R` Chap 2.7.2, results above taken from Beal's thesis have not been simplified, this is a purposeful choice in order to get an analog with the **Variational Bayesian derviation** next.
 """
-
-# ╔═╡ 59bcc9bf-276c-47e1-b6a9-86f90571c0fb
-# using Beale 5.77, 5.80, 5.81, forward pass
-function kalman_filter(ys, A, C, R, μ₀, Σ₀)
-    D, T = size(ys)
-    K = size(A, 1)
-
-    μs = zeros(K, T)
-    Σs = zeros(K, K, T)
-
-	Qs = zeros(D, D, T)
-	fs = zeros(D, T)
-	
-    # Initialize the filter, t=1
-	Σ₀_ = inv(inv(Σ₀) + A'A)
-    Σs[:, :, 1] = inv(I + C'inv(R)C - A*Σ₀_*A')
-    μs[:, 1] = Σs[:, :, 1]*(C'inv(R)ys[:, 1] + A*Σ₀_*inv(Σ₀)μ₀)
-
-	Qs[:, :, 1] = inv(inv(R) - inv(R)*C*Σs[:, :, 1]*C'*inv(R))
-	fs[:, 1] = Qs[:, :, 1]*inv(R)*C*Σs[:, :, 1]*A*Σ₀_*inv(Σ₀)*μ₀
-	#fs[:, 1] = C*A*μ₀
-	#Qs[:, :, 1] = R + C*(I+A*Σ₀*A')*C'
-	
-    for t in 2:T
-		Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + A'A)
-
-        Σs[:, :, t] = inv(I + C'inv(R)C - A*Σₜ₋₁_*A')
-		μs[:, t] = Σs[:, :, t]*(C'inv(R)ys[:, t] + A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
-
-		Qs[:, :, t] = inv(inv(R) - inv(R)*C*Σs[:, :, t]*C'*inv(R))
-		fs[:, t] = Qs[:, :, t]*inv(R)*C*Σs[:, :, t]*A*Σₜ₋₁_*inv(Σs[:, :, t-1])*μs[:, t-1]
-
-		#fs[:, t] = C*A*μs[:, t-1]
-		#Qs[:, :, 1] = R + C*(I+A*Σs[:, :, t-1]*A')*C'
-    end
-
-    return μs, Σs, fs, Qs
-end
-
-# ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
-begin
-	function gen_data(A, C, R, μ_0, Σ_0, T)
-	    K, _ = size(A)
-	    D, _ = size(C)
-	    
-	    x = zeros(K, T)
-	    y = zeros(D, T)
-	
-	    x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + I))
-	    y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
-	
-	    for t in 2:T
-	        x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), I)) #state eq
-	        y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) #obs eq
-	    end
-	
-	    return y, x
-	end
-	
-	# Parameters for the toy dataset
-	A = [0.8 -0.1; 0.1 0.9]
-	C = [1.0 0.0; 0.0 1.0]
-	
-	R = Diagonal([0.1, 0.1]) # prefer small R to get better filtered accuracy, c.f signal to noise ratio (DLM with R Chap 2)
-	
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([0.5, 0.5])
-	T = 50
-	
-	# Generate the toy dataset
-	Random.seed!(123)
-	y, x_true = gen_data(A, C, R, μ_0, Σ_0, T)
-	
-	# Test the Kalman filter
-	x_hat, Px, y_hat, Py = kalman_filter(y, A, C, R, μ_0, Σ_0)
-end;
-
-# ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
-let
-	T = size(y, 2)
-	p1 = plot(1:T, x_true[1, :], label="True xs[1]", linewidth=2)
-	plot!(1:T, x_hat[1, :], label="Filtered xs[1]", linewidth=2, linestyle=:dash)
-end
-
-# ╔═╡ 5c221210-e1df-4015-b959-6d330b47be29
-let
-	T = size(y, 2)
-	p2 = plot(1:T, x_true[2, :], label="True xs[2]", linewidth=2)
-	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
-end
-
-# ╔═╡ 7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
-let
-	T = size(y, 2)
-	_, _, y_hat, y_cov = kalman_filter(y, A, C, R, μ_0, Σ_0)
-	y_hat = circshift(y_hat, (0, -1))
-	y_hat[:, T] .= NaN  # Set the first column to NaN to avoid connecting the last point to the first
-
-	p1 = plot(1:T, y[1, :], label="True y[1]", linewidth=2)
-	plot!(1:T, y_hat[1, :], label="Filtered y[1]", linewidth=2, linestyle=:dash)
-end
-
-# ╔═╡ e02d0dd5-6bab-4548-8bbe-d9b1759688c5
-let
-	T = size(y, 2)
-	_, _, y_hat, y_cov = kalman_filter(y, A, C, R, μ_0, Σ_0)
-	y_hat = circshift(y_hat, (0, -1))
-	y_hat[:, T] .= NaN
-
-	p2 = plot(1:T, y[2, :], label="True y[2]", linewidth=2)
-	plot!(1:T, y_hat[2, :], label="Filtered y[2]", linewidth=2, linestyle=:dash)
-end
 
 # ╔═╡ 781d041c-1e4d-4354-b240-12511207bde0
 md"""
@@ -463,7 +350,7 @@ function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
 	# iterate over T
 	for t in 2:T
 		Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + exp_np.AᵀA)
-		Σs_[:, :, t] = Σₜ₋₁
+		Σs_[:, :, t] = Σₜ₋₁_
 		
 		Σs[:, :, t] = inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σₜ₋₁_*exp_np.A')
     	μs[:, t] = Σs[:, :, t]*(exp_np.CᵀR⁻¹*ys[:, t] + exp_np.A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
@@ -527,31 +414,6 @@ function parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
 	return ωs, Υs, ω_0, Υ_0
 end
 
-# ╔═╡ ca825009-564e-43e0-9014-cce87c46533b
-function error_metrics(true_means, smoothed_means)
-    T = size(true_means, 2)
-	diagm
-    mse = sum((true_means .- smoothed_means).^2) / T
-    mad = sum(abs.(true_means .- smoothed_means)) / T
-    mape = sum(abs.((true_means .- smoothed_means) ./ true_means)) / T * 100
-
-	# mean squared error (MSE), mean absolute deviation (MAD), and mean absolute percentage error (MAPE) 
-    return mse, mad, mape
-end
-
-# ╔═╡ 8bd60367-2007-4d50-9d25-c12acd73be96
-md"""
-MSE, MAD, MAPE error with Kalman Filter
-"""
-
-# ╔═╡ f1cea551-4feb-44b4-a77e-03621c9b37b9
-error_metrics(x_true, x_hat)
-
-# ╔═╡ 4c8259f1-d3ae-4400-93cb-0a09b22a14ae
-md"""
-MSE, MAD, MAPE error with **Kalman smoother**
-"""
-
 # ╔═╡ c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
 md"""
 ### Backward recursion (smoothing)
@@ -569,45 +431,6 @@ $η_{t-1} = Ψ_{t-1} \langle A \rangle^T \mathbf{Ψ_t^*}(\langle C^TR^{-1} \rang
 
 where, $t = \{T, ..., 1\}$
 """
-
-# ╔═╡ 8950aa50-22b2-4299-83b2-b9abfd1d5303
-# from t=T-1 to 0, point-parameter approach cf. Beal pg 180
-function parallel_backward(y, A, C, R)
-	D, T = size(y)
-	K = size(A, 1)
-
-	ηs = zeros(K, T)
-    Ψs = zeros(K, K, T)
-
-    # Initialize the filter, t=T
-    Ψs[:, :, T] = zeros(K, K)
-    ηs[:, T] = ones(K)
-
-	Ψₜ = inv(I + C'inv(R)C)
-	
-	Ψs[:, :, T-1] = inv(A'A - A'*Ψₜ*A)
-	ηs[:, T-1] = Ψs[:, :, T-1]*A'*Ψₜ*C'inv(R)y[:, T]
-
-	for t in (T - 2):-1:1
-		Ψₜ₊₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, t+1]))
-		
-		Ψs[:, :, t] = inv(A'A - A'*Ψₜ₊₁*A)
-		ηs[:, t] = Ψs[:, :, t]*A'*Ψₜ₊₁*(C'inv(R)y[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
-	end
-
-	Ψ₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, 1]))
-	Ψ_0 = inv(A'A - A'*Ψ₁*A)
-	η_0 = Ψs[:, :, 1]*A'Ψ₁*(C'inv(R)y[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
-	
-	return ηs, Ψs, η_0, Ψ_0
-end
-
-# ╔═╡ a3677e9f-837b-4ba0-a29f-e60bf3712323
-let
-	ηs, Ψs , η_0 , Ψ_0 = parallel_backward(y, A, C, R)
-	ωs, Υs, ω_0, Υ_0 = parallel_smoother(x_hat, Px, ηs, Ψs, η_0 , Ψ_0, μ_0, Σ_0)
-	error_metrics(x_true, ωs) #lower error compared to filtered xs
-end
 
 # ╔═╡ 8cb62a79-7dbc-4c94-ae7b-2e2cc12764f4
 function v_backward(ys::Matrix{Float64}, exp_np::Exp_ϕ)
@@ -680,19 +503,22 @@ N.B. **calculating marginals straight after each $β_t(x_t)$ could be more effic
 """
 
 # ╔═╡ c1640ff6-3047-42a5-a5cd-d0c77aa41179
-function pairwise_x(Σs_, exp_np::Exp_ϕ, Ψs)
+function v_pairwise_x(Σs_, exp_np::Exp_ϕ, Ψs)
 	T = size(Σs_, 3)
     K = size(exp_np.A, 1)
 
 	# cross-covariance is then computed for all time steps t = {0, . . . , T − 1}
 	Υ_ₜ₋ₜ₊₁ = zeros(K, K, T)
 	
-	for t in 1:T-1
+	for t in 1:T-2
 		Υ_ₜ₋ₜ₊₁[:, :, t+1] = Σs_[:, :, t+1]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, t+1]) - exp_np.A*Σs_[:, :, t+1]*exp_np.A')
 	end
 
 	# t=0, the cross-covariance between the zeroth and first hidden states.
 	Υ_ₜ₋ₜ₊₁[:, :, 1] = Σs_[:, :, 1]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, 1]) - exp_np.A*Σs_[:, :, 1]*exp_np.A')
+
+	# t=T-1, Ψs[T] = 0 special case
+	Υ_ₜ₋ₜ₊₁[:, :, T] = Σs_[:, :, T]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σs_[:, :, T]*exp_np.A')
 	
 	return Υ_ₜ₋ₜ₊₁
 end
@@ -710,37 +536,22 @@ $W_C = \sum_{t=1}^T \langle x_t x_t^T \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_
 $S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
 """
 
-# ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
-# infer hidden state distribution q_x(x_0:T)
-function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
+# ╔═╡ a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
+md"""
+Testing E-step
+"""
 
-	# compute forward pass α_t(x_t)
-	μs, Σs, Σs_ = v_forward(ys, exp_np, hpp)
+# ╔═╡ 1902c1f1-1246-4ab3-88e6-35619d685cdd
+function vb_dlm(ys::Matrix{Float64}, hpp::HPP)
 
-	# compute backward pass β_t(x_t)
-	ηs, Ψs, η₀, Ψ₀ = v_backward(ys, exp_np)
 
-	# compute marginal (Smoothed) means, covs, and pairwise beliefs 
-	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η₀, Ψ₀, hpp.μ_0, hpp.Σ_0)
-
-	Υ_ₜ₋ₜ₊₁ = pairwise_x(Σs_, exp_np, Ψs)
-	
-	# compute hidden state sufficient stats hss
-	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
-	W_A += Υ_0 + ω_0*ω_0'
-
-	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
-	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
-	
-	W_C = sum(Υs[:,:,t] + ωs[:,t] * ωs[:,t]' for t in 1:T)
-	S_C = sum(ωs[:,t] * ys[:,t]' for t in 1:T)
-	
-	return HSS(W_A, S_A, W_C, S_C)
 end
 
 # ╔═╡ 9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
 md"""
 ### Hyper-param learning 
+
+N.B. should be cautious with model comparison and structure discovery tasks.
 
 Our prior specification involves a few hyper-parameters $\mathbf{α}, \mathbf{γ}$, and the prior parameters $Σ_0$ and $μ_0$
 
@@ -754,7 +565,6 @@ $Σ_0 = Υ_{0, 0}$
 
 $μ_0 = ω_0$
 
-(optional) ?
 The **+ve** hyperparameters $a, b$ governing the prior distribution over the output noise,
 $R = diag (\mathbf{ρ})$, are set to the fixed point of the equations [See Beal Appendix C.2 for how to solve]:
 
@@ -762,6 +572,326 @@ $ψ(a) = \ln b + \frac{1}{D} \sum_{s=1}^D \bar{\ln ρ_s}$
 
 $\frac{1}{b} = \frac{1}{D \times a} \sum_{s=1}^D \bar{ρ_s}$
 """
+
+# ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
+md"""
+## Appendix
+"""
+
+# ╔═╡ 59bcc9bf-276c-47e1-b6a9-86f90571c0fb
+# using Beale 5.77, 5.80, 5.81, forward pass
+function kalman_filter(ys, A, C, R, μ₀, Σ₀)
+    D, T = size(ys)
+    K = size(A, 1)
+
+    μs = zeros(K, T)
+    Σs = zeros(K, K, T)
+
+	Σs_ = zeros(K, K, T)
+	Qs = zeros(D, D, T)
+	fs = zeros(D, T)
+	
+    # Initialize the filter, t=1
+	Σ₀_ = inv(inv(Σ₀) + A'A)
+	Σs_[:, :, 1] = Σ₀_
+	
+    Σs[:, :, 1] = inv(I + C'inv(R)C - A*Σ₀_*A')
+    μs[:, 1] = Σs[:, :, 1]*(C'inv(R)ys[:, 1] + A*Σ₀_*inv(Σ₀)μ₀)
+
+	Qs[:, :, 1] = inv(inv(R) - inv(R)*C*Σs[:, :, 1]*C'*inv(R))
+	fs[:, 1] = Qs[:, :, 1]*inv(R)*C*Σs[:, :, 1]*A*Σ₀_*inv(Σ₀)*μ₀
+	#fs[:, 1] = C*A*μ₀
+	#Qs[:, :, 1] = R + C*(I+A*Σ₀*A')*C'
+	
+    for t in 2:T
+		Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + A'A)
+		Σs_[:, :, 1] = Σₜ₋₁_
+
+		
+        Σs[:, :, t] = inv(I + C'inv(R)C - A*Σₜ₋₁_*A')
+		μs[:, t] = Σs[:, :, t]*(C'inv(R)ys[:, t] + A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
+
+		Qs[:, :, t] = inv(inv(R) - inv(R)*C*Σs[:, :, t]*C'*inv(R))
+		fs[:, t] = Qs[:, :, t]*inv(R)*C*Σs[:, :, t]*A*Σₜ₋₁_*inv(Σs[:, :, t-1])*μs[:, t-1]
+
+		#fs[:, t] = C*A*μs[:, t-1]
+		#Qs[:, :, 1] = R + C*(I+A*Σs[:, :, t-1]*A')*C'
+    end
+
+    return μs, Σs, fs, Qs, Σs_
+end
+
+# ╔═╡ 8950aa50-22b2-4299-83b2-b9abfd1d5303
+# from t=T-1 to 0, point-parameter approach cf. Beal pg 180
+function parallel_backward(y, A, C, R)
+	D, T = size(y)
+	K = size(A, 1)
+
+	ηs = zeros(K, T)
+    Ψs = zeros(K, K, T)
+
+    # Initialize the filter, t=T
+    Ψs[:, :, T] = zeros(K, K)
+    ηs[:, T] = ones(K)
+
+	Ψₜ = inv(I + C'inv(R)C)
+	
+	Ψs[:, :, T-1] = inv(A'A - A'*Ψₜ*A)
+	ηs[:, T-1] = Ψs[:, :, T-1]*A'*Ψₜ*C'inv(R)y[:, T]
+
+	for t in (T - 2):-1:1
+		Ψₜ₊₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, t+1]))
+		
+		Ψs[:, :, t] = inv(A'A - A'*Ψₜ₊₁*A)
+		ηs[:, t] = Ψs[:, :, t]*A'*Ψₜ₊₁*(C'inv(R)y[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
+	end
+
+	Ψ₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, 1]))
+	Ψ_0 = inv(A'A - A'*Ψ₁*A)
+	η_0 = Ψs[:, :, 1]*A'Ψ₁*(C'inv(R)y[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
+	
+	return ηs, Ψs, η_0, Ψ_0
+end
+
+# ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
+begin
+	function gen_data(A, C, R, μ_0, Σ_0, T)
+	    K, _ = size(A)
+	    D, _ = size(C)
+	    
+	    x = zeros(K, T)
+	    y = zeros(D, T)
+	
+	    x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + I))
+	    y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
+	
+	    for t in 2:T
+	        x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), I)) #state eq
+	        y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) #obs eq
+	    end
+	
+	    return y, x
+	end
+	
+	# Parameters for the toy dataset
+	A = [0.8 -0.1; 0.1 0.9]
+	C = [1.0 0.0; 0.0 1.0]
+	
+	R = Diagonal([0.1, 0.1]) # prefer small R to get better filtered accuracy, c.f signal to noise ratio (DLM with R Chap 2)
+	
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([0.5, 0.5])
+	T = 50
+	
+	# Generate the toy dataset
+	Random.seed!(123)
+	y, x_true = gen_data(A, C, R, μ_0, Σ_0, T)
+	
+	# Test the Kalman filter
+	x_hat, Px, y_hat, Py, _ = kalman_filter(y, A, C, R, μ_0, Σ_0)
+end;
+
+# ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
+# infer hidden state distribution q_x(x_0:T)
+function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
+
+	# compute forward pass α_t(x_t)
+	μs, Σs, Σs_ = v_forward(ys, exp_np, hpp)
+
+	# compute backward pass β_t(x_t)
+	ηs, Ψs, η₀, Ψ₀ = v_backward(ys, exp_np)
+
+	# compute marginal (Smoothed) means, covs, and pairwise beliefs 
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η₀, Ψ₀, hpp.μ_0, hpp.Σ_0)
+
+	Υ_ₜ₋ₜ₊₁ = v_pairwise_x(Σs_, exp_np, Ψs)
+	
+	# compute hidden state sufficient stats hss
+	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
+	W_A += Υ_0 + ω_0*ω_0'
+
+	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
+	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
+	
+	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
+	S_C = sum(ωs[:, t] * ys[:, t]' for t in 1:T)
+	
+	return HSS(W_A, S_A, W_C, S_C)
+end
+
+# ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
+let
+	T = size(y, 2)
+	p1 = plot(1:T, x_true[1, :], label="True xs[1]", linewidth=2)
+	plot!(1:T, x_hat[1, :], label="Filtered xs[1]", linewidth=2, linestyle=:dash)
+end
+
+# ╔═╡ 5c221210-e1df-4015-b959-6d330b47be29
+let
+	T = size(y, 2)
+	p2 = plot(1:T, x_true[2, :], label="True xs[2]", linewidth=2)
+	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
+end
+
+# ╔═╡ 7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
+let
+	T = size(y, 2)
+	_, _, y_hat, y_cov = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	y_hat = circshift(y_hat, (0, -1))
+	y_hat[:, T] .= NaN  # Set the first column to NaN to avoid connecting the last point to the first
+
+	p1 = plot(1:T, y[1, :], label="True y[1]", linewidth=2)
+	plot!(1:T, y_hat[1, :], label="Filtered y[1]", linewidth=2, linestyle=:dash)
+end
+
+# ╔═╡ e02d0dd5-6bab-4548-8bbe-d9b1759688c5
+let
+	T = size(y, 2)
+	_, _, y_hat, y_cov = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	y_hat = circshift(y_hat, (0, -1))
+	y_hat[:, T] .= NaN
+
+	p2 = plot(1:T, y[2, :], label="True y[2]", linewidth=2)
+	plot!(1:T, y_hat[2, :], label="Filtered y[2]", linewidth=2, linestyle=:dash)
+end
+
+# ╔═╡ 30502079-9684-4144-8bcd-a70f2cb5928a
+function p_pairwise_x(Σs_, A, Υs)
+	T = size(Σs_, 3)
+	K = size(A, 1)
+
+	# cross-covariance is then computed for all time steps t = {0, . . . , T − 1}
+	Υ_ₜ₋ₜ₊₁ = zeros(K, K, T)
+
+	for t in 1:T
+		Υ_ₜ₋ₜ₊₁[:, :, t] = Σs_[:, :, t]*A'*Υs[:, :, t]
+	end
+
+	return Υ_ₜ₋ₜ₊₁
+end
+
+# ╔═╡ d9cb7c74-007d-4229-a576-a7a41fff565b
+let
+	# Parameters for the toy dataset
+	A = [0.8 -0.1; 0.1 0.9]
+	C = [1.0 0.0; 0.0 1.0]
+	
+	R = Diagonal([0.1, 0.1]) # prefer small R to get better filtered accuracy, c.f signal to noise ratio (DLM with R Chap 2)
+	
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([0.5, 0.5])
+	
+	# Generate the toy dataset
+	Random.seed!(123)
+	y, x_true = gen_data(A, C, R, μ_0, Σ_0, 500)
+	D, T = size(y)
+	K = size(A, 1)
+
+	μs, Σs, _ , _, Σs_ = kalman_filter(y, A, C, R, μ_0, Σ_0)
+
+	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
+
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
+
+	Υ_ₜ₋ₜ₊₁ = p_pairwise_x(Σs_, A, Υs)
+	
+	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
+	W_A += Υ_0 + ω_0*ω_0'
+
+	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
+	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
+	
+	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
+	
+	S_C = sum(ωs[:, t] * y[:, t]' for t in 1:T)
+
+	hss = HSS(W_A, S_A, W_C, S_C)
+
+	α = ones(K)
+	γ = ones(D)
+	a = 1.0
+	b = 1.0
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	# should recover close to true values of A, C, R
+	exp_np = vb_m(y, hpp, hss)
+end;
+
+# ╔═╡ 8a73d154-236d-4660-bb21-24681ed7d315
+let
+	# Parameters for the toy dataset
+	A = [0.8 -0.1; 0.1 0.9]
+	C = [1.0 0.0; 0.0 1.0]
+	R = Diagonal([0.1, 0.1]) 
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([0.5, 0.5])
+	
+	# Generate the toy dataset
+	Random.seed!(123)
+	y, x_true = gen_data(A, C, R, μ_0, Σ_0, 500)
+	D, T = size(y)
+	K = size(A, 1)
+
+	μs, Σs, _ , _, Σs_ = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
+	Υ_ₜ₋ₜ₊₁ = p_pairwise_x(Σs_, A, Υs)
+	
+	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
+	W_A += Υ_0 + ω_0*ω_0'
+	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
+	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
+	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
+	S_C = sum(ωs[:, t] * y[:, t]' for t in 1:T)
+	hss = HSS(W_A, S_A, W_C, S_C)
+
+	α = ones(K)
+	γ = ones(D)
+	a = 1.0
+	b = 1.0
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	exp_np = vb_m(y, hpp, hss)
+
+	hss_ = vb_e(y, exp_np, hpp)
+end
+
+# ╔═╡ ca825009-564e-43e0-9014-cce87c46533b
+function error_metrics(true_means, smoothed_means)
+    T = size(true_means, 2)
+	diagm
+    mse = sum((true_means .- smoothed_means).^2) / T
+    mad = sum(abs.(true_means .- smoothed_means)) / T
+    mape = sum(abs.((true_means .- smoothed_means) ./ true_means)) / T * 100
+
+	# mean squared error (MSE), mean absolute deviation (MAD), and mean absolute percentage error (MAPE) 
+    return mse, mad, mape
+end
+
+# ╔═╡ 8bd60367-2007-4d50-9d25-c12acd73be96
+md"""
+MSE, MAD, MAPE error with Kalman Filter
+"""
+
+# ╔═╡ f1cea551-4feb-44b4-a77e-03621c9b37b9
+error_metrics(x_true, x_hat)
+
+# ╔═╡ 4c8259f1-d3ae-4400-93cb-0a09b22a14ae
+md"""
+MSE, MAD, MAPE error with **Kalman smoother**
+"""
+
+# ╔═╡ a3677e9f-837b-4ba0-a29f-e60bf3712323
+let
+	ηs, Ψs , η_0 , Ψ_0 = parallel_backward(y, A, C, R)
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(x_hat, Px, ηs, Ψs, η_0 , Ψ_0, μ_0, Σ_0)
+	error_metrics(x_true, ωs) #lower error compared to filtered xs
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1881,31 +2011,38 @@ version = "1.4.1+0"
 # ╠═45b0255d-72fd-4fa7-916a-4f73e730f4d5
 # ╠═6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
 # ╠═a8b50581-e5f3-449e-803e-ab31e6e0b812
+# ╟─85e2ada1-0adc-41a8-ab34-8043379ca0a4
+# ╠═d9cb7c74-007d-4229-a576-a7a41fff565b
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
-# ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
-# ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
-# ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a
-# ╟─5c221210-e1df-4015-b959-6d330b47be29
-# ╟─7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
-# ╟─e02d0dd5-6bab-4548-8bbe-d9b1759688c5
 # ╟─781d041c-1e4d-4354-b240-12511207bde0
 # ╠═cb1a9949-59e1-4ccb-8efc-aa2ffbadaab2
 # ╟─c417e618-41c2-454c-9b27-470988215d48
 # ╠═96ff4afb-fe7f-471a-b15e-26676c600090
-# ╟─ca825009-564e-43e0-9014-cce87c46533b
-# ╟─8bd60367-2007-4d50-9d25-c12acd73be96
-# ╟─f1cea551-4feb-44b4-a77e-03621c9b37b9
-# ╟─4c8259f1-d3ae-4400-93cb-0a09b22a14ae
-# ╟─a3677e9f-837b-4ba0-a29f-e60bf3712323
 # ╟─c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
-# ╠═8950aa50-22b2-4299-83b2-b9abfd1d5303
 # ╠═8cb62a79-7dbc-4c94-ae7b-2e2cc12764f4
 # ╟─d5457335-bc65-4bf1-b6ed-796dd5e2ab69
 # ╟─14d4e0a3-8db0-4c57-bb33-497e1bd3c64c
 # ╠═c1640ff6-3047-42a5-a5cd-d0c77aa41179
 # ╟─6749ddf8-633b-498e-aecb-9e1592050ed2
 # ╠═fbc24a7c-48a0-43cc-9dd2-440acfb41c39
+# ╟─a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
+# ╠═8a73d154-236d-4660-bb21-24681ed7d315
+# ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
 # ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
+# ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
+# ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
+# ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a
+# ╟─5c221210-e1df-4015-b959-6d330b47be29
+# ╟─7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
+# ╟─e02d0dd5-6bab-4548-8bbe-d9b1759688c5
+# ╠═8950aa50-22b2-4299-83b2-b9abfd1d5303
+# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╠═30502079-9684-4144-8bcd-a70f2cb5928a
+# ╠═ca825009-564e-43e0-9014-cce87c46533b
+# ╟─8bd60367-2007-4d50-9d25-c12acd73be96
+# ╠═f1cea551-4feb-44b4-a77e-03621c9b37b9
+# ╟─4c8259f1-d3ae-4400-93cb-0a09b22a14ae
+# ╠═a3677e9f-837b-4ba0-a29f-e60bf3712323
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

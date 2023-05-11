@@ -218,16 +218,17 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	
 	G = sum(ys[:, t] * ys[:, t]' for t in 1:T) - S_C' * Σ_C * S_C
 	a_ = a + 0.5 * T
-	a_ρ = a_ * ones(D)
-    b_ = [b + 0.5 * G[i, i] for i in 1:D]
-	
-	ρ = rand.(Gamma.(a_ρ, 1 ./ b_)) # get ρ vector (dim=D), where each dimension is gamma distributed
+	a_s = a_ * ones(D)
+    b_s = [b + 0.5 * G[i, i] for i in 1:D]
+
+	q_ρ = Gamma.(a_s, 1 ./ b_s)
+	ρ̄ = mean.(q_ρ)
 	
 	# Exp_ϕ 
 	Exp_A = S_A'*Σ_A
 	Exp_AᵀA = Exp_A'*Exp_A + K*Σ_A
 	Exp_C = S_C'*Σ_C
-	Exp_R⁻¹ = diagm(mean(ρ) * ones(D)) # diag(ρ̄) ?
+	Exp_R⁻¹ = diagm(ρ̄)
 	
 	Exp_CᵀR⁻¹C = Exp_C'*Exp_R⁻¹*Exp_C + D*Σ_C
 	Exp_R⁻¹C = Exp_R⁻¹*Exp_C
@@ -238,8 +239,8 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	γ_n = [D/((D*Σ_C + Σ_C*S_C*Exp_R⁻¹*S_C'*Σ_C)[j, j]) for j in 1:K]
 
 	# for updating gamma hyperparam a, b 
-	exp_ρ = a_ρ ./ b_
-	exp_log_ρ = [(digamma(a_) - log(b_[i])) for i in 1:D]
+	exp_ρ = a_s ./ b_s
+	exp_log_ρ = [(digamma(a_) - log(b_s[i])) for i in 1:D]
 	
 	# return expected natural parameters :: Exp_ϕ (for e-step)
 	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹), α_n, γ_n, exp_ρ, exp_log_ρ
@@ -540,6 +541,13 @@ $\bar{\ln ρ_s} \equiv \langle \ln ρ_s \rangle = ψ(a + 0.5T) - \ln(b + 0.5 G_{
 
 To avoid solving for -ve values of $a$, we can re-parameterize $a$ to $a'$ such that $a = \exp(a')$ to ensure $a$ is always positive, and then solve a different fixed point equation for $a'$:
 
+$a_n' = a' - \frac{g(a')}{g'(a')}$
+
+$\exp(a_n') = \exp(a') \exp(-\frac{g(a')}{g'(a')})$
+
+$g(a') = ψ(\exp(a')) - a' + \ln d - c$
+
+$g'(a') = ψ'(\exp(a')) \exp(a') - 1$
 """
 
 # ╔═╡ 87667a9e-02aa-4104-b5a0-0f6b9e98ba96
@@ -587,7 +595,7 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, max_iter=100)
 	W_A = rand(K, K)
 	S_A = rand(K, K)
 	W_C = rand(K, K)
-	S_C = rand(K, D)
+	S_C = rand(D, K)
 	
 	hss = HSS(W_A, S_A, W_C, S_C)
 	exp_np = missing
@@ -597,11 +605,11 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, max_iter=100)
 
 		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ = vb_m(ys, hpp, hss)
 		
-		#a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+		a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
 		
 		hss, ω_0, Υ_0 = vb_e(ys, exp_np, hpp)
 		
-		#hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
+		hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
 
 		#TO-DO: ELBO and Convergence
 	end
@@ -739,7 +747,7 @@ begin
 	
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1, 1])
-	T = 10000
+	T = 5000
 	
 	# Generate the toy dataset
 	Random.seed!(100)
@@ -748,9 +756,6 @@ begin
 	# Test the Kalman filter
 	x_hat, Px, y_hat, Py, _ = kalman_filter(y, A, C, R, μ_0, Σ_0)
 end;
-
-# ╔═╡ 003cf83b-1c92-4368-970b-5e02f79ed699
-A, C, R
 
 # ╔═╡ 079cd7ef-632d-41d0-866d-6678808a8f4c
 let
@@ -767,7 +772,7 @@ let
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	vb_dlm(y, hpp) # A, C needs checking, initialisations?
+	vb_dlm(y, hpp, 50) # A, C needs checking, initialisations?
 end
 
 # ╔═╡ 1a129b6f-74f0-404c-ae4f-3ae39c8431aa
@@ -2135,7 +2140,6 @@ version = "1.4.1+0"
 # ╟─b0b1f14d-4fbd-4995-845f-f19990460329
 # ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
 # ╟─3c63b27b-76e3-4edc-9b56-345738b97c41
-# ╠═003cf83b-1c92-4368-970b-5e02f79ed699
 # ╟─dc2c58de-98b9-4621-b465-064e8ab3caf1
 # ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c

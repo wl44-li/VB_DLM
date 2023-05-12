@@ -188,8 +188,8 @@ end
 struct HPP
     α::Vector{Float64} # precision vector for transition A
     γ::Vector{Float64}  # precision vector for emission C
-    a::Float64 # gamma rate of output noise R⁻¹
-    b::Float64 # gamma inverse scale of output noise R⁻¹
+    a::Float64 # gamma rate of ρ
+    b::Float64 # gamma inverse scale of ρ
     μ_0::Vector{Float64} # auxiliary hidden state mean
     Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
 end
@@ -204,7 +204,6 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	S_A = ss.S_A
 	W_C = ss.W_C
 	S_C = ss.S_C
-
 	α = hps.α
 	γ = hps.γ
 	a = hps.a
@@ -472,6 +471,18 @@ $W_C = \sum_{t=1}^T \langle x_t x_t^T \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_
 $S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
 """
 
+# ╔═╡ 52a70be4-fb8c-40d8-9c7a-226649ada6e3
+md"""
+**Debug notes**: if all hidden states are treated as observed, i.e. parse true x from data generation
+
+
+$\langle x_t x_t^T \rangle = \int x_t x_t^T q(x_t) \ dx_t$
+
+if $x_t$ is observed, $q(x_t)$ can be viewed as direct measure (delta function), hence 
+
+$\langle x_t x_t^T \rangle = x_t x_t^T$
+"""
+
 # ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
 # infer hidden state distribution q_x(x_0:T)
 function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
@@ -589,9 +600,10 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, max_iter=100)
 	D, T = size(ys)
 	K = length(hpp.α)
 	
-	Random.seed!(100) # different seed? seed=111 rotates A?
+	Random.seed!(100) # different seed? sensitive to inialisation/local minima is expected 
 	
-	# specify initial hidden state suff stats
+	# DEBUG: instead of randomly generate HSS, initialise W_A, S_A, W_C, S_C using real x
+	
 	W_A = rand(K, K)
 	S_A = rand(K, K)
 	W_C = rand(K, K)
@@ -600,7 +612,7 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, max_iter=100)
 	hss = HSS(W_A, S_A, W_C, S_C)
 	exp_np = missing
 
-	# DEBUG: hyper-param learning not improving learning ??
+	# DEBUG: hyper-param learning not improving learning 
 	for i in 1:max_iter
 
 		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ = vb_m(ys, hpp, hss)
@@ -649,6 +661,17 @@ Case **probabilistic PCA**, To reduce a DLM to PPCA, we should set:
     The initial state mean to be a zero vector and the initial state covariance to be an identity matrix. This is consistent with the assumption in PPCA where the hidden states are sampled from a standard Gaussian distribution.
 
 With these settings, the DLM essentially becomes a model where the observed variables are linear functions of the hidden states (with some Gaussian noise), and the hidden states are independently drawn from a Gaussian distribution. This is the setting of PPCA.
+"""
+
+# ╔═╡ be042373-ed3e-4e2e-b714-b4f9e5964b57
+md"""
+Debug notes: 
+First consider a local level model (uni-variate) first, 
+
+-> check vb_dlm
+
+-> check forward, backward with StateSpaceModels
+
 """
 
 # ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
@@ -997,6 +1020,9 @@ let
 	# generate hss using point parameter estimates
 	hss = HSS(W_A, S_A, W_C, S_C)
 
+
+	# DEBUG, initialise HSS using real x from data generation
+	
 	α = ones(K)
 	γ = ones(K)
 	a = 1.0
@@ -2197,6 +2223,7 @@ version = "1.4.1+0"
 # ╟─14d4e0a3-8db0-4c57-bb33-497e1bd3c64c
 # ╠═c1640ff6-3047-42a5-a5cd-d0c77aa41179
 # ╟─6749ddf8-633b-498e-aecb-9e1592050ed2
+# ╟─52a70be4-fb8c-40d8-9c7a-226649ada6e3
 # ╠═fbc24a7c-48a0-43cc-9dd2-440acfb41c39
 # ╟─a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
 # ╠═8a73d154-236d-4660-bb21-24681ed7d315
@@ -2214,6 +2241,7 @@ version = "1.4.1+0"
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
 # ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
 # ╠═5c5eaf05-01d7-4a97-9e67-c74d1cdc800f
+# ╠═be042373-ed3e-4e2e-b714-b4f9e5964b57
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
 # ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa

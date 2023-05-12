@@ -8,7 +8,7 @@ using InteractiveUtils
 begin
 	using Distributions, Plots, Random
 	using LinearAlgebra
-	using StatsBase
+	# using StatsBase
 	using StatsFuns
 	using SpecialFunctions
 	using PlutoUI
@@ -627,6 +627,30 @@ md"""
 Result from VB DLM:
 """
 
+# ╔═╡ 24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
+md"""
+## Debugging, Testing notes:
+
+Case **matrix variate linear regression**, by choosing A = I (the identity matrix) and Q = 0 (the zero matrix) for the Dynamic Linear Model (DLM) setup has specific implications:
+
+    A = I: This choice implies that the state vector at time t is equal to the state vector at time t-1. In other words, the states do not change over time. This is a strong assumption and may not be applicable for all situations. However, it simplifies the model and can be useful in cases where we believe that the underlying state does not change significantly over time.
+
+    Q = 0: This choice implies that there is no process noise in the model. In other words, we are assuming that the evolution of the state over time is deterministic and not influenced by any unobserved random effects. This is also a strong assumption and may not be suitable in cases where there are unobserved influences on the state that we want to model.
+"""
+
+# ╔═╡ e3e78fb1-00aa-4399-8330-1d4a08742b42
+md"""
+Case **probabilistic PCA**, To reduce a DLM to PPCA, we should set:
+
+    The state transition matrix A to be a zero matrix. This means that the hidden state does not depend on the previous hidden state, which is consistent with the assumption of PPCA where hidden states are independently drawn from a Gaussian distribution.
+
+    The process noise covariance matrix Q to be an identity matrix. This means that the hidden states are sampled from a standard Gaussian distribution.
+
+    The initial state mean to be a zero vector and the initial state covariance to be an identity matrix. This is consistent with the assumption in PPCA where the hidden states are sampled from a standard Gaussian distribution.
+
+With these settings, the DLM essentially becomes a model where the observed variables are linear functions of the hidden states (with some Gaussian noise), and the hidden states are independently drawn from a Gaussian distribution. This is the setting of PPCA.
+"""
+
 # ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
 md"""
 ## Appendix
@@ -635,6 +659,11 @@ md"""
 # ╔═╡ 8fed847c-93bc-454b-94c7-ba1d13c73b04
 md"""
 Generate test data
+"""
+
+# ╔═╡ baca3b20-16ac-4e37-a2bb-7512d1c99eb8
+md"""
+### Kalman Filter
 """
 
 # ╔═╡ e7ca9061-64dc-44ef-854e-45b8015abad1
@@ -680,8 +709,8 @@ N.B. Unlike `Dynamic Linear Model with R` Chap 2.7.2, results above taken from B
 """
 
 # ╔═╡ 59bcc9bf-276c-47e1-b6a9-86f90571c0fb
-# using Beale 5.77, 5.80, 5.81, forward pass
-function kalman_filter(ys, A, C, R, μ₀, Σ₀)
+# using Beale 5.77, 5.80, 5.81, forward pass Kalman-filter
+function p_forward(ys, A, C, R, μ₀, Σ₀)
     D, T = size(ys)
     K = size(A, 1)
 	
@@ -722,17 +751,21 @@ end
 
 # ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
 begin
-	function gen_data(A, C, R, μ_0, Σ_0, T)
+	function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	    K, _ = size(A)
 	    D, _ = size(C)
 	    x = zeros(K, T)
 	    y = zeros(D, T)
 	
-	    x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + I))
+	    x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + Q))
 	    y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
 	
 	    for t in 2:T
-	        x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), I)) #state eq
+			if (tr(Q) != 0)
+	        	x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q)) #state eq
+			else
+				x[:, t] = A * x[:, t-1]
+			end
 	        y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) #obs eq
 	    end
 	
@@ -746,33 +779,84 @@ begin
 	R = Diagonal([0.33, 0.33]) # prefer small R to get better filtered accuracy, c.f signal to noise ratio (DLM with R Chap 2)
 	
 	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([1, 1])
-	T = 5000
+	Σ_0 = Diagonal([1.0, 1.0])
+	T = 500
 	
 	# Generate the toy dataset
 	Random.seed!(100)
-	y, x_true = gen_data(A, C, R, μ_0, Σ_0, T)
+	y, x_true = gen_data(A, C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, T)
 	
 	# Test the Kalman filter
-	x_hat, Px, y_hat, Py, _ = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	x_hat, Px, y_hat, Py, _ = p_forward(y, A, C, R, μ_0, Σ_0)
 end;
+
+# ╔═╡ 2c9a233f-3a96-43dc-b783-b82642a82590
+A, C, R
+
+# ╔═╡ f871da95-6710-4c0f-a3a1-890dd59a41a1
+A, C, R
 
 # ╔═╡ 079cd7ef-632d-41d0-866d-6678808a8f4c
 let
 	K = size(A, 1)
 	D = size(y, 1)
+	# println(size(y))
 	
-	Random.seed!(99)
 	# specify initial priors (hyper-params)
-	α = rand(K)
-	γ = rand(K)
+	α = ones(K)
+	γ = ones(K)
 	a = 0.01
 	b = 0.01
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	
+	vb_dlm(y, hpp) # A, C needs checking, initialisations?
+end
 
-	vb_dlm(y, hpp, 50) # A, C needs checking, initialisations?
+# ╔═╡ ed704f46-779c-4369-8a3b-d3e8cf0f4dd1
+begin
+	Random.seed!(99)
+	y_ml, xs_ml = gen_data(Diagonal([1.0, 1.0]), C, zeros(2, 2), R, μ_0, Σ_0, 1000)
+end
+
+# ╔═╡ 4ff6b317-ebbc-4ed7-b7cc-3b68ddc7a19c
+let
+	K = size(A, 1)
+	D = size(y, 1)
+
+	α = ones(K)
+	γ = ones(K)
+	a = 0.01
+	b = 0.01
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	
+	vb_dlm(y_ml, hpp) # A, C DEBUG
+end
+
+# ╔═╡ 6550261c-a3b8-40bc-a4ac-c43ae33215ca
+begin
+	Random.seed!(99)
+	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 1000)
+end
+
+# ╔═╡ 5c5eaf05-01d7-4a97-9e67-c74d1cdc800f
+let
+	K = size(A, 1)
+	D = size(y, 1)
+	
+	# specify initial priors (hyper-params)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.01
+	b = 0.01
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	
+	vb_dlm(y_pca, hpp) # C, R Debug
 end
 
 # ╔═╡ 1a129b6f-74f0-404c-ae4f-3ae39c8431aa
@@ -795,7 +879,7 @@ end
 # ╔═╡ 7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
 let
 	T = size(y, 2)
-	_, _, y_hat, y_cov = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	_, _, y_hat, y_cov = p_forward(y, A, C, R, μ_0, Σ_0)
 	y_hat = circshift(y_hat, (0, -1))
 	y_hat[:, T] .= NaN  # Set the first column to NaN to avoid connecting the last point to the first
 
@@ -806,7 +890,7 @@ end
 # ╔═╡ e02d0dd5-6bab-4548-8bbe-d9b1759688c5
 let
 	T = size(y, 2)
-	_, _, y_hat, y_cov = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	_, _, y_hat, y_cov = p_forward(y, A, C, R, μ_0, Σ_0)
 	y_hat = circshift(y_hat, (0, -1))
 	y_hat[:, T] .= NaN
 
@@ -893,25 +977,14 @@ end
 
 # ╔═╡ d9cb7c74-007d-4229-a576-a7a41fff565b
 let
-	# Ground truth
-	A = [0.8 -0.1; 0.1 0.9]
-	C = [1.0 0.0; 0.0 1.0]
-	R = Diagonal([0.1, 0.1])
-	
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([0.5, 0.5])
-	
-	Random.seed!(123)
-	y, x_true = gen_data(A, C, R, μ_0, Σ_0, 500)
 	D, T = size(y)
 	K = size(A, 1)
 
-	μs, Σs, _ , _, Σs_ = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	μs, Σs, _ , _, Σs_ = p_forward(y, A, C, R, μ_0, Σ_0)
 	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
 	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
 	Υ_ₜ₋ₜ₊₁ = p_pairwise_x(Σs_, A, Υs)
 
-	
 	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
 	W_A += Υ_0 + ω_0*ω_0'
 
@@ -939,17 +1012,10 @@ end
 
 # ╔═╡ 8a73d154-236d-4660-bb21-24681ed7d315
 let
-	A = [0.8 -0.1; 0.1 0.9]
-	C = [1.0 0.0; 0.0 1.0]
-	R = Diagonal([0.1, 0.1]) 
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([0.5, 0.5])
-	Random.seed!(123)
-	y, x_true = gen_data(A, C, R, μ_0, Σ_0, 500)
 	D, T = size(y)
 	K = size(A, 1)
 
-	μs, Σs, _ , _, Σs_ = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	μs, Σs, _ , _, Σs_ = p_forward(y, A, C, R, μ_0, Σ_0)
 	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
 	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
 	Υ_ₜ₋ₜ₊₁ = p_pairwise_x(Σs_, A, Υs)
@@ -1016,7 +1082,6 @@ Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
-StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 
 [compat]
@@ -1024,7 +1089,6 @@ Distributions = "~0.25.87"
 Plots = "~1.38.9"
 PlutoUI = "~0.7.50"
 SpecialFunctions = "~2.2.0"
-StatsBase = "~0.33.21"
 StatsFuns = "~1.3.0"
 """
 
@@ -1034,7 +1098,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.0"
 manifest_format = "2.0"
-project_hash = "a501bdc2b067a5b4cd9b31a03df15037891a1920"
+project_hash = "d5999de436990a28cca4f7280892b159fec7b049"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -2121,6 +2185,7 @@ version = "1.4.1+0"
 # ╠═6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
 # ╠═a8b50581-e5f3-449e-803e-ab31e6e0b812
 # ╟─85e2ada1-0adc-41a8-ab34-8043379ca0a4
+# ╠═2c9a233f-3a96-43dc-b783-b82642a82590
 # ╠═d9cb7c74-007d-4229-a576-a7a41fff565b
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
 # ╟─781d041c-1e4d-4354-b240-12511207bde0
@@ -2140,12 +2205,20 @@ version = "1.4.1+0"
 # ╟─b0b1f14d-4fbd-4995-845f-f19990460329
 # ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
 # ╟─3c63b27b-76e3-4edc-9b56-345738b97c41
+# ╠═f871da95-6710-4c0f-a3a1-890dd59a41a1
 # ╟─dc2c58de-98b9-4621-b465-064e8ab3caf1
 # ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
+# ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
+# ╠═ed704f46-779c-4369-8a3b-d3e8cf0f4dd1
+# ╠═4ff6b317-ebbc-4ed7-b7cc-3b68ddc7a19c
+# ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
+# ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
+# ╠═5c5eaf05-01d7-4a97-9e67-c74d1cdc800f
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
 # ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa
 # ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
 # ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
 # ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a

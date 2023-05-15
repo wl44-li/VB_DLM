@@ -607,10 +607,10 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn = false, max_iter=100, 
 	
 	Random.seed!(r_seed) # different seed? sensitive to inialisation/local minima is expected 
 
-	W_A = rand(K, K)
-	S_A = rand(K, K)
-	W_C = rand(K, K)
-	S_C = rand(D, K)
+	W_A = rand(K, K) + I
+	S_A = rand(K, K) + I
+	W_C = rand(K, K) + I
+	S_C = rand(D, K) + I
 	
 	#W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
 	#W_A += μ_0*μ_0'
@@ -652,6 +652,8 @@ Result from VB DLM:
 # ╔═╡ dab1fe9c-20a4-4376-beaf-02b5292ca7cd
 md"""
 For initialisation with seed = 99, vb dlm is able to yield some reasonable learning results, although adding hyperparameter learning does not seem to improve much.
+
+Adding iterations seem to improve learning? but this converges slower than HMM.
 """
 
 # ╔═╡ 24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
@@ -820,7 +822,7 @@ begin
 	
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
-	T = 10000
+	T = 1000
 	
 	# Generate the toy dataset
 	Random.seed!(100)
@@ -929,7 +931,7 @@ let
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	l_off = vb_dlm(y, hpp) 
-	l_on = vb_dlm(y, hpp, true)
+	l_on = vb_dlm(y, hpp, true, 900)
 
 	# results with hyperparam learning on and off
 	l_on, l_off
@@ -2273,7 +2275,7 @@ version = "1.4.1+0"
 # ╟─c417e618-41c2-454c-9b27-470988215d48
 # ╠═8950aa50-22b2-4299-83b2-b9abfd1d5303
 # ╠═30502079-9684-4144-8bcd-a70f2cb5928a
-# ╟─ca825009-564e-43e0-9014-cce87c46533b
+# ╠═ca825009-564e-43e0-9014-cce87c46533b
 # ╟─8bd60367-2007-4d50-9d25-c12acd73be96
 # ╠═f1cea551-4feb-44b4-a77e-03621c9b37b9
 # ╟─4c8259f1-d3ae-4400-93cb-0a09b22a14ae

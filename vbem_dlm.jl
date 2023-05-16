@@ -199,7 +199,6 @@ end
 # infer parameter posterior q_θ(θ)
 function vb_m(ys, hps::HPP, ss::HSS)
 	D, T = size(ys)
-
 	W_A = ss.W_A
 	S_A = ss.S_A
 	W_C = ss.W_C
@@ -208,7 +207,6 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	γ = hps.γ
 	a = hps.a
 	b = hps.b
-
 	K = length(α)
 	
 	# q(A), q(ρ), q(C|ρ)
@@ -237,7 +235,7 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	α_n = [K/((K*Σ_A + Σ_A*S_A*S_A'*Σ_A)[j, j]) for j in 1:K]
 	γ_n = [D/((D*Σ_C + Σ_C*S_C*Exp_R⁻¹*S_C'*Σ_C)[j, j]) for j in 1:K]
 
-	# for updating gamma hyperparam a, b 
+	# for updating gamma hyperparam a, b       
 	exp_ρ = a_s ./ b_s
 	exp_log_ρ = [(digamma(a_) - log(b_s[i])) for i in 1:D]
 	
@@ -408,7 +406,7 @@ where $Υ_{t,t+1} = \mathbf{Σ^*} \langle A \rangle^T (I + \langle C^T R^{-1} C 
 
 # ╔═╡ 96ff4afb-fe7f-471a-b15e-26676c600090
 # combine forward and backward pass
-# marginals beliefs t = 0, ..., T (REUSE for VB)
+# marginals beliefs t = 0, ..., T (re-use for VB)
 function parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
 	K, T = size(μs)
 	Υs = zeros(K, K, T)
@@ -485,7 +483,7 @@ $\langle x_t x_t^T \rangle = x_t x_t^T$
 
 # ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
 # infer hidden state distribution q_x(x_0:T)
-function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
+function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP, smooth_out=false)
     _, T = size(ys)
 	# forward pass α_t(x_t)
 	μs, Σs, Σs_ = v_forward(ys, exp_np, hpp)
@@ -507,6 +505,10 @@ function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
 	
 	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
 	S_C = sum(ωs[:, t] * ys[:, t]' for t in 1:T)
+
+	if (smooth_out) # return variational smoothed mean, cov of hidden states
+		return ωs, Υs
+	end
 	
 	return HSS(W_A, S_A, W_C, S_C), ω_0, Υ_0
 end
@@ -564,10 +566,14 @@ $\exp(a_n') = \exp(a') \exp(-\frac{g(a')}{g'(a')})$
 $g(a') = ψ(\exp(a')) - a' + \ln d - c$
 
 $g'(a') = ψ'(\exp(a')) \exp(a') - 1$
+
+Hence,
+
+$a_n = a \exp(- \frac{ψ(a) - \ln (a) + \ln d - c}{a ψ'(a) -1)})$
 """
 
 # ╔═╡ 87667a9e-02aa-4104-b5a0-0f6b9e98ba96
-# cf. Newton's method
+# cf. Newton's method, from Beal appendix C2
 function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64})
     D = length(exp_ρ)
     d = mean(exp_ρ)
@@ -584,7 +590,7 @@ function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64
 		a = a_new
 
 		# check convergence
-        if abs(a_new - a) < 1e-6
+        if abs(a_new - a) < 1e-5
             break
         end
     end
@@ -601,64 +607,90 @@ md"""
 """
 
 # ╔═╡ 1902c1f1-1246-4ab3-88e6-35619d685cdd
-function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn = false, max_iter=100, r_seed=99)
+function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_seed=99, debug=false)
 	D, T = size(ys)
 	K = length(hpp.α)
-	
-	Random.seed!(r_seed) # different seed? sensitive to inialisation/local minima is expected 
 
-	W_A = rand(K, K) + I
-	S_A = rand(K, K) + I
-	W_C = rand(K, K) + I
-	S_C = rand(D, K) + I
+	"""
+	# random initialisation
+	Random.seed!(r_seed)
+	W_A = rand(K, K) + K*I
+	S_A = rand(K, K) + K*I
+	W_C = rand(K, K) + K*I
+	S_C = rand(D, K) + D*I
+	"""
 	
-	#W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
-	#W_A += μ_0*μ_0'
-	#S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
-	#S_A += μ_0*x_true[:, 1]'
-	#W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
-	#S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	# no random initialistion
+	W_A = Matrix{Float64}(K*I, K, K)
+	S_A = Matrix{Float64}(K*I, K, K)
+	W_C = Matrix{Float64}(K*I, K, K)
+	S_C = Matrix{Float64}(D*I, K, K)
 	
 	hss = HSS(W_A, S_A, W_C, S_C)
 	exp_np = missing
 
 	for i in 1:max_iter
-
 		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ = vb_m(ys, hpp, hss)
-		
-		a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
 		
 		hss, ω_0, Υ_0 = vb_e(ys, exp_np, hpp)
 
 		if (hpp_learn)
-			hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
+			if (i%5 == 0)
+				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
+			end
 		end
 
-		#TO-DO: ELBO and Convergence
+		#TO-DO: ELBO and Convergence check
+
+		if (i == max_iter)
+			if (debug) # debug a, b update
+				return exp_ρ, exp_log_ρ
+			end
+		end
 	end
+		
 	return exp_np
 end
 
 # ╔═╡ 3c63b27b-76e3-4edc-9b56-345738b97c41
 md"""
-Ground truth values of DLM parameters
+Ground truth values of DLM parameters A, C, R
 """
 
-# ╔═╡ dc2c58de-98b9-4621-b465-064e8ab3caf1
+# ╔═╡ 17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
 md"""
-Result from VB DLM:
+### Hidden state x inference (variational)
+"""
+
+# ╔═╡ 7b185270-58d5-4406-8768-103d798fa326
+md"""
+### With Hyperparameter learning
 """
 
 # ╔═╡ dab1fe9c-20a4-4376-beaf-02b5292ca7cd
 md"""
-For initialisation with seed = 99, vb dlm is able to yield some reasonable learning results, although adding hyperparameter learning does not seem to improve much.
+Adding hyperparameter learning showed better results of learning A, C, R.
 
-Adding iterations seem to improve learning? but this converges slower than HMM.
+Hidden state (xs) learning outperform Kalman Filter and very close to Kalman smoother.
+"""
+
+# ╔═╡ be042373-ed3e-4e2e-b714-b4f9e5964b57
+md"""
+## Debugging notes: 
+
+-> check vb-m with HSS using x_true (✓)
+
+-> check vb-e with Exp_ϕ using A, C, R (✓)
+
+-> check forward, backward with StateSpaceModels -> consider first uni-variate local level model (✓ - see separate notebook)
+
+-> verify with MCMC and Turing (✓ - see separate notebook)
 """
 
 # ╔═╡ 24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
 md"""
-## Testing notes:
+## Extra Testing notes:
 
 Case **matrix variate linear regression**, by choosing A = I (the identity matrix) and Q = 0 (the zero matrix) for the Dynamic Linear Model (DLM) setup has specific implications:
 
@@ -680,19 +712,6 @@ Case **probabilistic PCA**, To reduce a DLM to PPCA, we should set:
 With these settings, the DLM essentially becomes a model where the observed variables are linear functions of the hidden states (with some Gaussian noise), and the hidden states are independently drawn from a Gaussian distribution. This is the setting of PPCA.
 """
 
-# ╔═╡ be042373-ed3e-4e2e-b714-b4f9e5964b57
-md"""
-## Debugging notes: 
-
--> check vb-m with HSS using x_true (✓)
-
--> check vb-e with Exp_ϕ using A, C, R (✓)
-
--> check forward, backward with StateSpaceModels -> consider first uni-variate local level model (see separate notebook)
-
--> verify with MCMC and Turing (✓ - see separate notebook)
-"""
-
 # ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
 md"""
 ## Appendix
@@ -702,6 +721,28 @@ md"""
 md"""
 Generate test data
 """
+
+# ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
+function gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	K, _ = size(A)
+	D, _ = size(C)
+	x = zeros(K, T)
+	y = zeros(D, T)
+
+	x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + Q))
+	y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
+
+	for t in 2:T
+		if (tr(Q) != 0)
+			x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
+		else
+			x[:, t] = A * x[:, t-1] # Q zero matrix special case
+		end
+		y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
+	end
+
+	return y, x
+end
 
 # ╔═╡ baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 md"""
@@ -791,38 +832,16 @@ function p_forward(ys, A, C, R, μ₀, Σ₀)
     return μs, Σs, fs, Qs, Σs_
 end
 
-# ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╔═╡ 1a129b6f-74f0-404c-ae4f-3ae39c8431aa
 begin
-	function gen_data(A, C, Q, R, μ_0, Σ_0, T)
-	    K, _ = size(A)
-	    D, _ = size(C)
-	    x = zeros(K, T)
-	    y = zeros(D, T)
-	
-	    x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + Q))
-	    y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
-	
-	    for t in 2:T
-			if (tr(Q) != 0)
-	        	x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
-			else
-				x[:, t] = A * x[:, t-1] # Q zero matrix special case
-			end
-	        y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
-	    end
-	
-	    return y, x
-	end
-	
-	# Ground truth values
+	# Ground truth values (A, C, R)
 	A = [0.8 -0.1; 0.2 0.75]
 	C = [1.0 0.0; 0.0 1.0]
-	
 	R = Diagonal([0.33, 0.33]) # prefer small R to get better filtered accuracy, c.f signal to noise ratio (DLM with R Chap 2)
 	
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
-	T = 1000
+	T = 4000
 	
 	# Generate the toy dataset
 	Random.seed!(100)
@@ -830,14 +849,12 @@ begin
 	
 	# Test the Kalman filter
 	x_hat, Px, y_hat, Py, _ = p_forward(y, A, C, R, μ_0, Σ_0)
-end;
+end
 
 # ╔═╡ 2c9a233f-3a96-43dc-b783-b82642a82590
 A, C, R
 
 # ╔═╡ d9cb7c74-007d-4229-a576-a7a41fff565b
-# ╠═╡ disabled = true
-#=╠═╡
 let
 	D, T = size(y)
 	K = size(A, 1)
@@ -845,12 +862,9 @@ let
 	# DEBUG, initialise HSS using real x from data generation
 	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
 	W_A += μ_0*μ_0'
-
 	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
 	S_A += μ_0*x_true[:, 1]'
-
 	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
-
 	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
 
 	hss = HSS(W_A, S_A, W_C, S_C)
@@ -866,11 +880,8 @@ let
 	# should recover values of A, C, R close to ground truth
 	exp_np = vb_m(y, hpp, hss)[1]
 end
-  ╠═╡ =#
 
 # ╔═╡ 8a73d154-236d-4660-bb21-24681ed7d315
-# ╠═╡ disabled = true
-#=╠═╡
 let
 	D, T = size(y)
 	K = size(A, 1)
@@ -897,11 +908,8 @@ let
 	# should recover very similar hss using ground-truth xs
 	vb_e(y, exp_np, hpp)[1]
 end
-  ╠═╡ =#
 
 # ╔═╡ fb472969-3c3c-4787-8cf1-296f2c13ddf5
-# ╠═╡ disabled = true
-#=╠═╡
 let
 	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
 	W_A += μ_0*μ_0'
@@ -911,46 +919,54 @@ let
 	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
 	hss = HSS(W_A, S_A, W_C, S_C)
 end
-  ╠═╡ =#
 
 # ╔═╡ f871da95-6710-4c0f-a3a1-890dd59a41a1
 A, C, R
 
 # ╔═╡ 079cd7ef-632d-41d0-866d-6678808a8f4c
-let
+begin
 	K = size(A, 1)
 	D = size(y, 1)
 	
 	# specify initial priors (hyper-params)
 	α = ones(K)
 	γ = ones(K)
-	a = 0.1
-	b = 0.1
-	μ_0 = zeros(K)
-	Σ_0 = Matrix{Float64}(I, K, K)
+	a = 0.001
+	b = 0.001
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	l_off = vb_dlm(y, hpp) 
-	l_on = vb_dlm(y, hpp, true, 900)
+	exp_f = vb_dlm(y, hpp) # no hyperparameter learning
 
-	# results with hyperparam learning on and off
-	l_on, l_off
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
+# ╔═╡ d60b91ea-a020-41b5-9364-787167f0bac9
+let
+	exp_ρ, exp_log_ρ = vb_dlm(y, hpp, true, 100, 99, true)
+	a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+	a/b # ρ̄_s
+end
+
+# ╔═╡ eef75a73-0cb8-45da-935c-88eb303d2e74
+xs, σs = vb_e(y, exp_f, hpp, true);
+
 # ╔═╡ ed704f46-779c-4369-8a3b-d3e8cf0f4dd1
-begin
+# ╠═╡ disabled = true
+#=╠═╡
+let
 	Random.seed!(99)
 	y_ml, xs_ml = gen_data(Diagonal([1.0, 1.0]), C, zeros(2, 2), R, μ_0, Σ_0, 1000)
 end
+  ╠═╡ =#
 
 # ╔═╡ 6550261c-a3b8-40bc-a4ac-c43ae33215ca
-begin
+# ╠═╡ disabled = true
+#=╠═╡
+let
 	Random.seed!(99)
 	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 1000)
 end
-
-# ╔═╡ 1a129b6f-74f0-404c-ae4f-3ae39c8431aa
-y, x_true
+  ╠═╡ =#
 
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╠═╡ disabled = true
@@ -1078,8 +1094,6 @@ function p_pairwise_x(Σs_, A, Υs)
 end
 
 # ╔═╡ ca825009-564e-43e0-9014-cce87c46533b
-# ╠═╡ disabled = true
-#=╠═╡
 function error_metrics(true_means, smoothed_means)
     T = size(true_means, 2)
     mse = sum((true_means .- smoothed_means).^2) / T
@@ -1089,7 +1103,35 @@ function error_metrics(true_means, smoothed_means)
 	# mean squared error (MSE), mean absolute deviation (MAD), and mean absolute percentage error (MAPE) 
     return mse, mad, mape
 end
-  ╠═╡ =#
+
+# ╔═╡ 9f1ae1a1-c565-4b00-834e-3ef628cc7959
+error_metrics(x_true, xs) # MSE, MAD, MAPE
+
+# ╔═╡ adbf92e5-8a86-4acf-8f50-d82e122a5f5f
+let
+	exp_hp = vb_dlm(y, hpp, true)
+	
+	xs, σs = vb_e(y, exp_f, hpp, true)
+	
+	println("MSE, MAD, MAPE ", error_metrics(x_true, xs))
+
+	exp_hp.A, exp_hp.C, inv(exp_hp.R⁻¹)
+end
+
+# ╔═╡ 6dc12cc2-da6f-4b90-8315-dff1531e09ae
+error_metrics(x_true, x_hat) # Kalman filter
+
+# ╔═╡ a051753c-87ed-4337-9f88-432141b96e6c
+let
+	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(x_hat, Px, ηs, Ψs, η_0 , Ψ_0, μ_0, Σ_0)
+	error_metrics(x_true, ωs) # Kalman Smoother
+end
+
+# ╔═╡ b551caf3-50f5-4df7-a632-e24b1e09b30e
+md"""
+### Hidden state x inference
+"""
 
 # ╔═╡ 8bd60367-2007-4d50-9d25-c12acd73be96
 md"""
@@ -1097,10 +1139,7 @@ MSE, MAD, MAPE error with Kalman Filter
 """
 
 # ╔═╡ f1cea551-4feb-44b4-a77e-03621c9b37b9
-# ╠═╡ disabled = true
-#=╠═╡
 error_metrics(x_true, x_hat)
-  ╠═╡ =#
 
 # ╔═╡ 4c8259f1-d3ae-4400-93cb-0a09b22a14ae
 md"""
@@ -1108,14 +1147,11 @@ MSE, MAD, MAPE error with **Kalman smoother**
 """
 
 # ╔═╡ a3677e9f-837b-4ba0-a29f-e60bf3712323
-# ╠═╡ disabled = true
-#=╠═╡
 let
 	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
 	ωs, Υs, ω_0, Υ_0 = parallel_smoother(x_hat, Px, ηs, Ψs, η_0 , Ψ_0, μ_0, Σ_0)
 	error_metrics(x_true, ωs) #lower error compared to filtered xs
 end
-  ╠═╡ =#
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -2230,7 +2266,7 @@ version = "1.4.1+0"
 # ╠═a8b50581-e5f3-449e-803e-ab31e6e0b812
 # ╟─85e2ada1-0adc-41a8-ab34-8043379ca0a4
 # ╠═2c9a233f-3a96-43dc-b783-b82642a82590
-# ╠═d9cb7c74-007d-4229-a576-a7a41fff565b
+# ╟─d9cb7c74-007d-4229-a576-a7a41fff565b
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
 # ╟─781d041c-1e4d-4354-b240-12511207bde0
 # ╠═cb1a9949-59e1-4ccb-8efc-aa2ffbadaab2
@@ -2246,38 +2282,46 @@ version = "1.4.1+0"
 # ╟─a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
 # ╠═8a73d154-236d-4660-bb21-24681ed7d315
 # ╟─408dd6d8-cb5f-49ce-944b-50a0d9cebef5
-# ╠═fb472969-3c3c-4787-8cf1-296f2c13ddf5
+# ╟─fb472969-3c3c-4787-8cf1-296f2c13ddf5
 # ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
 # ╠═87667a9e-02aa-4104-b5a0-0f6b9e98ba96
+# ╠═d60b91ea-a020-41b5-9364-787167f0bac9
 # ╟─b0b1f14d-4fbd-4995-845f-f19990460329
 # ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
 # ╟─3c63b27b-76e3-4edc-9b56-345738b97c41
 # ╠═f871da95-6710-4c0f-a3a1-890dd59a41a1
-# ╟─dc2c58de-98b9-4621-b465-064e8ab3caf1
 # ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
+# ╟─17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
+# ╠═eef75a73-0cb8-45da-935c-88eb303d2e74
+# ╠═9f1ae1a1-c565-4b00-834e-3ef628cc7959
+# ╟─7b185270-58d5-4406-8768-103d798fa326
+# ╠═adbf92e5-8a86-4acf-8f50-d82e122a5f5f
 # ╟─dab1fe9c-20a4-4376-beaf-02b5292ca7cd
+# ╠═6dc12cc2-da6f-4b90-8315-dff1531e09ae
+# ╠═a051753c-87ed-4337-9f88-432141b96e6c
+# ╟─be042373-ed3e-4e2e-b714-b4f9e5964b57
 # ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
 # ╠═ed704f46-779c-4369-8a3b-d3e8cf0f4dd1
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
 # ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
-# ╟─be042373-ed3e-4e2e-b714-b4f9e5964b57
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
 # ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa
 # ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
-# ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
+# ╟─59bcc9bf-276c-47e1-b6a9-86f90571c0fb
 # ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╟─5c221210-e1df-4015-b959-6d330b47be29
 # ╟─7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
 # ╟─e02d0dd5-6bab-4548-8bbe-d9b1759688c5
 # ╟─c417e618-41c2-454c-9b27-470988215d48
-# ╠═8950aa50-22b2-4299-83b2-b9abfd1d5303
-# ╠═30502079-9684-4144-8bcd-a70f2cb5928a
-# ╠═ca825009-564e-43e0-9014-cce87c46533b
+# ╟─8950aa50-22b2-4299-83b2-b9abfd1d5303
+# ╟─30502079-9684-4144-8bcd-a70f2cb5928a
+# ╟─ca825009-564e-43e0-9014-cce87c46533b
+# ╟─b551caf3-50f5-4df7-a632-e24b1e09b30e
 # ╟─8bd60367-2007-4d50-9d25-c12acd73be96
-# ╠═f1cea551-4feb-44b4-a77e-03621c9b37b9
+# ╟─f1cea551-4feb-44b4-a77e-03621c9b37b9
 # ╟─4c8259f1-d3ae-4400-93cb-0a09b22a14ae
 # ╟─a3677e9f-837b-4ba0-a29f-e60bf3712323
 # ╟─00000000-0000-0000-0000-000000000001

@@ -548,8 +548,7 @@ $ψ(a) = \ln b + \frac{1}{D} \sum_{s=1}^D \bar{\ln ρ_s}$
 
 $\frac{1}{b} = \frac{1}{D \times a} \sum_{s=1}^D \bar{ρ_s}$
 
-**TO-DO**: 
-These are also updated during learning, note for a valid gamma distribution, both a and b needs to be positive! 
+Updated during learning, for a valid gamma distribution, both a and b needs to be positive! 
 
 Using properties of Gamma distribution (shape $a$, inverse scale $b$), expectation and log expectation are given by:
 
@@ -621,10 +620,10 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_
 	"""
 	
 	# no random initialistion
-	W_A = Matrix{Float64}(K*I, K, K)
-	S_A = Matrix{Float64}(K*I, K, K)
-	W_C = Matrix{Float64}(K*I, K, K)
-	S_C = Matrix{Float64}(D*I, K, K)
+	W_A = Matrix{Float64}(T*I, K, K)
+	S_A = Matrix{Float64}(T*I, K, K)
+	W_C = Matrix{Float64}(T*I, K, K)
+	S_C = Matrix{Float64}(T*I, K, K)
 	
 	hss = HSS(W_A, S_A, W_C, S_C)
 	exp_np = missing
@@ -635,7 +634,7 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_
 		hss, ω_0, Υ_0 = vb_e(ys, exp_np, hpp)
 
 		if (hpp_learn)
-			if (i%5 == 0)
+			if (i%5 == 0) # update hyperparam every 5 iterations
 				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
 				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
 			end
@@ -690,13 +689,7 @@ md"""
 
 # ╔═╡ 24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
 md"""
-## Extra Testing notes:
-
-Case **matrix variate linear regression**, by choosing A = I (the identity matrix) and Q = 0 (the zero matrix) for the Dynamic Linear Model (DLM) setup has specific implications:
-
-    A = I: This choice implies that the state vector at time t is equal to the state vector at time t-1. In other words, the states do not change over time. This is a strong assumption and may not be applicable for all situations. However, it simplifies the model and can be useful in cases where we believe that the underlying state does not change significantly over time.
-
-    Q = 0: This choice implies that there is no process noise in the model. In other words, we are assuming that the evolution of the state over time is deterministic and not influenced by any unobserved random effects. This is also a strong assumption and may not be suitable in cases where there are unobserved influences on the state that we want to model.
+## Extra Testing
 """
 
 # ╔═╡ e3e78fb1-00aa-4399-8330-1d4a08742b42
@@ -841,7 +834,7 @@ begin
 	
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
-	T = 4000
+	T = 2000
 	
 	# Generate the toy dataset
 	Random.seed!(100)
@@ -927,7 +920,6 @@ A, C, R
 begin
 	K = size(A, 1)
 	D = size(y, 1)
-	
 	# specify initial priors (hyper-params)
 	α = ones(K)
 	γ = ones(K)
@@ -936,7 +928,7 @@ begin
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	exp_f = vb_dlm(y, hpp) # no hyperparameter learning
-
+	xs, σs = vb_e(y, exp_f, hpp, true)
 	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
@@ -944,29 +936,8 @@ end
 let
 	exp_ρ, exp_log_ρ = vb_dlm(y, hpp, true, 100, 99, true)
 	a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
-	a/b # ρ̄_s
+	a/b # ρ̄_s, which is the inverse of R's sth diagonal entry
 end
-
-# ╔═╡ eef75a73-0cb8-45da-935c-88eb303d2e74
-xs, σs = vb_e(y, exp_f, hpp, true);
-
-# ╔═╡ ed704f46-779c-4369-8a3b-d3e8cf0f4dd1
-# ╠═╡ disabled = true
-#=╠═╡
-let
-	Random.seed!(99)
-	y_ml, xs_ml = gen_data(Diagonal([1.0, 1.0]), C, zeros(2, 2), R, μ_0, Σ_0, 1000)
-end
-  ╠═╡ =#
-
-# ╔═╡ 6550261c-a3b8-40bc-a4ac-c43ae33215ca
-# ╠═╡ disabled = true
-#=╠═╡
-let
-	Random.seed!(99)
-	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 1000)
-end
-  ╠═╡ =#
 
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╠═╡ disabled = true
@@ -1105,52 +1076,36 @@ function error_metrics(true_means, smoothed_means)
 end
 
 # ╔═╡ 9f1ae1a1-c565-4b00-834e-3ef628cc7959
-error_metrics(x_true, xs) # MSE, MAD, MAPE
+println("MSE, MAD, MAPE: ", error_metrics(x_true, xs))
 
 # ╔═╡ adbf92e5-8a86-4acf-8f50-d82e122a5f5f
 let
 	exp_hp = vb_dlm(y, hpp, true)
-	
-	xs, σs = vb_e(y, exp_f, hpp, true)
-	
-	println("MSE, MAD, MAPE ", error_metrics(x_true, xs))
-
+	xs, σs = vb_e(y, exp_hp, hpp, true)
+	println("MSE, MAD, MAPE: ", error_metrics(x_true, xs))
 	exp_hp.A, exp_hp.C, inv(exp_hp.R⁻¹)
 end
 
 # ╔═╡ 6dc12cc2-da6f-4b90-8315-dff1531e09ae
-error_metrics(x_true, x_hat) # Kalman filter
+println("Kalman Filter MSE, MAD, MAPE: ", error_metrics(x_true, x_hat))
 
 # ╔═╡ a051753c-87ed-4337-9f88-432141b96e6c
 let
 	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
 	ωs, Υs, ω_0, Υ_0 = parallel_smoother(x_hat, Px, ηs, Ψs, η_0 , Ψ_0, μ_0, Σ_0)
-	error_metrics(x_true, ωs) # Kalman Smoother
+	println("Kalman Smoother MSE, MAD, MAPE: ", error_metrics(x_true, ωs)) # Kalman Smoother
 end
 
-# ╔═╡ b551caf3-50f5-4df7-a632-e24b1e09b30e
-md"""
-### Hidden state x inference
-"""
-
-# ╔═╡ 8bd60367-2007-4d50-9d25-c12acd73be96
-md"""
-MSE, MAD, MAPE error with Kalman Filter
-"""
-
-# ╔═╡ f1cea551-4feb-44b4-a77e-03621c9b37b9
-error_metrics(x_true, x_hat)
-
-# ╔═╡ 4c8259f1-d3ae-4400-93cb-0a09b22a14ae
-md"""
-MSE, MAD, MAPE error with **Kalman smoother**
-"""
-
-# ╔═╡ a3677e9f-837b-4ba0-a29f-e60bf3712323
+# ╔═╡ 6550261c-a3b8-40bc-a4ac-c43ae33215ca
 let
-	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
-	ωs, Υs, ω_0, Υ_0 = parallel_smoother(x_hat, Px, ηs, Ψs, η_0 , Ψ_0, μ_0, Σ_0)
-	error_metrics(x_true, ωs) #lower error compared to filtered xs
+	Random.seed!(5)
+	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 2000)
+	exp_f = vb_dlm(y_pca, hpp, true, 40)
+	xs, σs = vb_e(y_pca, exp_f, hpp, true)
+	println("VB PPCA, MSE, MAD, MAPE: ", error_metrics(xs_pca, xs))
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+
+	# Should recover A as the zero matrices, C and R same as normal setting.
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2290,18 +2245,16 @@ version = "1.4.1+0"
 # ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
 # ╟─3c63b27b-76e3-4edc-9b56-345738b97c41
 # ╠═f871da95-6710-4c0f-a3a1-890dd59a41a1
-# ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
 # ╟─17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
-# ╠═eef75a73-0cb8-45da-935c-88eb303d2e74
-# ╠═9f1ae1a1-c565-4b00-834e-3ef628cc7959
+# ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
+# ╟─9f1ae1a1-c565-4b00-834e-3ef628cc7959
 # ╟─7b185270-58d5-4406-8768-103d798fa326
 # ╠═adbf92e5-8a86-4acf-8f50-d82e122a5f5f
 # ╟─dab1fe9c-20a4-4376-beaf-02b5292ca7cd
-# ╠═6dc12cc2-da6f-4b90-8315-dff1531e09ae
-# ╠═a051753c-87ed-4337-9f88-432141b96e6c
+# ╟─6dc12cc2-da6f-4b90-8315-dff1531e09ae
+# ╟─a051753c-87ed-4337-9f88-432141b96e6c
 # ╟─be042373-ed3e-4e2e-b714-b4f9e5964b57
 # ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
-# ╠═ed704f46-779c-4369-8a3b-d3e8cf0f4dd1
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
 # ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
@@ -2319,10 +2272,5 @@ version = "1.4.1+0"
 # ╟─8950aa50-22b2-4299-83b2-b9abfd1d5303
 # ╟─30502079-9684-4144-8bcd-a70f2cb5928a
 # ╟─ca825009-564e-43e0-9014-cce87c46533b
-# ╟─b551caf3-50f5-4df7-a632-e24b1e09b30e
-# ╟─8bd60367-2007-4d50-9d25-c12acd73be96
-# ╟─f1cea551-4feb-44b4-a77e-03621c9b37b9
-# ╟─4c8259f1-d3ae-4400-93cb-0a09b22a14ae
-# ╟─a3677e9f-837b-4ba0-a29f-e60bf3712323
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -70,7 +70,7 @@ begin
 	A = 1.0
 	C = 1.0
 	R = 0.2
-	y, x_true = gen_data(A, C, 1.0, R, 0.0, 1.0, T) #A, C = 1.0, R = 0.15, Q = 1.0
+	y, x_true = gen_data(A, C, 1.0, R, 0.0, 1.0, T) #A, C = 1.0, R = 0.2, Q = 1.0
 end
 
 # ╔═╡ d1ab75c8-5d7e-4d42-9b54-c48cd0e61e90
@@ -359,7 +359,6 @@ function vb_e_uni(y::Vector{Float64}, hpp::HPP_uni, exp_np::Exp_ϕ_uni, smooth_o
 
 	# marginal (smoothed) means, covs, and pairwise beliefs 
 	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, σs, ηs, Ψs, η₀, Ψ₀, hpp.μ₀, hpp.σ₀)
-
 	Υ_ₜ₋ₜ₊₁ = v_pairwise_x(σs_, exp_np, Ψs)
 
 	# hidden state sufficient stats 
@@ -411,21 +410,12 @@ begin
 end
 
 # ╔═╡ c3669042-bb56-423e-a077-b0cb82ce74a3
-function vb_dlm(y::Vector{Float64}, hpp::HPP_uni, max_iter=2000, r_seed=20)
+function vb_dlm(y::Vector{Float64}, hpp::HPP_uni, max_iter=1000)
 	T = length(y)
-
-	"""
-	# random initialisation
-	Random.seed!(r_seed) 
-	W_A = 1.0 + rand()
-	S_A = 1.0 + rand()
-	W_C = 1.0 + rand()
-	S_C = 1.0 + rand()
-	"""
 	
 	# no randomness
-	W_A = 1.0 
-	S_A = 1.0 
+	W_A = 1.0
+	S_A = 1.0
 	W_C = 1.0
 	S_C = 1.0
 	
@@ -437,12 +427,11 @@ function vb_dlm(y::Vector{Float64}, hpp::HPP_uni, max_iter=2000, r_seed=20)
     history_R = []
 	
 	for i in 1:max_iter
-
 		exp_np = vb_m_uni(y, hss, hpp)
 				
 		hss, ω_0, Υ_0 = vb_e_uni(y, hpp, exp_np)
 
-		if(i > 50) # discard the first 50 to see better plots
+		if(i > 50) # discard the first 10 to see better plots
 			push!(history_A, deepcopy(exp_np.A))
 			push!(history_C, deepcopy(exp_np.C))
        	 	push!(history_R, deepcopy(1/exp_np.R⁻¹))
@@ -461,18 +450,19 @@ md"""
 begin
 	α = 1.0
 	γ = 1.0
-	a = 0.1
-	b = 0.1
+	a = 0.001
+	b = 0.001
 	μ_0 = 0.0
 	σ_0 = 1.0
 
 	hpp = HPP_uni(a, b, α, γ, μ_0, σ_0)
-	exp_f, As, Cs, Rs = vb_dlm(y, hpp, 4000) # 4000 iterations ? better initialisation possible?
+	exp_f, As, Cs, Rs = vb_dlm(y, hpp, 4000) 
 
 	p1 = plot(As, title = "A over iterations", legend = false)
 	p2 = plot(Cs, title = "C over iterations", legend = false)
 	p3 = plot(Rs, title = "R over iterations", legend = false)
-	
+
+	# A convergence is quick, but C and R are relatively slow
 	plot(p1, p2, p3, layout = (3, 1))
 end
 
@@ -492,7 +482,7 @@ error_metrics(x_true, xs) # MSE, MAD, MAPE of VB inference
 
 # ╔═╡ 17c95e9b-958e-4b85-a146-686868d7760c
 md"""
-TO-DO: investigate different low data-regime performance? here at T=300, VB is able to outperform traditional Kalman filter and smoother
+**TO-DO**: investigate different low data-regime performance? here at $T=300$, VB is able to outperform traditional Kalman filter and smoother, but at the expense of 4000 VB iterations.
 """
 
 # ╔═╡ 06b9d658-7d19-448d-8c02-6fabc5d4a551

@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.13
+# v0.19.25
 
 using Markdown
 using InteractiveUtils
@@ -8,9 +8,8 @@ using InteractiveUtils
 begin
 	using Distributions, Plots, Random
 	using LinearAlgebra
-	using StatsBase
+	# using StatsBase
 	using StatsFuns
-	using HMMBase
 	using SpecialFunctions
 	using PlutoUI
 end
@@ -145,65 +144,602 @@ $q(C|\mathbf{ρ}) = \prod_{s=1}^D \mathcal N(c_s|Λ_C^{-1} S_{C, s}, \ ρ_s^{-1}
 
 where $Λ_C = diag(\mathbf{γ}) + W_C$, $S_{C,s}$ is the sth column of matrix $S_C$,
 
-$G = \sum_{t=1}^T y_t y_t^T - S_C Λ_C^{-1} S_C$
+$G = \sum_{t=1}^T y_t y_t^T - S_C^T Λ_C^{-1} S_C$
 
 After integrating out the precision vector $\mathbf{ρ}$, full marginal of C should be Student-t distributed.
 
 ### Natural parameterisation
 
-$ϕ(\mathbf{θ}) = ϕ(A, C, R) = \{A, \ A^TA, \ C^TR^{-1}C, \ R^{-1}C, \ R^{-1}, \ \ln|R^{-1}|\}$
+$ϕ(\mathbf{θ}) = ϕ(A, C, R) = \{A, \ A^TA, \ C, \ R^{-1},  C^TR^{-1}C, \ R^{-1}C \}$
 
 The VBM Step computes the expected natural parameter: $\langle ϕ(\mathbf{θ}) \rangle_{q_θ(θ)}$
 """
 
 # ╔═╡ 9381e183-5b4e-489f-a109-4e606212986e
 # hidden state sufficient statistics
-struct hss
-	W_A
-	S_A
-	W_C
-	S_C
+struct HSS
+    W_A::Matrix{Float64}
+    S_A::Matrix{Float64}
+    W_C::Matrix{Float64}
+    S_C::Matrix{Float64}
+
+	# can be extended to incorporate driving input/ HSSMs
 end
 
 # ╔═╡ 45b0255d-72fd-4fa7-916a-4f73e730f4d5
 # expected natural parameters
 struct Exp_ϕ
 	A
-	AAᵀ
+	AᵀA
+	C
+	R⁻¹
 	CᵀR⁻¹C
 	R⁻¹C
-	R⁻¹
-	log_det_R⁻¹
-	
-	ρ_s
-	log_ρ_s
 	CᵀR⁻¹
+
+	# TO-DO: ELBO computation and Convergence check
+	"""
+	log_det_R⁻¹
+	"""
+end
+
+# ╔═╡ 6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
+# hyper-prior parameters
+struct HPP
+    α::Vector{Float64} # precision vector for transition A
+    γ::Vector{Float64}  # precision vector for emission C
+    a::Float64 # gamma rate of ρ
+    b::Float64 # gamma inverse scale of ρ
+    μ_0::Vector{Float64} # auxiliary hidden state mean
+    Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
 end
 
 # ╔═╡ a8b50581-e5f3-449e-803e-ab31e6e0b812
-function vb_m(ys, Λ_hp, ss::hss)
-	# infer parameter posterior q_θ(θ)
-	
+# input: data, hyperprior, and e-step suff stats
+# infer parameter posterior q_θ(θ)
+function vb_m(ys, hps::HPP, ss::HSS)
+	D, T = size(ys)
 	W_A = ss.W_A
 	S_A = ss.S_A
 	W_C = ss.W_C
 	S_C = ss.S_C
+	α = hps.α
+	γ = hps.γ
+	a = hps.a
+	b = hps.b
+	K = length(α)
+	
+	# q(A), q(ρ), q(C|ρ)
+    Σ_A = inv(diagm(α) + W_A)
+	Σ_C = inv(diagm(γ) + W_C)
+	
+	G = sum(ys[:, t] * ys[:, t]' for t in 1:T) - S_C' * Σ_C * S_C
+	a_ = a + 0.5 * T
+	a_s = a_ * ones(D)
+    b_s = [b + 0.5 * G[i, i] for i in 1:D]
 
-	# compute q(A), q(ρ), q(C|ρ)
+	q_ρ = Gamma.(a_s, 1 ./ b_s)
+	ρ̄ = mean.(q_ρ)
+	
+	# Exp_ϕ 
+	Exp_A = S_A'*Σ_A
+	Exp_AᵀA = Exp_A'*Exp_A + K*Σ_A
+	Exp_C = S_C'*Σ_C
+	Exp_R⁻¹ = diagm(ρ̄)
+	
+	Exp_CᵀR⁻¹C = Exp_C'*Exp_R⁻¹*Exp_C + D*Σ_C
+	Exp_R⁻¹C = Exp_R⁻¹*Exp_C
+	Exp_CᵀR⁻¹ = Exp_C'*Exp_R⁻¹
 
+	# update hyperparameter (after m-step)
+	α_n = [K/((K*Σ_A + Σ_A*S_A*S_A'*Σ_A)[j, j]) for j in 1:K]
+	γ_n = [D/((D*Σ_C + Σ_C*S_C*Exp_R⁻¹*S_C'*Σ_C)[j, j]) for j in 1:K]
 
-	# compute Exp_ϕ 
-
+	# for updating gamma hyperparam a, b       
+	exp_ρ = a_s ./ b_s
+	exp_log_ρ = [(digamma(a_) - log(b_s[i])) for i in 1:D]
 	
 	# return expected natural parameters :: Exp_ϕ (for e-step)
-	
+	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹), α_n, γ_n, exp_ρ, exp_log_ρ
 end
+
+# ╔═╡ 85e2ada1-0adc-41a8-ab34-8043379ca0a4
+md"""
+### Testing M-step
+"""
 
 # ╔═╡ 01b6b048-6bd6-4c5a-8586-066cecf3ed51
 md"""
 ## VBE Step: Forward Backward
 
 
+"""
+
+# ╔═╡ 781d041c-1e4d-4354-b240-12511207bde0
+md"""
+### Forward recursion (filtering)
+
+**Variational derivation**
+
+$\begin{align}
+α_t(x_t) &= \frac{1}{ζ_t^{'}} \int dx_{t-1} \ \mathcal N(x_{t-1}|μ_{t-1}, Σ_{t-1}) \ \langle p(x_t| x_{t-1}) p(y_t|x_t) \rangle_{q_θ(θ)} \\
+&= \frac{1}{ζ_t^{'}} \int dx_{t-1} \ \mathcal N(x_{t-1}|μ_{t-1}, Σ_{t-1}) \\
+&* \exp \frac{-1}{2} (\langle (x_t - Ax_{t-1})^T I (x_t - Ax_{t-1}) + (y_t - Cx_t)^T R^{-1} (y_t - Cx_t) + K \ln|2π| + \ln|2π R| \rangle_{q_θ(θ)}) \\
+&= \frac{1}{ζ_t^{'}} \int dx_{t-1} \ \mathcal N(x_{t-1}|μ_{t-1}, Σ_{t-1}) \\
+&* \exp \frac{-1}{2} \{ x_{t-1}^T \langle A^TA \rangle_{q_θ(θ)} x_{t-1} - 2x_{t-1}^T \langle A \rangle_{q_θ(θ)} x_t + x_t^T \langle C^TR^{-1}C \rangle_{q_θ(θ)} x_t - 2x_t^T\langle C^TR^{-1}\rangle_{q_θ(θ)} y_t + const. \}\\
+&= \mathcal N(x_t|μ_t, Σ_t)
+\end{align}$
+
+where $\langle \cdot \rangle_{q_θ(θ)}$, expectation under the variational posterior parameters are calculated from the VBM step.
+
+Recognizing quadratic terms of $x_t$ and $x_{t-1}$ in the exponent. Analog to point-parameter derviation above, parameter expectations $\langle \cdot \rangle_{q_θ(θ)}$ from VBM step now take the place of fixed $A,C,R$, yielding:
+
+$\mathbf{Σ^*} = (Σ_{t-1}^{-1} + \langle A^TA \rangle)^{-1}$
+$m^* = Σ^* (Σ_{t-1}^{-1}μ_{t-1} + \langle A \rangle^Tx_t)$
+
+and filtered mean and co-variance as:
+
+$Σ_t = (I + \langle C^T R^{-1} C \rangle - \langle A \rangle \mathbf{Σ^*} \langle A \rangle^T)^{-1}$
+
+$μ_t = Σ_t (\langle C^TR^{-1} \rangle y_t + \langle A \rangle \mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1})$
+
+where $t = \{1, ... T\}$
+"""
+
+# ╔═╡ cb1a9949-59e1-4ccb-8efc-aa2ffbadaab2
+function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
+    D, T = size(ys)
+    K = size(exp_np.A, 1)
+
+    μs = zeros(K, T)
+    Σs = zeros(K, K, T)
+	Σs_ = zeros(K, K, T)
+	
+	# TO-DO: ELBO and convergence check
+	#Qs = zeros(D, D, T)
+	#fs = zeros(D, T)
+
+	# Extract μ_0 and Σ_0 from the HPP struct
+    μ_0 = hpp.μ_0
+    Σ_0 = hpp.Σ_0
+
+	# initialise for t=1
+	Σ₀_ = inv(inv(Σ_0) + exp_np.AᵀA)
+	Σs_[:, :, 1] = Σ₀_
+	
+    Σs[:, :, 1] = inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σ₀_*exp_np.A')
+    μs[:, 1] = Σs[:, :, 1]*(exp_np.CᵀR⁻¹*ys[:, 1] + exp_np.A*Σ₀_*inv(Σ_0)μ_0)
+
+	# iterate over T
+	for t in 2:T
+		Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + exp_np.AᵀA)
+		Σs_[:, :, t] = Σₜ₋₁_
+		
+		Σs[:, :, t] = inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σₜ₋₁_*exp_np.A')
+    	μs[:, t] = Σs[:, :, t]*(exp_np.CᵀR⁻¹*ys[:, t] + exp_np.A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
+
+	end
+
+	return μs, Σs, Σs_
+end
+
+# ╔═╡ c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
+md"""
+### Backward recursion (smoothing)
+
+**Variational analysis** (parallel implementation)
+
+Similarly, we use expectation of natural parameter under variational distribution (VBM outputs) to replace the fixed point $A,C,R$ in Point-parameter implementation.
+
+
+$\mathbf{Ψ_t^*} = (I + \langle C^TR^{-1}C \rangle + Ψ_t^{-1})^{-1}$
+
+$Ψ_{t-1} = (\langle A^TA \rangle - \langle A \rangle^T\mathbf{Ψ_t^*} \langle A \rangle)^{-1}$
+
+$η_{t-1} = Ψ_{t-1} \langle A \rangle^T \mathbf{Ψ_t^*}(\langle C^TR^{-1} \rangle y_t + Ψ_t^{-1}η_t)$
+
+where, $t = \{T, ..., 1\}$
+"""
+
+# ╔═╡ 8cb62a79-7dbc-4c94-ae7b-2e2cc12764f4
+function v_backward(ys::Matrix{Float64}, exp_np::Exp_ϕ)
+    D, T = size(ys)
+    K = size(exp_np.A, 1)
+
+	ηs = zeros(K, T)
+    Ψs = zeros(K, K, T)
+
+    # Initialize the filter, t=T, β(x_T-1)
+	Ψs[:, :, T] = zeros(K, K)
+    ηs[:, T] = ones(K)
+	
+	Ψₜ = inv(I + exp_np.CᵀR⁻¹C)
+	Ψs[:, :, T-1] = inv(exp_np.AᵀA - exp_np.A'*Ψₜ*exp_np.A)
+	ηs[:, T-1] = Ψs[:, :, T-1]*exp_np.A'*Ψₜ*exp_np.CᵀR⁻¹*ys[:, T]
+	
+	for t in T-2:-1:1
+		Ψₜ₊₁ = inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, t+1]))
+		
+		Ψs[:, :, t] = inv(exp_np.AᵀA - exp_np.A'*Ψₜ₊₁*exp_np.A)
+		ηs[:, t] = Ψs[:, :, t]*exp_np.A'*Ψₜ₊₁*(exp_np.CᵀR⁻¹*ys[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
+	end
+
+	# for t=1, this correspond to β(x_0), the probability of all the data given the setting of the auxiliary x_0 hidden state.
+	Ψ₁ = inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, 1]))
+		
+	Ψ_0 = inv(exp_np.AᵀA - exp_np.A'*Ψ₁*exp_np.A)
+	η_0 = Ψs[:, :, 1]*exp_np.A'*Ψ₁*(exp_np.CᵀR⁻¹*ys[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
+	
+	return ηs, Ψs, η_0, Ψ_0
+end
+
+# ╔═╡ d5457335-bc65-4bf1-b6ed-796dd5e2ab69
+md"""
+### Marginal and Pairwise beliefs
+
+**Variational Bayesian**
+
+We get **marginal beliefs** ($\mathbf{γ}$) by combining α and β messages from forward and backward recursion:
+
+$\begin{align}
+p(x_t|y_{1:T}) &\propto p(x_t|y_{1:t}) \ p(y_{t+1:T}|x_t) \\
+&= α_t(x_t)\ β_t(x_t) \\
+&= \mathcal N(x_t|ω_t, Υ_{t,t})
+\end{align}$
+
+Product of two Normal distributions are still normally distributed, with
+
+$Υ_{t,t} = (Σ_t^{-1} + Ψ_t^{-1})^{-1}$
+$ω_t = Υ_{t,t}(Σ_t^{-1}μ_t + Ψ_t^{-1}η_t)$
+
+We get **pairwise beliefs** ($\mathbf{ξ}$) as:
+
+$\begin{align}
+p(x_t, x_{t+1}|y_{1:T}) &\propto p(x_t|y_{1:t}) \ p(x_{t+1}|x_t)\ p(y_{t+1}|x_{t+1})\ p(y_{t+2:T}|x_{t+1}) \\
+&= α_t(x_t)\ p(x_{t+1}|x_t) \ p(y_{t+1}|x_{t+1}) \ β_{t+1}(x_{t+1}) \\
+&\xrightarrow{VB} α_t(x_t) \ \exp \langle \ln p(x_{t+1}|x_t) + \ln p(y_{t+1}|x_{t+1}) \rangle \ β_{t+1}(x_{t+1}) \\
+&= \mathcal N(\begin{bmatrix} x_t \\ x_{t+1} \end{bmatrix}|\begin{bmatrix} ω_t \\ ω_{t+1} \end{bmatrix}, \begin{bmatrix} Υ_{t,t} \ \ Υ_{t,t+1} \\ Υ_{t,t+1}^T \ \ Υ_{t+1,t+1}\end{bmatrix})\\
+\end{align}$
+
+where $Υ_{t,t+1} = \mathbf{Σ^*} \langle A \rangle^T (I + \langle C^T R^{-1} C \rangle + Ψ_{t+1}^{-1} - \langle A \rangle \mathbf{Σ^*} \langle A \rangle^T)^{-1}$
+"""
+
+# ╔═╡ 96ff4afb-fe7f-471a-b15e-26676c600090
+# combine forward and backward pass
+# marginals beliefs t = 0, ..., T (re-use for VB)
+function parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
+	K, T = size(μs)
+	Υs = zeros(K, K, T)
+	ωs = zeros(K, T)
+
+	# ending condition t=T
+	Υs[:, :, T] = Σs[:, :, T]
+	ωs[:, T] = μs[:, T]
+	
+	for t in 1:(T-1)
+		Υs[:, :, t] = inv(inv(Σs[:, :, t]) + inv(Ψs[:, :, t]))
+		ωs[:, t] = Υs[:, :, t]*(inv(Σs[:, :, t])μs[:, t] + inv(Ψs[:, :, t])ηs[:, t])
+	end
+
+	# t = 0
+	Υ_0 = inv(inv(Σ_0) + inv(Ψ_0))
+	ω_0 = Υ_0*(inv(Σ_0)μ_0 + inv(Ψ_0)η_0)
+	
+	return ωs, Υs, ω_0, Υ_0
+end
+
+# ╔═╡ 14d4e0a3-8db0-4c57-bb33-497e1bd3c64c
+md"""
+In summary, VBE Step consists of a forward pass (α_messages) and a backward pass (β-messages), and computing the marginal and pair-wise beliefs. 
+
+N.B. **calculating marginals straight after each $β_t(x_t)$ could be more efficient**
+"""
+
+# ╔═╡ c1640ff6-3047-42a5-a5cd-d0c77aa41179
+function v_pairwise_x(Σs_, exp_np::Exp_ϕ, Ψs)
+	T = size(Σs_, 3)
+    K = size(exp_np.A, 1)
+
+	# cross-covariance is then computed for all time steps t = 0, ..., T−1
+	Υ_ₜ₋ₜ₊₁ = zeros(K, K, T)
+	
+	for t in 1:T-2
+		Υ_ₜ₋ₜ₊₁[:, :, t+1] = Σs_[:, :, t+1]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, t+1]) - exp_np.A*Σs_[:, :, t+1]*exp_np.A')
+	end
+
+	# t=0, the cross-covariance between the zeroth and first hidden states.
+	Υ_ₜ₋ₜ₊₁[:, :, 1] = Σs_[:, :, 1]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, 1]) - exp_np.A*Σs_[:, :, 1]*exp_np.A')
+
+	# t=T-1, Ψs[T] = 0 special case
+	Υ_ₜ₋ₜ₊₁[:, :, T] = Σs_[:, :, T]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σs_[:, :, T]*exp_np.A')
+	
+	return Υ_ₜ₋ₜ₊₁
+end
+
+# ╔═╡ 6749ddf8-633b-498e-aecb-9e1592050ed2
+md"""
+### Expected sufficient statistics $W_A, S_A, W_C, S_C$
+
+$W_A = \sum_{t=1}^T \langle x_{t-1} x_{t-1}^T \rangle = \sum_{t=1}^T Υ_{t-1,t-1} + ω_{t-1} ω_{t-1}^T$
+
+$S_A = \sum_{t=1}^T \langle x_{t-1} x_t^T \rangle = \sum_{t=1}^T Υ_{t-1,t} + ω_{t-1} ω_t^T$
+
+$W_C = \sum_{t=1}^T \langle x_t x_t^T \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_t^T$
+
+$S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
+"""
+
+# ╔═╡ 52a70be4-fb8c-40d8-9c7a-226649ada6e3
+md"""
+**Debug notes**: if all hidden states are treated as observed, i.e. parse true x from data generation
+
+
+$\langle x_t x_t^T \rangle = \int x_t x_t^T q(x_t) \ dx_t$
+
+if $x_t$ is observed, $q(x_t)$ can be viewed as direct measure (delta function), hence 
+
+$\langle x_t x_t^T \rangle = x_t x_t^T$
+"""
+
+# ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
+# infer hidden state distribution q_x(x_0:T)
+function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP, smooth_out=false)
+    _, T = size(ys)
+	# forward pass α_t(x_t)
+	μs, Σs, Σs_ = v_forward(ys, exp_np, hpp)
+
+	# backward pass β_t(x_t)
+	ηs, Ψs, η₀, Ψ₀ = v_backward(ys, exp_np)
+
+	# marginal (smoothed) means, covs, and pairwise beliefs 
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η₀, Ψ₀, hpp.μ_0, hpp.Σ_0)
+
+	Υ_ₜ₋ₜ₊₁ = v_pairwise_x(Σs_, exp_np, Ψs)
+	
+	# hidden state sufficient stats 
+	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
+	W_A += Υ_0 + ω_0*ω_0'
+
+	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
+	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
+	
+	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
+	S_C = sum(ωs[:, t] * ys[:, t]' for t in 1:T)
+
+	if (smooth_out) # return variational smoothed mean, cov of hidden states
+		return ωs, Υs
+	end
+	
+	return HSS(W_A, S_A, W_C, S_C), ω_0, Υ_0
+end
+
+# ╔═╡ a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
+md"""
+### Testing E-step
+"""
+
+# ╔═╡ 408dd6d8-cb5f-49ce-944b-50a0d9cebef5
+md"""
+Ground truth HSS using x_true
+"""
+
+# ╔═╡ 9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
+md"""
+### Hyper-param learning - Hierachical Model
+
+N.B. should be cautious with model comparison and structure discovery tasks.
+
+Our prior specification involves a few hyper-parameters $\mathbf{α}, \mathbf{γ}$, and the prior parameters $Σ_0$ and $μ_0$
+
+Straight after the VBM Step, the following can be updated:
+
+$α_j^{-1} = \frac{1}{K}\{K Σ_A + Σ_AS_AS_A^TΣ_A\}_{j, j}$
+
+$γ_j^{-1} = \frac{1}{D}\{D Σ_C + Σ_C S_C diag(\mathbf{\bar{ρ}}) S_C^T Σ_C \}_{j, j}$
+
+$Σ_0 = Υ_{0, 0}$
+
+$μ_0 = ω_0$
+
+The **+ve** hyperparameters $a, b$ governing the prior distribution over the output noise,
+$R = diag (\mathbf{ρ})$, are set to the fixed point of the equations [See Beal Appendix C.2 for how to solve]:
+
+$ψ(a) = \ln b + \frac{1}{D} \sum_{s=1}^D \bar{\ln ρ_s}$
+
+$\frac{1}{b} = \frac{1}{D \times a} \sum_{s=1}^D \bar{ρ_s}$
+
+Updated during learning, for a valid gamma distribution, both a and b needs to be positive! 
+
+Using properties of Gamma distribution (shape $a$, inverse scale $b$), expectation and log expectation are given by:
+
+$\bar{ρ_s} \equiv \langle ρ_s \rangle = \frac{a + 0.5 T}{b + 0.5 G_{ss}}$
+
+$\bar{\ln ρ_s} \equiv \langle \ln ρ_s \rangle = ψ(a + 0.5T) - \ln(b + 0.5 G_{ss})$
+
+To avoid solving for -ve values of $a$, we can re-parameterize $a$ to $a'$ such that $a = \exp(a')$ to ensure $a$ is always positive, and then solve a different fixed point equation for $a'$:
+
+$a_n' = a' - \frac{g(a')}{g'(a')}$
+
+$\exp(a_n') = \exp(a') \exp(-\frac{g(a')}{g'(a')})$
+
+$g(a') = ψ(\exp(a')) - a' + \ln d - c$
+
+$g'(a') = ψ'(\exp(a')) \exp(a') - 1$
+
+Hence,
+
+$a_n = a \exp(- \frac{ψ(a) - \ln (a) + \ln d - c}{a ψ'(a) -1)})$
+"""
+
+# ╔═╡ 87667a9e-02aa-4104-b5a0-0f6b9e98ba96
+# cf. Newton's method, from Beal appendix C2
+function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64})
+    D = length(exp_ρ)
+    d = mean(exp_ρ)
+    c = mean(exp_log_ρ)
+    
+    # Update `a` using fixed point iteration
+	a = hpp.a		
+
+    for _ in 1:100
+        ψ_a = digamma(a)
+        ψ_a_p = trigamma(a)
+        
+        a_new = a * exp(-(ψ_a - log(a) + log(d) - c) / (a * ψ_a_p - 1))
+		a = a_new
+
+		# check convergence
+        if abs(a_new - a) < 1e-5
+            break
+        end
+    end
+    
+    # Update `b` using the converged value of `a`
+    b = a/d
+
+	return a, b
+end
+
+# ╔═╡ b0b1f14d-4fbd-4995-845f-f19990460329
+md"""
+## VB DLM
+"""
+
+# ╔═╡ 1902c1f1-1246-4ab3-88e6-35619d685cdd
+function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_seed=99, debug=false)
+	D, T = size(ys)
+	K = length(hpp.α)
+
+	"""
+	# random initialisation
+	Random.seed!(r_seed)
+	W_A = rand(K, K) + K*I
+	S_A = rand(K, K) + K*I
+	W_C = rand(K, K) + K*I
+	S_C = rand(D, K) + D*I
+	"""
+	
+	# no random initialistion
+	W_A = Matrix{Float64}(T*I, K, K)
+	S_A = Matrix{Float64}(T*I, K, K)
+	W_C = Matrix{Float64}(T*I, K, K)
+	S_C = Matrix{Float64}(T*I, K, K)
+	
+	hss = HSS(W_A, S_A, W_C, S_C)
+	exp_np = missing
+
+	for i in 1:max_iter
+		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ = vb_m(ys, hpp, hss)
+		
+		hss, ω_0, Υ_0 = vb_e(ys, exp_np, hpp)
+
+		if (hpp_learn)
+			if (i%5 == 0) # update hyperparam every 5 iterations
+				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
+			end
+		end
+
+		#TO-DO: ELBO and Convergence check
+
+		if (i == max_iter)
+			if (debug) # debug a, b update
+				return exp_ρ, exp_log_ρ
+			end
+		end
+	end
+		
+	return exp_np
+end
+
+# ╔═╡ 3c63b27b-76e3-4edc-9b56-345738b97c41
+md"""
+Ground truth values of DLM parameters A, C, R
+"""
+
+# ╔═╡ 17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
+md"""
+### Hidden state x inference (variational)
+"""
+
+# ╔═╡ 7b185270-58d5-4406-8768-103d798fa326
+md"""
+### With Hyperparameter learning
+"""
+
+# ╔═╡ dab1fe9c-20a4-4376-beaf-02b5292ca7cd
+md"""
+Adding hyperparameter learning showed better results of learning A, C, R.
+
+Hidden state (xs) learning outperform Kalman Filter and very close to Kalman smoother.
+"""
+
+# ╔═╡ be042373-ed3e-4e2e-b714-b4f9e5964b57
+md"""
+## Debugging notes: 
+
+-> check vb-m with HSS using x_true (✓)
+
+-> check vb-e with Exp_ϕ using A, C, R (✓)
+
+-> check forward, backward with StateSpaceModels -> consider first uni-variate local level model (✓ - see separate notebook)
+
+-> verify with MCMC and Turing (✓ - see separate notebook)
+"""
+
+# ╔═╡ 24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
+md"""
+## Extra Testing
+"""
+
+# ╔═╡ e3e78fb1-00aa-4399-8330-1d4a08742b42
+md"""
+Case **probabilistic PCA**, To reduce a DLM to PPCA, we should set:
+
+    The state transition matrix A to be a zero matrix. This means that the hidden state does not depend on the previous hidden state, which is consistent with the assumption of PPCA where hidden states are independently drawn from a Gaussian distribution.
+
+    The process noise covariance matrix Q to be an identity matrix. This means that the hidden states are sampled from a standard Gaussian distribution.
+
+    The initial state mean to be a zero vector and the initial state covariance to be an identity matrix. This is consistent with the assumption in PPCA where the hidden states are sampled from a standard Gaussian distribution.
+
+With these settings, the DLM essentially becomes a model where the observed variables are linear functions of the hidden states (with some Gaussian noise), and the hidden states are independently drawn from a Gaussian distribution. This is the setting of PPCA.
+"""
+
+# ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
+md"""
+## Appendix
+"""
+
+# ╔═╡ 8fed847c-93bc-454b-94c7-ba1d13c73b04
+md"""
+**Generate test data**
+"""
+
+# ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
+function gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	K, _ = size(A)
+	D, _ = size(C)
+	x = zeros(K, T)
+	y = zeros(D, T)
+
+	x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + Q))
+	y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
+
+	for t in 2:T
+		if (tr(Q) != 0)
+			x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
+		else
+			x[:, t] = A * x[:, t-1] # Q zero matrix special case
+		end
+		y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
+	end
+
+	return y, x
+end
+
+# ╔═╡ baca3b20-16ac-4e37-a2bb-7512d1c99eb8
+md"""
+### Kalman Filter
 """
 
 # ╔═╡ e7ca9061-64dc-44ef-854e-45b8015abad1
@@ -245,23 +781,25 @@ $Q_t = (R^{-1} - R^{-1}CΣ_tC^TR^{-1})^{-1}$
 
 $f_t = Q_tR^{-1}CΣ_tA\mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1}$
 
-N.B. compared to `Dynamic Linear Model with R` Chap 2.7.2, results above have not been simplified, this is a delibrate choice in order to get an analog with Variational Bayesian derviation next.
+N.B. Unlike `Dynamic Linear Model with R` Chap 2.7.2, results above taken from Beal's thesis have not been simplified, this is a purposeful choice in order to get an analog with the **Variational Bayesian derviation** next.
 """
 
 # ╔═╡ 59bcc9bf-276c-47e1-b6a9-86f90571c0fb
-# using Beale 5.77, 5.80, 5.81, forward pass
-function kalman_filter(ys, A, C, R, μ₀, Σ₀)
+# using Beale 5.77, 5.80, 5.81, forward pass - Kalman-filter
+function p_forward(ys, A, C, R, μ₀, Σ₀)
     D, T = size(ys)
     K = size(A, 1)
-
+	
     μs = zeros(K, T)
     Σs = zeros(K, K, T)
-
+	Σs_ = zeros(K, K, T)
 	Qs = zeros(D, D, T)
 	fs = zeros(D, T)
 	
     # Initialize the filter, t=1
 	Σ₀_ = inv(inv(Σ₀) + A'A)
+	Σs_[:, :, 1] = Σ₀_
+	
     Σs[:, :, 1] = inv(I + C'inv(R)C - A*Σ₀_*A')
     μs[:, 1] = Σs[:, :, 1]*(C'inv(R)ys[:, 1] + A*Σ₀_*inv(Σ₀)μ₀)
 
@@ -272,6 +810,7 @@ function kalman_filter(ys, A, C, R, μ₀, Σ₀)
 	
     for t in 2:T
 		Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + A'A)
+		Σs_[:, :, 1] = Σₜ₋₁_
 
         Σs[:, :, t] = inv(I + C'inv(R)C - A*Σₜ₋₁_*A')
 		μs[:, t] = Σs[:, :, t]*(C'inv(R)ys[:, t] + A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
@@ -283,113 +822,170 @@ function kalman_filter(ys, A, C, R, μ₀, Σ₀)
 		#Qs[:, :, 1] = R + C*(I+A*Σs[:, :, t-1]*A')*C'
     end
 
-    return μs, Σs, fs, Qs
+    return μs, Σs, fs, Qs, Σs_
 end
 
-# ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╔═╡ 1a129b6f-74f0-404c-ae4f-3ae39c8431aa
 begin
-	function gen_data(A, C, R, μ_0, Σ_0, T)
-	    K, _ = size(A)
-	    D, _ = size(C)
-	    
-	    x = zeros(K, T)
-	    y = zeros(D, T)
-	
-	    x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + I))
-	    y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
-	
-	    for t in 2:T
-	        x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), I)) #state eq
-	        y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) #obs eq
-	    end
-	
-	    return y, x
-	end
-	
-	# Parameters for the toy dataset
-	A = [0.8 -0.1; 0.1 0.9]
+	# Ground truth values (A, C, R)
+	A = [0.8 -0.1; 0.2 0.75]
 	C = [1.0 0.0; 0.0 1.0]
-	
-	R = Diagonal([0.1, 0.1]) # prefer small R to get better filtered accuracy, c.f signal to noise ratio (DLM with R Chap 2)
+	R = Diagonal([0.33, 0.33]) # prefer small R to get better filtered accuracy, c.f signal to noise ratio (DLM with R Chap 2)
 	
 	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([0.5, 0.5])
-	T = 50
+	Σ_0 = Diagonal([1.0, 1.0])
+	T = 2000
 	
 	# Generate the toy dataset
-	Random.seed!(123)
-	y, x_true = gen_data(A, C, R, μ_0, Σ_0, T)
+	Random.seed!(100)
+	y, x_true = gen_data(A, C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, T)
 	
 	# Test the Kalman filter
-	x_hat, Px, y_hat, Py = kalman_filter(y, A, C, R, μ_0, Σ_0)
-end;
+	x_hat, Px, y_hat, Py, _ = p_forward(y, A, C, R, μ_0, Σ_0)
+end
+
+# ╔═╡ 2c9a233f-3a96-43dc-b783-b82642a82590
+A, C, R
+
+# ╔═╡ d9cb7c74-007d-4229-a576-a7a41fff565b
+let
+	D, T = size(y)
+	K = size(A, 1)
+
+	# DEBUG, initialise HSS using real x from data generation
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	W_A += μ_0*μ_0'
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	S_A += μ_0*x_true[:, 1]'
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+
+	hss = HSS(W_A, S_A, W_C, S_C)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	# should recover values of A, C, R close to ground truth
+	exp_np = vb_m(y, hpp, hss)[1]
+end
+
+# ╔═╡ 8a73d154-236d-4660-bb21-24681ed7d315
+let
+	D, T = size(y)
+	K = size(A, 1)
+
+	# use fixed A,C,R from ground truth for the exp_np::Exp_ϕ
+	e_A = A
+	e_AᵀA = A'A
+	e_C = C
+	e_R⁻¹ = inv(R)
+	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
+	e_R⁻¹C = e_R⁻¹*e_C
+	e_CᵀR⁻¹ = e_C'*e_R⁻¹
+
+	exp_np = Exp_ϕ(e_A, e_AᵀA, e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	# should recover very similar hss using ground-truth xs
+	vb_e(y, exp_np, hpp)[1]
+end
+
+# ╔═╡ fb472969-3c3c-4787-8cf1-296f2c13ddf5
+let
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	W_A += μ_0*μ_0'
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	S_A += μ_0*x_true[:, 1]'
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	hss = HSS(W_A, S_A, W_C, S_C)
+end
+
+# ╔═╡ f871da95-6710-4c0f-a3a1-890dd59a41a1
+A, C, R
+
+# ╔═╡ 079cd7ef-632d-41d0-866d-6678808a8f4c
+begin
+	K = size(A, 1)
+	D = size(y, 1)
+	# specify initial priors (hyper-params)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	exp_f = vb_dlm(y, hpp) # no hyperparameter learning
+	xs, σs = vb_e(y, exp_f, hpp, true)
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ d60b91ea-a020-41b5-9364-787167f0bac9
+let
+	exp_ρ, exp_log_ρ = vb_dlm(y, hpp, true, 100, 99, true)
+	a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+	a/b # ρ̄_s, which is the inverse of R's sth diagonal entry
+end
 
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
+# ╠═╡ disabled = true
+#=╠═╡
 let
 	T = size(y, 2)
 	p1 = plot(1:T, x_true[1, :], label="True xs[1]", linewidth=2)
 	plot!(1:T, x_hat[1, :], label="Filtered xs[1]", linewidth=2, linestyle=:dash)
 end
+  ╠═╡ =#
 
 # ╔═╡ 5c221210-e1df-4015-b959-6d330b47be29
+# ╠═╡ disabled = true
+#=╠═╡
 let
 	T = size(y, 2)
 	p2 = plot(1:T, x_true[2, :], label="True xs[2]", linewidth=2)
 	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
 end
+  ╠═╡ =#
 
 # ╔═╡ 7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
+# ╠═╡ disabled = true
+#=╠═╡
 let
 	T = size(y, 2)
-	_, _, y_hat, y_cov = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	_, _, y_hat, y_cov = p_forward(y, A, C, R, μ_0, Σ_0)
 	y_hat = circshift(y_hat, (0, -1))
 	y_hat[:, T] .= NaN  # Set the first column to NaN to avoid connecting the last point to the first
 
 	p1 = plot(1:T, y[1, :], label="True y[1]", linewidth=2)
 	plot!(1:T, y_hat[1, :], label="Filtered y[1]", linewidth=2, linestyle=:dash)
 end
+  ╠═╡ =#
 
 # ╔═╡ e02d0dd5-6bab-4548-8bbe-d9b1759688c5
+# ╠═╡ disabled = true
+#=╠═╡
 let
 	T = size(y, 2)
-	_, _, y_hat, y_cov = kalman_filter(y, A, C, R, μ_0, Σ_0)
+	_, _, y_hat, y_cov = p_forward(y, A, C, R, μ_0, Σ_0)
 	y_hat = circshift(y_hat, (0, -1))
 	y_hat[:, T] .= NaN
 
 	p2 = plot(1:T, y[2, :], label="True y[2]", linewidth=2)
 	plot!(1:T, y_hat[2, :], label="Filtered y[2]", linewidth=2, linestyle=:dash)
 end
-
-# ╔═╡ 781d041c-1e4d-4354-b240-12511207bde0
-md"""
-### Forward recursion (filtering)
-
-**Variational derivation**
-
-$\begin{align}
-α_t(x_t) &= \frac{1}{ζ_t^{'}} \int dx_{t-1} \ \mathcal N(x_{t-1}|μ_{t-1}, Σ_{t-1}) \ \langle p(x_t| x_{t-1}) p(y_t|x_t) \rangle_{q_θ(θ)} \\
-&= \frac{1}{ζ_t^{'}} \int dx_{t-1} \ \mathcal N(x_{t-1}|μ_{t-1}, Σ_{t-1}) \\
-&* \exp \frac{-1}{2} (\langle (x_t - Ax_{t-1})^T I (x_t - Ax_{t-1}) + (y_t - Cx_t)^T R^{-1} (y_t - Cx_t) + K \ln|2π| + \ln|2π R| \rangle_{q_θ(θ)}) \\
-&= \frac{1}{ζ_t^{'}} \int dx_{t-1} \ \mathcal N(x_{t-1}|μ_{t-1}, Σ_{t-1}) \\
-&* \exp \frac{-1}{2} \{ x_{t-1}^T \langle A^TA \rangle_{q_θ(θ)} x_{t-1} - 2x_{t-1}^T \langle A \rangle_{q_θ(θ)} x_t + x_t^T \langle C^TR^{-1}C \rangle_{q_θ(θ)} x_t - 2x_t^T\langle C^TR^{-1}\rangle_{q_θ(θ)} y_t + const. \}\\
-&= \mathcal N(x_t|μ_t, Σ_t)
-\end{align}$
-
-where $\langle \cdot \rangle_{q_θ(θ)}$, expectation under the variational posterior parameters are calculated from the VBM step.
-
-Recognizing quadratic terms of $x_t$ and $x_{t-1}$ in the exponent. Analog to point-parameter derviation above, parameter expectations $\langle \cdot \rangle_{q_θ(θ)}$ from VBM step now take the place of fixed $A,C,R$, yielding:
-
-$\mathbf{Σ^*} = (Σ_{t-1}^{-1} + \langle A^TA \rangle)^{-1}$
-$m^* = Σ^* (Σ_{t-1}^{-1}μ_{t-1} + \langle A \rangle^Tx_t)$
-
-and filtered mean and co-variance as:
-
-$Σ_t = (I + \langle C^T R^{-1} C \rangle - \langle A \rangle \mathbf{Σ^*} \langle A \rangle^T)^{-1}$
-
-$μ_t = Σ_t (\langle C^TR^{-1} \rangle y_t + \langle A \rangle \mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1})$
-
-where $t = \{1, ... T\}$
-"""
+  ╠═╡ =#
 
 # ╔═╡ c417e618-41c2-454c-9b27-470988215d48
 md"""
@@ -422,7 +1018,8 @@ $η_{t-1} = Ψ_{t-1}A^T\mathbf{Ψ_t^*}(C^TR^{-1}y_t + Ψ_t^{-1}η_t)$
 """
 
 # ╔═╡ 8950aa50-22b2-4299-83b2-b9abfd1d5303
-function parallel_backward(A, C, R, y)
+# from t=T-1 to 0, point-parameter approach cf. Beal pg 180
+function parallel_backward(y, A, C, R)
 	D, T = size(y)
 	K = size(A, 1)
 
@@ -433,79 +1030,43 @@ function parallel_backward(A, C, R, y)
     Ψs[:, :, T] = zeros(K, K)
     ηs[:, T] = ones(K)
 
-	Ψₜ₊₁ = inv(I + C'inv(R)C)
+	Ψₜ = inv(I + C'inv(R)C)
 	
-	Ψs[:, :, T-1] = inv(A'A - A'*Ψₜ₊₁*A)
-	ηs[:, T-1] = Ψs[:, :, T-1]*A'Ψₜ₊₁*C'inv(R)y[:, T]
+	Ψs[:, :, T-1] = inv(A'A - A'*Ψₜ*A)
+	ηs[:, T-1] = Ψs[:, :, T-1]*A'*Ψₜ*C'inv(R)y[:, T]
 
-	
 	for t in (T - 2):-1:1
-		
 		Ψₜ₊₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, t+1]))
 		
 		Ψs[:, :, t] = inv(A'A - A'*Ψₜ₊₁*A)
-		ηs[:, t] = Ψs[:, :, t]A'Ψₜ₊₁*(C'inv(R)y[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
-	end
-	
-	return ηs, Ψs
-end
-
-# ╔═╡ 96ff4afb-fe7f-471a-b15e-26676c600090
-# combine forward (kalman-filter) and backward (parallel)
-function parallel_smoother(μs, Σs, ηs, Ψs)
-	K, T = size(μs)
-
-	Υs = zeros(K, K, T)
-	ωs = zeros(K, T)
-
-	# ending condition t=T
-	Υs[:, :, T] = Σs[:, :, T]
-	ωs[:, T] = μs[:, T]
-	
-	for t in 1:(T-1)
-		Υs[:, :, t] = inv(inv(Σs[:, :, t]) + inv(Ψs[:, :, t]))
-		ωs[:, t] = Υs[:, :, t]*(inv(Σs[:, :, t])μs[:, t] + inv(Ψs[:, :, t])ηs[:, t])
+		ηs[:, t] = Ψs[:, :, t]*A'*Ψₜ₊₁*(C'inv(R)y[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
 	end
 
-	return ωs, Υs
+	Ψ₁ = inv(I + C'inv(R)C + inv(Ψs[:, :, 1]))
+	Ψ_0 = inv(A'A - A'*Ψ₁*A)
+	η_0 = Ψs[:, :, 1]*A'Ψ₁*(C'inv(R)y[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
+	
+	return ηs, Ψs, η_0, Ψ_0
 end
 
-# ╔═╡ 9b85ce96-4a7e-4418-881c-e3f54445eab1
-let
-	ηs, Ψs = parallel_backward(A, C, R, y)
-	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
+# ╔═╡ 30502079-9684-4144-8bcd-a70f2cb5928a
+function p_pairwise_x(Σs_, A, Υs)
+	T = size(Σs_, 3)
+	K = size(A, 1)
 
-	T = size(y, 2)
-	p1 = plot(1:T, x_true[1, :], label="True xs[1]", linewidth=2)
-	plot!(1:T, x_hat[1, :], label="Filtered xs[1]", linewidth=2, linestyle=:dash)
-	plot!(1:T, ωs[1, :], label="Smoothed xs[1]", linewidth=2, linestyle=:dash)
-end
+	# cross-covariance is then computed for all time steps t = {0, . . . , T − 1}
+	Υ_ₜ₋ₜ₊₁ = zeros(K, K, T)
 
-# ╔═╡ abf89539-38db-4e7a-9dc0-94ea10372803
-let
-	ηs, Ψs = parallel_backward(A, C, R, y)
-	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
+	for t in 1:T
+		Υ_ₜ₋ₜ₊₁[:, :, t] = Σs_[:, :, t]*A'*Υs[:, :, t]
+	end
 
-	T = size(y, 2)
-	p1 = plot(1:T, x_true[2, :], label="True xs[2]", linewidth=2)
-	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
-	plot!(1:T, ωs[2, :], label="Smoothed xs[2]", linewidth=2, linestyle=:dash)
-end
-
-# ╔═╡ 0164a3d4-7801-4bb2-95f5-8323928f1769
-let
-	ηs, Ψs = parallel_backward(A, C, R, y)
-	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
-
-	T = size(y, 2)
-	p2 = plot(1:T, ωs[2, :], label="Smoothed xs[2]", linewidth=2)
-	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
+	return Υ_ₜ₋ₜ₊₁
 end
 
 # ╔═╡ ca825009-564e-43e0-9014-cce87c46533b
 function error_metrics(true_means, smoothed_means)
     T = size(true_means, 2)
-
     mse = sum((true_means .- smoothed_means).^2) / T
     mad = sum(abs.(true_means .- smoothed_means)) / T
     mape = sum(abs.((true_means .- smoothed_means) ./ true_means)) / T * 100
@@ -514,149 +1075,58 @@ function error_metrics(true_means, smoothed_means)
     return mse, mad, mape
 end
 
-# ╔═╡ f1cea551-4feb-44b4-a77e-03621c9b37b9
-error_metrics(x_true, x_hat)
+# ╔═╡ 9f1ae1a1-c565-4b00-834e-3ef628cc7959
+println("MSE, MAD, MAPE: ", error_metrics(x_true, xs))
 
-# ╔═╡ a3677e9f-837b-4ba0-a29f-e60bf3712323
+# ╔═╡ adbf92e5-8a86-4acf-8f50-d82e122a5f5f
 let
-	ηs, Ψs = parallel_backward(A, C, R, y)
-	ωs, Υs = parallel_smoother(x_hat, Px, ηs, Ψs)
-	error_metrics(x_true, ωs) #lower error compared to filtered xs
+	exp_hp = vb_dlm(y, hpp, true)
+	xs, σs = vb_e(y, exp_hp, hpp, true)
+	println("MSE, MAD, MAPE: ", error_metrics(x_true, xs))
+	exp_hp.A, exp_hp.C, inv(exp_hp.R⁻¹)
 end
 
-# ╔═╡ c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
-md"""
-### Backward recursion (smoothing)
+# ╔═╡ 6dc12cc2-da6f-4b90-8315-dff1531e09ae
+println("Kalman Filter MSE, MAD, MAPE: ", error_metrics(x_true, x_hat))
 
-**Variational analysis** (parallel implementation)
-
-Similarly, we use expectation of natural parameter under variational distribution (VBM outputs) to replace the fixed point $A,C,R$ in Point-parameter implementation.
-
-
-$\mathbf{Ψ_t^*} = (I + \langle C^TR^{-1}C \rangle + Ψ_t^{-1})^{-1}$
-
-$Ψ_{t-1} = (\langle A^TA \rangle - \langle A \rangle^T\mathbf{Ψ_t^*} \langle A \rangle)^{-1}$
-
-$η_{t-1} = Ψ_{t-1} \langle A \rangle^T \mathbf{Ψ_t^*}(\langle C^TR^{-1} \rangle y_t + Ψ_t^{-1}η_t)$
-
-where, $t = \{T, ..., 1\}$
-"""
-
-# ╔═╡ d5457335-bc65-4bf1-b6ed-796dd5e2ab69
-md"""
-### Marginal and Pairwise beliefs
-
-**Variational Bayesian**
-
-We get **marginal beliefs** ($\mathbf{γ}$) by combining α and β messages from forward and backward recursion:
-
-$\begin{align}
-p(x_t|y_{1:T}) &\propto p(x_t|y_{1:t}) \ p(y_{t+1:T}|x_t) \\
-&= α_t(x_t)\ β_t(x_t) \\
-&= \mathcal N(x_t|ω_t, Υ_{t,t})
-\end{align}$
-
-Product of two Normal distributions are still normally distributed, with
-
-$Υ_{t,t} = (Σ_t^{-1} + Ψ_t^{-1})^{-1}$
-$ω_t = Υ_{t,t}(Σ_t^{-1}μ_t + Ψ_t^{-1}η_t)$
-
-We get **pairwise beliefs** ($\mathbf{ξ}$) as:
-
-$\begin{align}
-p(x_t, x_{t+1}|y_{1:T}) &\propto p(x_t|y_{1:t}) \ p(x_{t+1}|x_t)\ p(y_{t+1}|x_{t+1})\ p(y_{t+2:T}|x_{t+1}) \\
-&= α_t(x_t)\ p(x_{t+1}|x_t) \ p(y_{t+1}|x_{t+1}) \ β_{t+1}(x_{t+1}) \\
-&\xrightarrow{VB} α_t(x_t) \exp \langle \ln p(x_{t+1}|x_t) + \ln p(y_{t+1}|x_{t+1}) \rangle β_{t+1}(x_{t+1}) \\
-&= \mathcal N(\begin{bmatrix} x_t \\ x_{t+1} \end{bmatrix}|\begin{bmatrix} ω_t \\ ω_{t+1} \end{bmatrix}, \begin{bmatrix} Υ_{t,t} \ \ Υ_{t,t+1} \\ Υ_{t,t+1}^T \ \ Υ_{t+1,t+1}\end{bmatrix})\\
-\end{align}$
-
-where $Υ_{t,t+1} = \mathbf{Σ^*} \langle A \rangle^T (I + \langle C^T R^{-1} C \rangle + Ψ_{t+1}^{-1} - \langle A \rangle \mathbf{Σ^*} \langle A \rangle^T)^{-1}$
-"""
-
-# ╔═╡ 14d4e0a3-8db0-4c57-bb33-497e1bd3c64c
-md"""
-In summary, VBE Step consists of a forward pass (α_messages) and a backward pass (β-messages), and computing the marginal and pair-wise beliefs. 
-
-N.B. **calculating marginals straight after each $β_t(x_t)$ could be more efficient**
-"""
-
-# ╔═╡ 6749ddf8-633b-498e-aecb-9e1592050ed2
-md"""
-### Expected sufficient statistics $W_A, S_A, W_C, S_C$
-
-$W_A = \sum_{t=1}^T \langle x_{t-1} x_{t-1}^T \rangle = \sum_{t=1}^T Υ_{t-1,t-1} + ω_{t-1} ω_{t-1}^T$
-
-$S_A = \sum_{t=1}^T \langle x_{t-1} x_t^T \rangle = \sum_{t=1}^T Υ_{t-1,t} + ω_{t-1} ω_t^T$
-
-$W_C = \sum_{t=1}^T \langle x_t x_t^T \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_t^T$
-
-$S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
-"""
-
-# ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
-function vb_e(ys, ϕ̄ :: Exp_ϕ)
-	# infer hidden state distribution q_x(x_0:T)
-
-
-	# compute forward pass α_t(x_t)
-
-
-	# compute backward pass β_t(x_t)
-
-
-	# compute marginal, pairwise beliefs 
-
-
-	# compute hidden state sufficient stats hss
-
-
-	# return hss (for m-step)
+# ╔═╡ a051753c-87ed-4337-9f88-432141b96e6c
+let
+	ηs, Ψs, η_0, Ψ_0 = parallel_backward(y, A, C, R)
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(x_hat, Px, ηs, Ψs, η_0 , Ψ_0, μ_0, Σ_0)
+	println("Kalman Smoother MSE, MAD, MAPE: ", error_metrics(x_true, ωs)) # Kalman Smoother
 end
 
-# ╔═╡ 9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
-md"""
-### Hyper-param learning
+# ╔═╡ 6550261c-a3b8-40bc-a4ac-c43ae33215ca
+let
+	Random.seed!(5)
+	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 2000)
+	exp_f = vb_dlm(y_pca, hpp, true, 30)
+	xs, σs = vb_e(y_pca, exp_f, hpp, true)
+	println("VB PPCA, MSE, MAD, MAPE: ", error_metrics(xs_pca, xs))
 
-Our prior specification involves a few hyper-parameters $\mathbf{α}, \mathbf{γ}$, and the prior parameters $Σ_0$ and $μ_0$
+	x_hat, Px, y_hat, Py, _ = p_forward(y_pca, zeros(2, 2), C, R, μ_0, Σ_0)
+	println("Filtered, MSE, MAD, MAPE: ", error_metrics(xs_pca, x_hat))
+	# Should recover A as the zero matrices, C and R same as normal setting.
 
-Straight after the VBM Step, the following can be updated:
-
-$α_j^{-1} = \frac{1}{K}\{K Σ_A + Σ_AS_AS_A^TΣ_A\}_{j, j}$
-
-$γ_j^{-1} = \frac{1}{D}\{D Σ_C + Σ_C S_C diag(\mathbf{\bar{ρ}}) S_C^T Σ_C \}_{j, j}$
-
-$Σ_0 = Υ_{0, 0}$
-
-$μ_0 = ω_0$
-
-The **+ve** hyperparameters $a, b$ governing the prior distribution over the output noise,
-$R = diag (\mathbf{ρ})$, are set to the fixed point of the equations [Beal Appendix C.2]:
-
-$ψ(a) = \ln b + \frac{1}{D} \sum_{s=1}^D \bar{\ln ρ_s}$
-
-$\frac{1}{b} = \frac{1}{D \times a} \sum_{s=1}^D \bar{ρ_s}$
-"""
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
-HMMBase = "b2b3ca75-8444-5ffa-85e6-af70e2b64fe7"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
-StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 
 [compat]
 Distributions = "~0.25.87"
-HMMBase = "~1.0.7"
 Plots = "~1.38.9"
 PlutoUI = "~0.7.50"
 SpecialFunctions = "~2.2.0"
-StatsBase = "~0.33.21"
 StatsFuns = "~1.3.0"
 """
 
@@ -664,20 +1134,15 @@ StatsFuns = "~1.3.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.8.5"
+julia_version = "1.9.0"
 manifest_format = "2.0"
-project_hash = "01bd09cc481c5de8fe518d060659129195b9ac7f"
+project_hash = "d5999de436990a28cca4f7280892b159fec7b049"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
 git-tree-sha1 = "8eaf9f1b4921132a4cff3f36a1d9ba923b14a481"
 uuid = "6e696c72-6542-2067-7265-42206c756150"
 version = "1.1.4"
-
-[[deps.ArgCheck]]
-git-tree-sha1 = "a3a402a35a2f7e0b87828ccabbd5ebfbebe356b4"
-uuid = "dce04be8-c92d-5529-be00-80e4d2c0e197"
-version = "2.3.0"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -712,24 +1177,6 @@ git-tree-sha1 = "f641eb0a4f00c343bbc32346e1217b86f3ce9dad"
 uuid = "49dc2e85-a5d0-5ad3-a950-438e2897f1b9"
 version = "0.5.1"
 
-[[deps.ChainRulesCore]]
-deps = ["Compat", "LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "c6d890a52d2c4d55d326439580c3b8d0875a77d9"
-uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-version = "1.15.7"
-
-[[deps.ChangesOfVariables]]
-deps = ["ChainRulesCore", "LinearAlgebra", "Test"]
-git-tree-sha1 = "485193efd2176b88e6622a39a246f8c5b600e74e"
-uuid = "9e997f8a-9a97-42d5-a9f1-ce6bfc15e2c0"
-version = "0.1.6"
-
-[[deps.Clustering]]
-deps = ["Distances", "LinearAlgebra", "NearestNeighbors", "Printf", "Random", "SparseArrays", "Statistics", "StatsBase"]
-git-tree-sha1 = "7ebbd653f74504447f1c33b91cd706a69a1b189f"
-uuid = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
-version = "0.14.4"
-
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
 git-tree-sha1 = "9c209fb7536406834aa938fb149964b985de6c83"
@@ -737,10 +1184,10 @@ uuid = "944b1d66-785c-5afd-91f1-9de20f533193"
 version = "0.7.1"
 
 [[deps.ColorSchemes]]
-deps = ["ColorTypes", "ColorVectorSpace", "Colors", "FixedPointNumbers", "Random", "SnoopPrecompile"]
-git-tree-sha1 = "aa3edc8f8dea6cbfa176ee12f7c2fc82f0608ed3"
+deps = ["ColorTypes", "ColorVectorSpace", "Colors", "FixedPointNumbers", "PrecompileTools", "Random"]
+git-tree-sha1 = "be6ab11021cd29f0344d5c4357b163af05a48cba"
 uuid = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
-version = "3.20.0"
+version = "3.21.0"
 
 [[deps.ColorTypes]]
 deps = ["FixedPointNumbers", "Random"]
@@ -761,15 +1208,25 @@ uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.12.10"
 
 [[deps.Compat]]
-deps = ["Dates", "LinearAlgebra", "UUIDs"]
+deps = ["UUIDs"]
 git-tree-sha1 = "7a60c856b9fa189eb34f5f8a6f6b5529b7942957"
 uuid = "34da2185-b29b-5c13-b0c7-acf172513d20"
 version = "4.6.1"
+weakdeps = ["Dates", "LinearAlgebra"]
+
+    [deps.Compat.extensions]
+    CompatLinearAlgebraExt = "LinearAlgebra"
 
 [[deps.CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
-version = "1.0.1+0"
+version = "1.0.2+0"
+
+[[deps.ConcurrentUtilities]]
+deps = ["Serialization", "Sockets"]
+git-tree-sha1 = "96d823b94ba8d187a6d8f0826e731195a74b90e9"
+uuid = "f0e56b4a-5159-44fe-b623-3e5288b988bb"
+version = "2.2.0"
 
 [[deps.Contour]]
 git-tree-sha1 = "d05d9e7b7aedff4e5b51a029dced05cfb6125781"
@@ -793,25 +1250,23 @@ uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
 
 [[deps.DelimitedFiles]]
 deps = ["Mmap"]
+git-tree-sha1 = "9e2f36d3c96a820c678f2f1f1782582fcf685bae"
 uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
-
-[[deps.DensityInterface]]
-deps = ["InverseFunctions", "Test"]
-git-tree-sha1 = "80c3e8639e3353e5d2912fb3a1916b8455e2494b"
-uuid = "b429d917-457f-4dbc-8f4c-0cc954292b1d"
-version = "0.4.0"
-
-[[deps.Distances]]
-deps = ["LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI"]
-git-tree-sha1 = "49eba9ad9f7ead780bfb7ee319f962c811c6d3b2"
-uuid = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
-version = "0.10.8"
+version = "1.9.1"
 
 [[deps.Distributions]]
-deps = ["ChainRulesCore", "DensityInterface", "FillArrays", "LinearAlgebra", "PDMats", "Printf", "QuadGK", "Random", "SparseArrays", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns", "Test"]
-git-tree-sha1 = "13027f188d26206b9e7b863036f87d2f2e7d013a"
+deps = ["FillArrays", "LinearAlgebra", "PDMats", "Printf", "QuadGK", "Random", "SparseArrays", "SpecialFunctions", "Statistics", "StatsAPI", "StatsBase", "StatsFuns", "Test"]
+git-tree-sha1 = "eead66061583b6807652281c0fbf291d7a9dc497"
 uuid = "31c24e10-a181-5473-b8eb-7969acd0382f"
-version = "0.25.87"
+version = "0.25.90"
+
+    [deps.Distributions.extensions]
+    DistributionsChainRulesCoreExt = "ChainRulesCore"
+    DistributionsDensityInterfaceExt = "DensityInterface"
+
+    [deps.Distributions.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    DensityInterface = "b429d917-457f-4dbc-8f4c-0cc954292b1d"
 
 [[deps.DocStringExtensions]]
 deps = ["LibGit2"]
@@ -895,15 +1350,15 @@ version = "3.3.8+0"
 
 [[deps.GR]]
 deps = ["Artifacts", "Base64", "DelimitedFiles", "Downloads", "GR_jll", "HTTP", "JSON", "Libdl", "LinearAlgebra", "Pkg", "Preferences", "Printf", "Random", "Serialization", "Sockets", "TOML", "Tar", "Test", "UUIDs", "p7zip_jll"]
-git-tree-sha1 = "0635807d28a496bb60bc15f465da0107fb29649c"
+git-tree-sha1 = "efaac003187ccc71ace6c755b197284cd4811bfe"
 uuid = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
-version = "0.72.0"
+version = "0.72.4"
 
 [[deps.GR_jll]]
 deps = ["Artifacts", "Bzip2_jll", "Cairo_jll", "FFMPEG_jll", "Fontconfig_jll", "GLFW_jll", "JLLWrappers", "JpegTurbo_jll", "Libdl", "Libtiff_jll", "Pixman_jll", "Qt5Base_jll", "Zlib_jll", "libpng_jll"]
-git-tree-sha1 = "99e248f643b052a77d2766fe1a16fb32b661afd4"
+git-tree-sha1 = "4486ff47de4c18cb511a0da420efebb314556316"
 uuid = "d2c73de3-f751-5644-a686-071e5b155ba9"
-version = "0.72.0+0"
+version = "0.72.4+0"
 
 [[deps.Gettext_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Libiconv_jll", "Pkg", "XML2_jll"]
@@ -928,17 +1383,11 @@ git-tree-sha1 = "53bb909d1151e57e2484c3d1b53e19552b887fb2"
 uuid = "42e2da0e-8278-4e71-bc24-59509adca0fe"
 version = "1.0.2"
 
-[[deps.HMMBase]]
-deps = ["ArgCheck", "Clustering", "Distributions", "Hungarian", "LinearAlgebra", "Random"]
-git-tree-sha1 = "47d95dcc06cafd4a1c100bfad64da3ab06ad38c7"
-uuid = "b2b3ca75-8444-5ffa-85e6-af70e2b64fe7"
-version = "1.0.7"
-
 [[deps.HTTP]]
-deps = ["Base64", "CodecZlib", "Dates", "IniFile", "Logging", "LoggingExtras", "MbedTLS", "NetworkOptions", "OpenSSL", "Random", "SimpleBufferStream", "Sockets", "URIs", "UUIDs"]
-git-tree-sha1 = "37e4657cd56b11abe3d10cd4a1ec5fbdb4180263"
+deps = ["Base64", "CodecZlib", "ConcurrentUtilities", "Dates", "Logging", "LoggingExtras", "MbedTLS", "NetworkOptions", "OpenSSL", "Random", "SimpleBufferStream", "Sockets", "URIs", "UUIDs"]
+git-tree-sha1 = "877b7bc42729aa2c90bbbf5cb0d4294bd6d42e5a"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-version = "1.7.4"
+version = "1.9.1"
 
 [[deps.HarfBuzz_jll]]
 deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll", "Graphite2_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg"]
@@ -946,17 +1395,11 @@ git-tree-sha1 = "129acf094d168394e80ee1dc4bc06ec835e510a3"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "2.8.1+1"
 
-[[deps.Hungarian]]
-deps = ["LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "371a7df7a6cce5909d6c576f234a2da2e3fa0c98"
-uuid = "e91730f6-4275-51fb-a7a0-7064cfbd3b39"
-version = "0.6.0"
-
 [[deps.HypergeometricFunctions]]
 deps = ["DualNumbers", "LinearAlgebra", "OpenLibm_jll", "SpecialFunctions"]
-git-tree-sha1 = "432b5b03176f8182bd6841fbfc42c718506a2d5f"
+git-tree-sha1 = "84204eae2dd237500835990bcade263e27674a93"
 uuid = "34004b35-14d8-5ef3-9330-4cdb6864b03a"
-version = "0.3.15"
+version = "0.3.16"
 
 [[deps.Hyperscript]]
 deps = ["Test"]
@@ -976,20 +1419,9 @@ git-tree-sha1 = "f7be53659ab06ddc986428d3a9dcc95f6fa6705a"
 uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
 version = "0.2.2"
 
-[[deps.IniFile]]
-git-tree-sha1 = "f550e6e32074c939295eb5ea6de31849ac2c9625"
-uuid = "83e8ac13-25f8-5344-8a64-a9f2b223428f"
-version = "0.5.1"
-
 [[deps.InteractiveUtils]]
 deps = ["Markdown"]
 uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
-
-[[deps.InverseFunctions]]
-deps = ["Test"]
-git-tree-sha1 = "49510dfcb407e572524ba94aeae2fced1f3feb0f"
-uuid = "3587e190-3f89-42d0-90ee-14403ec27112"
-version = "0.1.8"
 
 [[deps.IrrationalConstants]]
 git-tree-sha1 = "630b497eafcc20001bba38a4651b327dcfc491d2"
@@ -1045,9 +1477,17 @@ version = "1.3.0"
 
 [[deps.Latexify]]
 deps = ["Formatting", "InteractiveUtils", "LaTeXStrings", "MacroTools", "Markdown", "OrderedCollections", "Printf", "Requires"]
-git-tree-sha1 = "2422f47b34d4b127720a18f86fa7b1aa2e141f29"
+git-tree-sha1 = "099e356f267354f46ba65087981a77da23a279b7"
 uuid = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
-version = "0.15.18"
+version = "0.16.0"
+
+    [deps.Latexify.extensions]
+    DataFramesExt = "DataFrames"
+    SymEngineExt = "SymEngine"
+
+    [deps.Latexify.weakdeps]
+    DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+    SymEngine = "123dc426-2d89-5057-bbad-38513e3affd8"
 
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
@@ -1120,14 +1560,24 @@ uuid = "38a345b3-de98-5d2b-a5d3-14cd9215e700"
 version = "2.36.0+0"
 
 [[deps.LinearAlgebra]]
-deps = ["Libdl", "libblastrampoline_jll"]
+deps = ["Libdl", "OpenBLAS_jll", "libblastrampoline_jll"]
 uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 
 [[deps.LogExpFunctions]]
-deps = ["ChainRulesCore", "ChangesOfVariables", "DocStringExtensions", "InverseFunctions", "IrrationalConstants", "LinearAlgebra"]
+deps = ["DocStringExtensions", "IrrationalConstants", "LinearAlgebra"]
 git-tree-sha1 = "0a1b7c2863e44523180fdb3146534e265a91870b"
 uuid = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 version = "0.3.23"
+
+    [deps.LogExpFunctions.extensions]
+    LogExpFunctionsChainRulesCoreExt = "ChainRulesCore"
+    LogExpFunctionsChangesOfVariablesExt = "ChangesOfVariables"
+    LogExpFunctionsInverseFunctionsExt = "InverseFunctions"
+
+    [deps.LogExpFunctions.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    ChangesOfVariables = "9e997f8a-9a97-42d5-a9f1-ce6bfc15e2c0"
+    InverseFunctions = "3587e190-3f89-42d0-90ee-14403ec27112"
 
 [[deps.Logging]]
 uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
@@ -1162,7 +1612,7 @@ version = "1.1.7"
 [[deps.MbedTLS_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
-version = "2.28.0+0"
+version = "2.28.2+0"
 
 [[deps.Measures]]
 git-tree-sha1 = "c13304c81eec1ed3af7fc20e75fb6b26092a1102"
@@ -1180,19 +1630,13 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 
 [[deps.MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
-version = "2022.2.1"
+version = "2022.10.11"
 
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
 git-tree-sha1 = "0877504529a3e5c3343c6f8b4c0381e57e4387e4"
 uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
 version = "1.0.2"
-
-[[deps.NearestNeighbors]]
-deps = ["Distances", "StaticArrays"]
-git-tree-sha1 = "2c3726ceb3388917602169bed973dbc97f1b51a8"
-uuid = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
-version = "0.4.13"
 
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
@@ -1207,7 +1651,7 @@ version = "1.3.5+1"
 [[deps.OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
 uuid = "4536629a-c528-5b80-bd46-f80d51c5b363"
-version = "0.3.20+0"
+version = "0.3.21+4"
 
 [[deps.OpenLibm_jll]]
 deps = ["Artifacts", "Libdl"]
@@ -1216,9 +1660,9 @@ version = "0.8.1+0"
 
 [[deps.OpenSSL]]
 deps = ["BitFlags", "Dates", "MozillaCACerts_jll", "OpenSSL_jll", "Sockets"]
-git-tree-sha1 = "e9d68fe4b5f78f215aa2f0e6e6dc9e9911d33048"
+git-tree-sha1 = "51901a49222b09e3743c65b8847687ae5fc78eb2"
 uuid = "4d8831e6-92b7-49fb-bdf8-b643e874388c"
-version = "1.3.4"
+version = "1.4.1"
 
 [[deps.OpenSSL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1246,7 +1690,7 @@ version = "1.6.0"
 [[deps.PCRE2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "efcefdf7-47ab-520b-bdef-62a2eaa19f15"
-version = "10.40.0+0"
+version = "10.42.0+0"
 
 [[deps.PDMats]]
 deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse"]
@@ -1255,10 +1699,10 @@ uuid = "90014a1f-27ba-587c-ab20-58faa44d9150"
 version = "0.11.17"
 
 [[deps.Parsers]]
-deps = ["Dates", "SnoopPrecompile"]
-git-tree-sha1 = "478ac6c952fddd4399e71d4779797c538d0ff2bf"
+deps = ["Dates", "PrecompileTools", "UUIDs"]
+git-tree-sha1 = "7302075e5e06da7d000d9bfa055013e3e85578ca"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
-version = "2.5.8"
+version = "2.5.9"
 
 [[deps.Pipe]]
 git-tree-sha1 = "6842804e7867b115ca9de748a0cf6b364523c16d"
@@ -1272,9 +1716,9 @@ uuid = "30392449-352a-5448-841d-b1acce4e97dc"
 version = "0.40.1+0"
 
 [[deps.Pkg]]
-deps = ["Artifacts", "Dates", "Downloads", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
+deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
 uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-version = "1.8.0"
+version = "1.9.0"
 
 [[deps.PlotThemes]]
 deps = ["PlotUtils", "Statistics"]
@@ -1283,28 +1727,48 @@ uuid = "ccf2f8ad-2431-5c83-bf29-c5338b663b6a"
 version = "3.1.0"
 
 [[deps.PlotUtils]]
-deps = ["ColorSchemes", "Colors", "Dates", "Printf", "Random", "Reexport", "SnoopPrecompile", "Statistics"]
-git-tree-sha1 = "c95373e73290cf50a8a22c3375e4625ded5c5280"
+deps = ["ColorSchemes", "Colors", "Dates", "PrecompileTools", "Printf", "Random", "Reexport", "Statistics"]
+git-tree-sha1 = "f92e1315dadf8c46561fb9396e525f7200cdc227"
 uuid = "995b91a9-d308-5afd-9ec6-746e21dbc043"
-version = "1.3.4"
+version = "1.3.5"
 
 [[deps.Plots]]
-deps = ["Base64", "Contour", "Dates", "Downloads", "FFMPEG", "FixedPointNumbers", "GR", "JLFzf", "JSON", "LaTeXStrings", "Latexify", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "Preferences", "Printf", "REPL", "Random", "RecipesBase", "RecipesPipeline", "Reexport", "RelocatableFolders", "Requires", "Scratch", "Showoff", "SnoopPrecompile", "SparseArrays", "Statistics", "StatsBase", "UUIDs", "UnicodeFun", "Unzip"]
-git-tree-sha1 = "186d38ea29d5c4f238b2d9fe6e1653264101944b"
+deps = ["Base64", "Contour", "Dates", "Downloads", "FFMPEG", "FixedPointNumbers", "GR", "JLFzf", "JSON", "LaTeXStrings", "Latexify", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "PrecompileTools", "Preferences", "Printf", "REPL", "Random", "RecipesBase", "RecipesPipeline", "Reexport", "RelocatableFolders", "Requires", "Scratch", "Showoff", "SparseArrays", "Statistics", "StatsBase", "UUIDs", "UnicodeFun", "Unzip"]
+git-tree-sha1 = "6c7f47fd112001fc95ea1569c2757dffd9e81328"
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-version = "1.38.9"
+version = "1.38.11"
+
+    [deps.Plots.extensions]
+    FileIOExt = "FileIO"
+    GeometryBasicsExt = "GeometryBasics"
+    IJuliaExt = "IJulia"
+    ImageInTerminalExt = "ImageInTerminal"
+    UnitfulExt = "Unitful"
+
+    [deps.Plots.weakdeps]
+    FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
+    GeometryBasics = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
+    IJulia = "7073ff75-c697-5162-941a-fcdaad2a7d2a"
+    ImageInTerminal = "d8c32880-2388-543b-8c61-d9f865259254"
+    Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [[deps.PlutoUI]]
 deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "FixedPointNumbers", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "MIMEs", "Markdown", "Random", "Reexport", "URIs", "UUIDs"]
-git-tree-sha1 = "5bb5129fdd62a2bbbe17c2756932259acf467386"
+git-tree-sha1 = "b478a748be27bd2f2c73a7690da219d0844db305"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-version = "0.7.50"
+version = "0.7.51"
+
+[[deps.PrecompileTools]]
+deps = ["Preferences"]
+git-tree-sha1 = "259e206946c293698122f63e2b513a7c99a244e8"
+uuid = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+version = "1.1.1"
 
 [[deps.Preferences]]
 deps = ["TOML"]
-git-tree-sha1 = "47e5f437cc0e7ef2ce8406ce1e7e24d44915f88d"
+git-tree-sha1 = "7eb1686b4f04b82f96ed7a4ea5890a4f0c7a09f1"
 uuid = "21216c6a-2e73-6563-6e65-726566657250"
-version = "1.3.0"
+version = "1.4.0"
 
 [[deps.Printf]]
 deps = ["Unicode"]
@@ -1331,16 +1795,16 @@ deps = ["SHA", "Serialization"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [[deps.RecipesBase]]
-deps = ["SnoopPrecompile"]
-git-tree-sha1 = "261dddd3b862bd2c940cf6ca4d1c8fe593e457c8"
+deps = ["PrecompileTools"]
+git-tree-sha1 = "5c3d09cc4f31f5fc6af001c250bf1278733100ff"
 uuid = "3cdcf5f2-1ef4-517c-9805-6587b60abb01"
-version = "1.3.3"
+version = "1.3.4"
 
 [[deps.RecipesPipeline]]
-deps = ["Dates", "NaNMath", "PlotUtils", "RecipesBase", "SnoopPrecompile"]
-git-tree-sha1 = "e974477be88cb5e3040009f3767611bc6357846f"
+deps = ["Dates", "NaNMath", "PlotUtils", "PrecompileTools", "RecipesBase"]
+git-tree-sha1 = "45cf9fd0ca5839d06ef333c8201714e888486342"
 uuid = "01d81517-befc-4cb6-b9ec-a95719d0359c"
-version = "0.6.11"
+version = "0.6.12"
 
 [[deps.Reexport]]
 git-tree-sha1 = "45e428421666073eab6f2da5c9d310d99bb12f9b"
@@ -1395,12 +1859,6 @@ git-tree-sha1 = "874e8867b33a00e784c8a7e4b60afe9e037b74e1"
 uuid = "777ac1f9-54b0-4bf8-805c-2214025038e7"
 version = "1.1.0"
 
-[[deps.SnoopPrecompile]]
-deps = ["Preferences"]
-git-tree-sha1 = "e760a70afdcd461cf01a575947738d359234665c"
-uuid = "66db9d55-30c0-4569-8b51-7e840670fc0c"
-version = "1.0.3"
-
 [[deps.Sockets]]
 uuid = "6462fe0b-24de-5631-8697-dd941f90decc"
 
@@ -1411,29 +1869,25 @@ uuid = "a2af1166-a08f-5f64-846c-94a0d3cef48c"
 version = "1.1.0"
 
 [[deps.SparseArrays]]
-deps = ["LinearAlgebra", "Random"]
+deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]
 uuid = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [[deps.SpecialFunctions]]
-deps = ["ChainRulesCore", "IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_jll"]
+deps = ["IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_jll"]
 git-tree-sha1 = "ef28127915f4229c971eb43f3fc075dd3fe91880"
 uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
 version = "2.2.0"
 
-[[deps.StaticArrays]]
-deps = ["LinearAlgebra", "Random", "StaticArraysCore", "Statistics"]
-git-tree-sha1 = "70e0cc0c0f9ef7ea76b3d7a50ada18c8c52e69a2"
-uuid = "90137ffa-7385-5640-81b9-e52037218182"
-version = "1.5.20"
+    [deps.SpecialFunctions.extensions]
+    SpecialFunctionsChainRulesCoreExt = "ChainRulesCore"
 
-[[deps.StaticArraysCore]]
-git-tree-sha1 = "6b7ba252635a5eff6a0b0664a41ee140a1c9e72a"
-uuid = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
-version = "1.4.0"
+    [deps.SpecialFunctions.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 
 [[deps.Statistics]]
 deps = ["LinearAlgebra", "SparseArrays"]
 uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+version = "1.9.0"
 
 [[deps.StatsAPI]]
 deps = ["LinearAlgebra"]
@@ -1448,24 +1902,37 @@ uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 version = "0.33.21"
 
 [[deps.StatsFuns]]
-deps = ["ChainRulesCore", "HypergeometricFunctions", "InverseFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
+deps = ["HypergeometricFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
 git-tree-sha1 = "f625d686d5a88bcd2b15cd81f18f98186fdc0c9a"
 uuid = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 version = "1.3.0"
+
+    [deps.StatsFuns.extensions]
+    StatsFunsChainRulesCoreExt = "ChainRulesCore"
+    StatsFunsInverseFunctionsExt = "InverseFunctions"
+
+    [deps.StatsFuns.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    InverseFunctions = "3587e190-3f89-42d0-90ee-14403ec27112"
 
 [[deps.SuiteSparse]]
 deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
 uuid = "4607b0f0-06f3-5cda-b6b1-a6196a1729e9"
 
+[[deps.SuiteSparse_jll]]
+deps = ["Artifacts", "Libdl", "Pkg", "libblastrampoline_jll"]
+uuid = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
+version = "5.10.1+6"
+
 [[deps.TOML]]
 deps = ["Dates"]
 uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
-version = "1.0.0"
+version = "1.0.3"
 
 [[deps.Tar]]
 deps = ["ArgTools", "SHA"]
 uuid = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
-version = "1.10.1"
+version = "1.10.0"
 
 [[deps.TensorCore]]
 deps = ["LinearAlgebra"]
@@ -1479,9 +1946,9 @@ uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [[deps.TranscodingStreams]]
 deps = ["Random", "Test"]
-git-tree-sha1 = "0b829474fed270a4b0ab07117dce9b9a2fa7581a"
+git-tree-sha1 = "9a6ae7ed916312b41236fcef7e0af564ef934769"
 uuid = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
-version = "0.9.12"
+version = "0.9.13"
 
 [[deps.Tricks]]
 git-tree-sha1 = "aadb748be58b492045b4f56166b5188aa63ce549"
@@ -1664,7 +2131,7 @@ version = "1.4.0+3"
 [[deps.Zlib_jll]]
 deps = ["Libdl"]
 uuid = "83775a58-1f1d-513f-b197-d71354ab007a"
-version = "1.2.12+3"
+version = "1.2.13+0"
 
 [[deps.Zstd_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
@@ -1691,9 +2158,9 @@ uuid = "0ac62f75-1d6f-5e53-bd7c-93b484bb37c0"
 version = "0.15.1+0"
 
 [[deps.libblastrampoline_jll]]
-deps = ["Artifacts", "Libdl", "OpenBLAS_jll"]
+deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
-version = "5.1.1+0"
+version = "5.7.0+0"
 
 [[deps.libfdk_aac_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1753,30 +2220,60 @@ version = "1.4.1+0"
 # ╟─74482089-10fe-446b-b3f6-dc1b81b1a424
 # ╠═9381e183-5b4e-489f-a109-4e606212986e
 # ╠═45b0255d-72fd-4fa7-916a-4f73e730f4d5
+# ╠═6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
 # ╠═a8b50581-e5f3-449e-803e-ab31e6e0b812
+# ╟─85e2ada1-0adc-41a8-ab34-8043379ca0a4
+# ╠═2c9a233f-3a96-43dc-b783-b82642a82590
+# ╟─d9cb7c74-007d-4229-a576-a7a41fff565b
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
+# ╟─781d041c-1e4d-4354-b240-12511207bde0
+# ╠═cb1a9949-59e1-4ccb-8efc-aa2ffbadaab2
+# ╟─c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
+# ╠═8cb62a79-7dbc-4c94-ae7b-2e2cc12764f4
+# ╟─d5457335-bc65-4bf1-b6ed-796dd5e2ab69
+# ╠═96ff4afb-fe7f-471a-b15e-26676c600090
+# ╟─14d4e0a3-8db0-4c57-bb33-497e1bd3c64c
+# ╠═c1640ff6-3047-42a5-a5cd-d0c77aa41179
+# ╟─6749ddf8-633b-498e-aecb-9e1592050ed2
+# ╟─52a70be4-fb8c-40d8-9c7a-226649ada6e3
+# ╠═fbc24a7c-48a0-43cc-9dd2-440acfb41c39
+# ╟─a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
+# ╠═8a73d154-236d-4660-bb21-24681ed7d315
+# ╟─408dd6d8-cb5f-49ce-944b-50a0d9cebef5
+# ╟─fb472969-3c3c-4787-8cf1-296f2c13ddf5
+# ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
+# ╠═87667a9e-02aa-4104-b5a0-0f6b9e98ba96
+# ╠═d60b91ea-a020-41b5-9364-787167f0bac9
+# ╟─b0b1f14d-4fbd-4995-845f-f19990460329
+# ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
+# ╟─3c63b27b-76e3-4edc-9b56-345738b97c41
+# ╠═f871da95-6710-4c0f-a3a1-890dd59a41a1
+# ╟─17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
+# ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
+# ╟─9f1ae1a1-c565-4b00-834e-3ef628cc7959
+# ╟─7b185270-58d5-4406-8768-103d798fa326
+# ╠═adbf92e5-8a86-4acf-8f50-d82e122a5f5f
+# ╟─dab1fe9c-20a4-4376-beaf-02b5292ca7cd
+# ╟─6dc12cc2-da6f-4b90-8315-dff1531e09ae
+# ╟─a051753c-87ed-4337-9f88-432141b96e6c
+# ╟─be042373-ed3e-4e2e-b714-b4f9e5964b57
+# ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
+# ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
+# ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
+# ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
+# ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
+# ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa
+# ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
-# ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
-# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╟─59bcc9bf-276c-47e1-b6a9-86f90571c0fb
 # ╟─14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╟─5c221210-e1df-4015-b959-6d330b47be29
 # ╟─7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
 # ╟─e02d0dd5-6bab-4548-8bbe-d9b1759688c5
-# ╟─781d041c-1e4d-4354-b240-12511207bde0
 # ╟─c417e618-41c2-454c-9b27-470988215d48
-# ╠═8950aa50-22b2-4299-83b2-b9abfd1d5303
-# ╠═96ff4afb-fe7f-471a-b15e-26676c600090
-# ╟─9b85ce96-4a7e-4418-881c-e3f54445eab1
-# ╟─abf89539-38db-4e7a-9dc0-94ea10372803
-# ╟─0164a3d4-7801-4bb2-95f5-8323928f1769
-# ╠═ca825009-564e-43e0-9014-cce87c46533b
-# ╠═f1cea551-4feb-44b4-a77e-03621c9b37b9
-# ╠═a3677e9f-837b-4ba0-a29f-e60bf3712323
-# ╟─c9d3b75e-e1ff-4ad6-9c66-6a1b89a1b426
-# ╟─d5457335-bc65-4bf1-b6ed-796dd5e2ab69
-# ╟─14d4e0a3-8db0-4c57-bb33-497e1bd3c64c
-# ╟─6749ddf8-633b-498e-aecb-9e1592050ed2
-# ╠═fbc24a7c-48a0-43cc-9dd2-440acfb41c39
-# ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
+# ╟─8950aa50-22b2-4299-83b2-b9abfd1d5303
+# ╟─30502079-9684-4144-8bcd-a70f2cb5928a
+# ╟─ca825009-564e-43e0-9014-cce87c46533b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

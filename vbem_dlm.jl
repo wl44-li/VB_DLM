@@ -712,7 +712,7 @@ md"""
 
 # ╔═╡ 8fed847c-93bc-454b-94c7-ba1d13c73b04
 md"""
-Generate test data
+**Generate test data**
 """
 
 # ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
@@ -1100,12 +1100,15 @@ end
 let
 	Random.seed!(5)
 	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 2000)
-	exp_f = vb_dlm(y_pca, hpp, true, 40)
+	exp_f = vb_dlm(y_pca, hpp, true, 30)
 	xs, σs = vb_e(y_pca, exp_f, hpp, true)
 	println("VB PPCA, MSE, MAD, MAPE: ", error_metrics(xs_pca, xs))
-	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 
+	x_hat, Px, y_hat, Py, _ = p_forward(y_pca, zeros(2, 2), C, R, μ_0, Σ_0)
+	println("Filtered, MSE, MAD, MAPE: ", error_metrics(xs_pca, x_hat))
 	# Should recover A as the zero matrices, C and R same as normal setting.
+
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2260,7 +2263,7 @@ version = "1.4.1+0"
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
 # ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa
-# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
 # ╟─59bcc9bf-276c-47e1-b6a9-86f90571c0fb

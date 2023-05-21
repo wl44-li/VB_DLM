@@ -1,9 +1,10 @@
 # VB_DLM
-Variational Bayesian Inference on Dynamic Linear Model
+Variational Bayesian Inference for Dynamic Linear Model
 
 ## Setup and Installation
 You need to install Julia (1.9) and then Pluto to run the notebook.
 
+Alternatively, static html files are availble for general browsing using any internet browser,
 ## Usage
 
 ```bash

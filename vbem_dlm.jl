@@ -8,7 +8,6 @@ using InteractiveUtils
 begin
 	using Distributions, Plots, Random
 	using LinearAlgebra
-	# using StatsBase
 	using StatsFuns
 	using SpecialFunctions
 	using PlutoUI
@@ -60,7 +59,7 @@ md"""
 
 ### Rows of the state transition matrix:
 
-For each row j $(j = 1, 2,... K)$ of A, we can define a prior as follows:
+For each row j $(j = 1, 2,... K)$ of $A$, we can define a prior as follows:
 
 $a_j \sim \mathcal N(\mathbf{0}, \ diag(\mathbf{α})^{-1})$
 
@@ -68,7 +67,7 @@ Here, $\mathbf{α}$ is a K-dimensional precision hyperparameter vector, and $dia
 
 ### Rows of the observation/emission matrix:
 
-For each row s $(s = 1, 2 ... D)$ of C, we can define a prior as follows:
+For each row s $(s = 1, 2 ... D)$ of $C$, we can define a prior as follows:
 
 $c_s \sim \mathcal N(\mathbf{0}, \ diag(ρ_s \mathbf{γ})^{-1})$
 
@@ -652,9 +651,19 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_
 	return exp_np
 end
 
+# ╔═╡ 73fb09dd-9e2e-481e-a198-6b026e3bde3a
+md"""
+# Testing with Synthetic data
+"""
+
 # ╔═╡ 3c63b27b-76e3-4edc-9b56-345738b97c41
 md"""
 Ground truth values of DLM parameters A, C, R
+"""
+
+# ╔═╡ 3508a99a-e0d3-41ec-a040-5b7405d6212b
+md"""
+### Model parameter inference
 """
 
 # ╔═╡ 17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
@@ -672,19 +681,6 @@ md"""
 Adding hyperparameter learning showed better results of learning A, C, R.
 
 Hidden state (xs) learning outperform Kalman Filter and very close to Kalman smoother.
-"""
-
-# ╔═╡ be042373-ed3e-4e2e-b714-b4f9e5964b57
-md"""
-## Debugging notes: 
-
--> check vb-m with HSS using x_true (✓)
-
--> check vb-e with Exp_ϕ using A, C, R (✓)
-
--> check forward, backward with StateSpaceModels -> consider first uni-variate local level model (✓ - see separate notebook)
-
--> verify with MCMC and Turing (✓ - see separate notebook)
 """
 
 # ╔═╡ 24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
@@ -1082,8 +1078,8 @@ println("MSE, MAD, MAPE: ", error_metrics(x_true, xs))
 let
 	exp_hp = vb_dlm(y, hpp, true)
 	xs, σs = vb_e(y, exp_hp, hpp, true)
-	println("MSE, MAD, MAPE: ", error_metrics(x_true, xs))
-	exp_hp.A, exp_hp.C, inv(exp_hp.R⁻¹)
+	println("MSE, MAD, MAPE: ", error_metrics(x_true, xs)) # hidden state
+	exp_hp.A, exp_hp.C, inv(exp_hp.R⁻¹) # model parameter
 end
 
 # ╔═╡ 6dc12cc2-da6f-4b90-8315-dff1531e09ae
@@ -1100,14 +1096,15 @@ end
 let
 	Random.seed!(5)
 	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 2000)
-	exp_f = vb_dlm(y_pca, hpp, true, 30)
+	
+	exp_f = vb_dlm(y_pca, hpp, true)
 	xs, σs = vb_e(y_pca, exp_f, hpp, true)
 	println("VB PPCA, MSE, MAD, MAPE: ", error_metrics(xs_pca, xs))
 
 	x_hat, Px, y_hat, Py, _ = p_forward(y_pca, zeros(2, 2), C, R, μ_0, Σ_0)
 	println("Filtered, MSE, MAD, MAPE: ", error_metrics(xs_pca, x_hat))
+	
 	# Should recover A as the zero matrices, C and R same as normal setting.
-
 	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
@@ -2246,17 +2243,18 @@ version = "1.4.1+0"
 # ╠═d60b91ea-a020-41b5-9364-787167f0bac9
 # ╟─b0b1f14d-4fbd-4995-845f-f19990460329
 # ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
+# ╟─73fb09dd-9e2e-481e-a198-6b026e3bde3a
 # ╟─3c63b27b-76e3-4edc-9b56-345738b97c41
 # ╠═f871da95-6710-4c0f-a3a1-890dd59a41a1
-# ╟─17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
+# ╟─3508a99a-e0d3-41ec-a040-5b7405d6212b
 # ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
-# ╟─9f1ae1a1-c565-4b00-834e-3ef628cc7959
+# ╟─17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
+# ╠═9f1ae1a1-c565-4b00-834e-3ef628cc7959
 # ╟─7b185270-58d5-4406-8768-103d798fa326
 # ╠═adbf92e5-8a86-4acf-8f50-d82e122a5f5f
 # ╟─dab1fe9c-20a4-4376-beaf-02b5292ca7cd
 # ╟─6dc12cc2-da6f-4b90-8315-dff1531e09ae
 # ╟─a051753c-87ed-4337-9f88-432141b96e6c
-# ╟─be042373-ed3e-4e2e-b714-b4f9e5964b57
 # ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
 # ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca

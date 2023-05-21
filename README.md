@@ -2,11 +2,11 @@
 Variational Bayesian Inference for Dynamic Linear Model
 
 ## Setup and Installation
-You need to install Julia (1.9) and then Pluto to run the notebook.
+You need to install [Julia](https://julialang.org/) (1.9) and then [Pluto](https://plutojl.org/) to run the notebook.
 
-Alternatively, static html files are availble for general browsing using any internet browser,
+Alternatively, static html files are availble for general browsing using any internet browser.
 ## Usage
-
+On your command prompt or terminal:
 ```bash
 julia
                _
@@ -29,6 +29,8 @@ julia> Pluto.run()
 └ 
 
 ```
+Pluto should launch on your default browser, you can then use it to open the designated notebook file (i.e. `vbem_dlm.jl`). 
+
 
 ## Credits
 This work was inspired by or uses the following sources:

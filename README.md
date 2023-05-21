@@ -1,6 +1,13 @@
 # VB_DLM
 Variational Bayesian Inference for Dynamic Linear Model
 
+## Important : Work in Progress
+- For latest supported features, please refer to the `development` branch
+- Features under development: 
+-- Convergence check, 
+-- Overfitting test, 
+-- Integration with `Turing.jl`
+
 ## Setup and Installation
 You need to install [Julia](https://julialang.org/) (1.9) and then [Pluto](https://plutojl.org/) to run the notebook.
 

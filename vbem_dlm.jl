@@ -178,9 +178,7 @@ struct Exp_ϕ
 	CᵀR⁻¹
 
 	# TO-DO: ELBO computation and Convergence check
-	"""
-	log_det_R⁻¹
-	"""
+	log_ρ
 end
 
 # ╔═╡ 6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
@@ -192,6 +190,17 @@ struct HPP
     b::Float64 # gamma inverse scale of ρ
     μ_0::Vector{Float64} # auxiliary hidden state mean
     Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
+end
+
+# ╔═╡ 74c16682-2a48-4f10-a939-21e89a54e807
+# parameters for approximated q(θ)
+struct Qθ
+	Σ_A
+	μ_A
+	Σ_C
+	μ_C
+	a_s
+	b_s
 end
 
 # ╔═╡ a8b50581-e5f3-449e-803e-ab31e6e0b812
@@ -212,6 +221,9 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	# q(A), q(ρ), q(C|ρ)
     Σ_A = inv(diagm(α) + W_A)
 	Σ_C = inv(diagm(γ) + W_C)
+
+	μ_A = [Σ_A * S_A[:, j] for j in 1:K]
+	μ_C = [Σ_C * S_C[:, s] for s in 1:D]
 	
 	G = sum(ys[:, t] * ys[:, t]' for t in 1:T) - S_C' * Σ_C * S_C
 	a_ = a + 0.5 * T
@@ -240,7 +252,7 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	exp_log_ρ = [(digamma(a_) - log(b_s[i])) for i in 1:D]
 	
 	# return expected natural parameters :: Exp_ϕ (for e-step)
-	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹), α_n, γ_n, exp_ρ, exp_log_ρ
+	return Exp_ϕ(Exp_A, Exp_AᵀA, Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹, exp_log_ρ), α_n, γ_n, exp_ρ, exp_log_ρ, Qθ(Σ_A, μ_A, Σ_C, μ_C, a_, b_s)
 end
 
 # ╔═╡ 85e2ada1-0adc-41a8-ab34-8043379ca0a4
@@ -481,38 +493,6 @@ if $x_t$ is observed, $q(x_t)$ can be viewed as direct measure (delta function),
 $\langle x_t x_t^T \rangle = x_t x_t^T$
 """
 
-# ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
-# infer hidden state distribution q_x(x_0:T)
-function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP, smooth_out=false)
-    _, T = size(ys)
-	# forward pass α_t(x_t)
-	μs, Σs, Σs_ = v_forward(ys, exp_np, hpp)
-
-	# backward pass β_t(x_t)
-	ηs, Ψs, η₀, Ψ₀ = v_backward(ys, exp_np)
-
-	# marginal (smoothed) means, covs, and pairwise beliefs 
-	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η₀, Ψ₀, hpp.μ_0, hpp.Σ_0)
-
-	Υ_ₜ₋ₜ₊₁ = v_pairwise_x(Σs_, exp_np, Ψs)
-	
-	# hidden state sufficient stats 
-	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
-	W_A += Υ_0 + ω_0*ω_0'
-
-	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
-	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
-	
-	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
-	S_C = sum(ωs[:, t] * ys[:, t]' for t in 1:T)
-
-	if (smooth_out) # return variational smoothed mean, cov of hidden states
-		return ωs, Υs
-	end
-	
-	return HSS(W_A, S_A, W_C, S_C), ω_0, Υ_0
-end
-
 # ╔═╡ a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
 md"""
 ### Testing E-step
@@ -605,53 +585,6 @@ md"""
 ## VB DLM
 """
 
-# ╔═╡ 1902c1f1-1246-4ab3-88e6-35619d685cdd
-function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_seed=99, debug=false)
-	D, T = size(ys)
-	K = length(hpp.α)
-
-	"""
-	# random initialisation
-	Random.seed!(r_seed)
-	W_A = rand(K, K) + K*I
-	S_A = rand(K, K) + K*I
-	W_C = rand(K, K) + K*I
-	S_C = rand(D, K) + D*I
-	"""
-	
-	# no random initialistion
-	W_A = Matrix{Float64}(T*I, K, K)
-	S_A = Matrix{Float64}(T*I, K, K)
-	W_C = Matrix{Float64}(T*I, K, K)
-	S_C = Matrix{Float64}(T*I, K, K)
-	
-	hss = HSS(W_A, S_A, W_C, S_C)
-	exp_np = missing
-
-	for i in 1:max_iter
-		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ = vb_m(ys, hpp, hss)
-		
-		hss, ω_0, Υ_0 = vb_e(ys, exp_np, hpp)
-
-		if (hpp_learn)
-			if (i%5 == 0) # update hyperparam every 5 iterations
-				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
-				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
-			end
-		end
-
-		#TO-DO: ELBO and Convergence check
-
-		if (i == max_iter)
-			if (debug) # debug a, b update
-				return exp_ρ, exp_log_ρ
-			end
-		end
-	end
-		
-	return exp_np
-end
-
 # ╔═╡ 3c63b27b-76e3-4edc-9b56-345738b97c41
 md"""
 Ground truth values of DLM parameters A, C, R
@@ -703,6 +636,258 @@ Case **probabilistic PCA**, To reduce a DLM to PPCA, we should set:
     The initial state mean to be a zero vector and the initial state covariance to be an identity matrix. This is consistent with the assumption in PPCA where the hidden states are sampled from a standard Gaussian distribution.
 
 With these settings, the DLM essentially becomes a model where the observed variables are linear functions of the hidden states (with some Gaussian noise), and the hidden states are independently drawn from a Gaussian distribution. This is the setting of PPCA.
+"""
+
+# ╔═╡ c422d3e3-27ae-4543-9315-3342bb257d19
+md"""
+## Convergence Check
+"""
+
+# ╔═╡ 73917530-67d0-480f-a776-619ef13394dd
+md"""
+After the VB-E step, ELBO $\mathcal F$ can be approximated as:
+
+$\mathcal F = -KL(A) - KL(ρ) - \langle KL(C|ρ) \rangle_{q(ρ)} + \ln Z'$
+
+The three KL divergence terms are of gamma-Gaussian variables, which are well-documented, refer to Beal Appendix C1 and C3.
+
+The first two KL terms are relatively straightforward, to compute the Kullback-Leibler (KL) divergence for a parameter given a prior and posterior, we need to understand the distributions of the prior and posterior. In the context of variational Bayes, this is used to measure the difference between the approximating distribution (posterior - $q()$) and the exact distribution (prior - $p()$).
+
+$KL(J) = \int dJ \ q(J) \ \frac{q(J)}{p(J)}$
+
+$KL(A) = - \frac{1}{2}  \{ \ln |(Σ_A Σ_0^{-1})| + tr( I - (Σ_A + (μ_A - μ_0)(μ_A - μ_0)^T)Σ_0^{-1}) \}$
+
+$KL(ρ_s) = a_s \ln b_s - a_0 \ln (b_0) - \ln \frac{Γ(a_s)}{Γ(a_0)} + (a_s - a_0) (ψ(a_s) - \ln b_s) - a_s (1 - \frac{b_0}{b_s})$
+
+Since KL divergence is additive for independent distributions, $ρ_s$ is independent and follows its own gamma distribution with parameters $a_s$ and $b_s$. The total KL divergence $KL(ρ)$ for the vector $ρ$ can be computed as the **sum** of the KL divergences for each component $ρ_s$.
+
+Similar treatment can be applied to each row of the matrix $A, C$.
+
+The third term $\langle KL(C|ρ) \rangle_{q(ρ)}$ needs some extra treatment, as it is in the form of expected conditional KL.
+
+We know the rows of $C$ are distributed in terms of: 
+
+$p(c_s|γ, ρ_s) = \mathcal N(μ_0, ρ_s^{-1} diag(γ)^{-1})$
+
+$q(c_s|ρ_s) = \mathcal N(μ_c, ρ_s^{-1}Σ_C)$
+
+where $μ_0 = 0$, and $μ_c = Σ_C S_{C, (s)}$
+
+So, $ρ_s$ will cancel out in the first logdet term, the trace term is: 
+$tr( I - (ρ_s^{-1}Σ_C + (μ_C - μ_0)(μ_C - μ_0)^T)ρ_s \ diag(γ)) \}$
+which can be simplified below:
+
+$\begin{align}
+\langle KL (q(C | ρ) \ || \ p(C | ρ))\rangle_{q(ρ)} &= \int dρ \ q(ρ) \int dC \ q(C|ρ) \ln \frac{q(C|ρ)}{p(C|ρ)} \\
+&= - \frac{1}{2}  \{ \ln |(Σ_C \ diag(γ)| \\
+&+ \langle tr( I - (Σ_C  \ diag(γ) + (μ_C - μ_0)(μ_C - μ_0)^T)ρ_s diag(γ)) \} \rangle \\
+&= - \frac{1}{2} \{ \ln |(Σ_C \ diag(γ)| + tr( I - (Σ_C  \ diag(γ) + (μ_C - μ_0)(μ_C - μ_0)^T)\langle ρ_s \rangle diag(γ)) \}
+\end{align}$
+
+
+"""
+
+# ╔═╡ e199689c-a79d-4824-af81-0b819fbc2a52
+# μ_0, Σ_0 -> p(A); μ_A, Σ_A -> q(A)
+function kl_A(μ_0, Σ_0, μ_A, Σ_A)
+	Σ_inv = inv(Σ_0)
+	kl = -0.5*logdet(Σ_A*Σ_inv)
+	kl -= 0.5*tr(I - (Σ_A + (μ_A - μ_0)*(μ_A - μ_0)')*Σ_inv)
+	return kl
+end
+
+# ╔═╡ 23af67ea-b57d-4cf7-81af-8b2a746f84fe
+# a_0, b_0 -> p(ρ); a_s, b_s -> q(A)
+function kl_ρ(a_0, b_0, a_s, b_s)
+	kl = a_s*log(b_s) - a_0*log(b_0) - loggamma(a_s) + loggamma(a_0)
+	kl += (a_s - a_0)*(digamma(a_s) - log(b_s))
+	kl -= a_s*(1 - b_0/b_s)
+	return kl
+end
+
+# ╔═╡ b180f4ec-af24-4f06-a642-b080c8fcdcce
+function kl_C(μ_0, γ, μ_C, Σ_C, exp_ρs)
+	kl = -0.5*logdet(Σ_C*Diagonal(γ))
+	kl -= -0.5*tr(I - (Σ_C*Diagonal(γ) + (μ_C - μ_0)*(μ_C - μ_0)')*exp_ρs*Diagonal(γ))
+	return kl
+end
+
+# ╔═╡ b7a7fe42-24b9-4aff-82c7-5964acf25bce
+md"""
+
+The log partition term, can be computed in the VB E step, following the definition:
+
+$\ln Z' = \sum_{t=1}^T \ln ζ'_t(y_t)$
+
+$\begin{align}
+\ln ζ'_t(y_t) = - \frac{1}{2} & \{ \langle \ln |2πR| \rangle - \ln|Σ_{t-1}^{-1}Σ_{t-1}^* Σ_t| \\
+&+ μ_{t-1}^TΣ_{t-1}^{-1}μ_{t-1} - μ_t^TΣ_t^{-1}μ_t \\
+&+ y_t^T \langle R^{-1} \rangle y_t - (Σ_{t-1}^{-1}μ_{t-1})^TΣ_{t-1}^*Σ_{t-1}^{-1}μ_{t-1} \}
+\end{align}$
+
+We know $\langle R^{-1} \rangle = diag(ρ̄)$, hence,  
+
+$\langle \ln |2 π R| \rangle = \langle \ln (2π)^D |R| \rangle$
+$\langle \ln (2π)^D |R| \rangle =  D  \ln (2π) - \sum_{s=1}^D ⟨\ln (ρ_s)⟩$
+
+$⟨\ln (ρ_s)⟩ = ψ(a + T /2) − \ln(b_s + G_{s, s} /2)$
+
+"""
+
+# ╔═╡ 78184b54-60ca-4457-bec3-092848a43f1c
+function log_Z(ys, μs, Σs, Σs_, exp_np::Exp_ϕ, hpp::HPP)
+	D, T = size(ys)
+	log_Z = 0
+	
+	log_det_R = D*log(2π) - sum(exp_np.log_ρ)
+
+	log_Z += -0.5*(log_det_R - logdet(inv(hpp.Σ_0)*Σs_[:, :, 1]*Σs[:, :, 1]) + hpp.μ_0'*inv(hpp.Σ_0)*hpp.μ_0 - μs[:, 1]'*inv(Σs[:, :, 1])*μs[:, 1] + ys[:, 1]'*exp_np.R⁻¹*ys[:, 1] - transpose(inv(hpp.Σ_0)*hpp.μ_0)*Σs_[:, :, 1]*inv(hpp.Σ_0)*hpp.μ_0)
+	
+	for t in 2:T
+		log_det_Σ = logdet(inv(Σs[:, :, t-1])*Σs_[:, :, t]*Σs[:, :, t])
+		μ_t_ = μs[:, t-1]'*inv(Σs[:, :, t-1])*μs[:, t-1]
+		μ_t = μs[:, t]'*inv(Σs[:, :, t])*μs[:, t]
+		y_t = ys[:, t]'*exp_np.R⁻¹*ys[:, t]
+		Σ_μ_t = transpose(inv(Σs[:, :, t-1])*μs[:, t-1])*Σs_[:, :, t]*inv(Σs[:, :, t-1])*μs[:, t-1]
+
+		log_Z += -0.5 * (log_det_R - log_det_Σ + μ_t_ - μ_t + y_t - Σ_μ_t)
+
+	end
+
+	return log_Z
+end
+
+# ╔═╡ fbc24a7c-48a0-43cc-9dd2-440acfb41c39
+# infer hidden state distribution q_x(x_0:T)
+function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP, smooth_out=false)
+    _, T = size(ys)
+	# forward pass α_t(x_t)
+	μs, Σs, Σs_ = v_forward(ys, exp_np, hpp)
+
+	# backward pass β_t(x_t)
+	ηs, Ψs, η₀, Ψ₀ = v_backward(ys, exp_np)
+
+	# marginal (smoothed) means, covs, and pairwise beliefs 
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η₀, Ψ₀, hpp.μ_0, hpp.Σ_0)
+
+	Υ_ₜ₋ₜ₊₁ = v_pairwise_x(Σs_, exp_np, Ψs)
+	
+	# hidden state sufficient stats 
+	W_A = sum(Υs[:, :, t-1] + ωs[:, t-1] * ωs[:, t-1]' for t in 2:T)
+	W_A += Υ_0 + ω_0*ω_0'
+
+	S_A = sum(Υ_ₜ₋ₜ₊₁[:, :, t] + ωs[:, t-1] * ωs[:, t]' for t in 2:T)
+	S_A += Υ_ₜ₋ₜ₊₁[:, :, 1] + ω_0*ωs[:, 1]'
+	
+	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
+	S_C = sum(ωs[:, t] * ys[:, t]' for t in 1:T)
+
+	if (smooth_out) # return variational smoothed mean, cov of hidden states after completing VBEM iterations
+		return ωs, Υs
+	end
+
+	# TO-DO: compute log partition ln Z'
+	log_Z_ = log_Z(ys, μs, Σs, Σs_, exp_np, hpp)
+	
+	return HSS(W_A, S_A, W_C, S_C), ω_0, Υ_0, log_Z_
+end
+
+# ╔═╡ 1902c1f1-1246-4ab3-88e6-35619d685cdd
+function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_seed=99, debug=false)
+	D, T = size(ys)
+	K = length(hpp.α)
+
+	"""
+	# random initialisation
+	Random.seed!(r_seed)
+	W_A = rand(K, K) + K*I
+	S_A = rand(K, K) + K*I
+	W_C = rand(K, K) + K*I
+	S_C = rand(D, K) + D*I
+	"""
+	
+	# no random initialistion
+	W_A = Matrix{Float64}(T*I, K, K)
+	S_A = Matrix{Float64}(T*I, K, K)
+	W_C = Matrix{Float64}(T*I, K, K)
+	S_C = Matrix{Float64}(T*I, K, K)
+	
+	hss = HSS(W_A, S_A, W_C, S_C)
+	exp_np = missing
+
+	for i in 1:max_iter
+		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ, _ = vb_m(ys, hpp, hss)
+		
+		hss, ω_0, Υ_0, _ = vb_e(ys, exp_np, hpp)
+
+		if (hpp_learn)
+			if (i%5 == 0) # update hyperparam every 5 iterations
+				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
+			end
+		end
+
+		#TO-DO: ELBO and Convergence check
+
+		if (i == max_iter)
+			if (debug) # debug a, b update
+				return exp_ρ, exp_log_ρ
+			end
+		end
+	end
+		
+	return exp_np
+end
+
+# ╔═╡ 72e5080a-089e-4869-a0e5-e13ee1d7a83d
+function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, tol=1e-3)
+	D, T = size(ys)
+	K = length(hpp.α)
+	
+	# no random initialistion
+	W_A = Matrix{Float64}(T*I, K, K)
+	S_A = Matrix{Float64}(T*I, K, K)
+	W_C = Matrix{Float64}(T*I, K, K)
+	S_C = Matrix{Float64}(T*I, K, K)
+	
+	hss = HSS(W_A, S_A, W_C, S_C)
+	exp_np = missing
+	elbo_prev = -Inf
+
+	for i in 1:max_iter
+		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ, qθ = vb_m(ys, hpp, hss)
+		
+		hss, ω_0, Υ_0, log_Z_ = vb_e(ys, exp_np, hpp)
+
+		if (hpp_learn)
+			if (i%5 == 0) # update hyperparam every 5 iterations
+				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
+			end
+		end
+
+		# Convergence check
+		kl_A_ = sum([kl_A(zeros(K), Diagonal(hpp.α), (qθ.μ_A)[j], qθ.Σ_A) for j in 1:K])
+		kl_ρ_ = sum([kl_ρ(hpp.a, hpp.b, qθ.a_s, (qθ.b_s)[s]) for s in 1:D])
+		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
+			
+		elbo = kl_A_ + kl_ρ_ + kl_C_ - log_Z_
+		
+		if abs(elbo - elbo_prev) < tol
+			println("Stopped at iteration: $i")
+            break
+		end
+		
+        elbo_prev = elbo
+
+	end
+		
+	return exp_np
+end
+
+# ╔═╡ 55eb8a6a-7bb9-4aa4-a560-d30ec9374776
+md"""
+### Test with/without hyperparam learning
 """
 
 # ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
@@ -879,7 +1064,7 @@ let
 	D, T = size(y)
 	K = size(A, 1)
 
-	# use fixed A,C,R from ground truth for the exp_np::Exp_ϕ
+	# use fixed A, C, R from ground truth for the exp_np::Exp_ϕ
 	e_A = A
 	e_AᵀA = A'A
 	e_C = C
@@ -887,8 +1072,9 @@ let
 	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
 	e_R⁻¹C = e_R⁻¹*e_C
 	e_CᵀR⁻¹ = e_C'*e_R⁻¹
-
-	exp_np = Exp_ϕ(e_A, e_AᵀA, e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹)
+	e_log_ρ = log.(1 ./ diag(R))
+	
+	exp_np = Exp_ϕ(e_A, e_AᵀA, e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹, e_log_ρ)
 	α = ones(K)
 	γ = ones(K)
 	a = 0.1
@@ -899,7 +1085,7 @@ let
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	# should recover very similar hss using ground-truth xs
-	vb_e(y, exp_np, hpp)[1]
+	vb_e(y, exp_np, hpp)
 end
 
 # ╔═╡ fb472969-3c3c-4787-8cf1-296f2c13ddf5
@@ -937,6 +1123,38 @@ let
 	exp_ρ, exp_log_ρ = vb_dlm(y, hpp, true, 100, 99, true)
 	a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
 	a/b # ρ̄_s, which is the inverse of R's sth diagonal entry
+end
+
+# ╔═╡ 3a97cd42-7f14-4068-b711-a6759042269c
+let
+	K = size(A, 1)
+	D = size(y, 1)
+	# specify initial priors (hyper-params)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	exp_f = vb_dlm_c(y, hpp, true) # hyperparameter learning
+	xs, σs = vb_e(y, exp_f, hpp, true)
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
+let
+	K = size(A, 1)
+	D = size(y, 1)
+	# specify initial priors (hyper-params)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	exp_f = vb_dlm_c(y, hpp) # no hyperparameter learning
+	xs, σs = vb_e(y, exp_f, hpp, true)
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
@@ -2221,6 +2439,7 @@ version = "1.4.1+0"
 # ╠═9381e183-5b4e-489f-a109-4e606212986e
 # ╠═45b0255d-72fd-4fa7-916a-4f73e730f4d5
 # ╠═6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
+# ╠═74c16682-2a48-4f10-a939-21e89a54e807
 # ╠═a8b50581-e5f3-449e-803e-ab31e6e0b812
 # ╟─85e2ada1-0adc-41a8-ab34-8043379ca0a4
 # ╠═2c9a233f-3a96-43dc-b783-b82642a82590
@@ -2260,6 +2479,17 @@ version = "1.4.1+0"
 # ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
 # ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
+# ╟─c422d3e3-27ae-4543-9315-3342bb257d19
+# ╟─73917530-67d0-480f-a776-619ef13394dd
+# ╠═e199689c-a79d-4824-af81-0b819fbc2a52
+# ╠═23af67ea-b57d-4cf7-81af-8b2a746f84fe
+# ╠═b180f4ec-af24-4f06-a642-b080c8fcdcce
+# ╟─b7a7fe42-24b9-4aff-82c7-5964acf25bce
+# ╠═78184b54-60ca-4457-bec3-092848a43f1c
+# ╠═72e5080a-089e-4869-a0e5-e13ee1d7a83d
+# ╟─55eb8a6a-7bb9-4aa4-a560-d30ec9374776
+# ╠═3a97cd42-7f14-4068-b711-a6759042269c
+# ╠═b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
 # ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa

@@ -8,7 +8,6 @@ using InteractiveUtils
 begin
 	using Distributions, Plots, Random
 	using LinearAlgebra
-	# using StatsBase
 	using StatsFuns
 	using SpecialFunctions
 	using PlutoUI
@@ -162,8 +161,7 @@ struct HSS
     S_A::Matrix{Float64}
     W_C::Matrix{Float64}
     S_C::Matrix{Float64}
-
-	# can be extended to incorporate driving input/ HSSMs
+	# can be extended to incorporate additional driving input/ HSSMs
 end
 
 # ╔═╡ 45b0255d-72fd-4fa7-916a-4f73e730f4d5
@@ -176,8 +174,6 @@ struct Exp_ϕ
 	CᵀR⁻¹C
 	R⁻¹C
 	CᵀR⁻¹
-
-	# TO-DO: ELBO computation and Convergence check
 	log_ρ
 end
 
@@ -195,12 +191,12 @@ end
 # ╔═╡ 74c16682-2a48-4f10-a939-21e89a54e807
 # parameters for approximated q(θ)
 struct Qθ
-	Σ_A
-	μ_A
-	Σ_C
-	μ_C
-	a_s
-	b_s
+	Σ_A # q(A)
+	μ_A # q(A)
+	Σ_C # q(C)
+	μ_C # q(C)
+	a_s # q(ρ)
+	b_s # q(ρ)
 end
 
 # ╔═╡ a8b50581-e5f3-449e-803e-ab31e6e0b812
@@ -307,7 +303,7 @@ function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
     Σs = zeros(K, K, T)
 	Σs_ = zeros(K, K, T)
 	
-	# TO-DO: ELBO and convergence check
+	# TO-DO: y-predicative 
 	#Qs = zeros(D, D, T)
 	#fs = zeros(D, T)
 
@@ -315,7 +311,7 @@ function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
     μ_0 = hpp.μ_0
     Σ_0 = hpp.Σ_0
 
-	# initialise for t=1
+	# initialise for t = 1
 	Σ₀_ = inv(inv(Σ_0) + exp_np.AᵀA)
 	Σs_[:, :, 1] = Σ₀_
 	
@@ -376,7 +372,7 @@ function v_backward(ys::Matrix{Float64}, exp_np::Exp_ϕ)
 		ηs[:, t] = Ψs[:, :, t]*exp_np.A'*Ψₜ₊₁*(exp_np.CᵀR⁻¹*ys[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
 	end
 
-	# for t=1, this correspond to β(x_0), the probability of all the data given the setting of the auxiliary x_0 hidden state.
+	# for t = 1, this correspond to β(x_0), the probability of all the data given the setting of the auxiliary x_0 hidden state.
 	Ψ₁ = inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, 1]))
 		
 	Ψ_0 = inv(exp_np.AᵀA - exp_np.A'*Ψ₁*exp_np.A)
@@ -424,7 +420,7 @@ function parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
 	Υs = zeros(K, K, T)
 	ωs = zeros(K, T)
 
-	# ending condition t=T
+	# ending condition t = T
 	Υs[:, :, T] = Σs[:, :, T]
 	ωs[:, T] = μs[:, T]
 	
@@ -515,7 +511,7 @@ Straight after the VBM Step, the following can be updated:
 
 $α_j^{-1} = \frac{1}{K}\{K Σ_A + Σ_AS_AS_A^TΣ_A\}_{j, j}$
 
-$γ_j^{-1} = \frac{1}{D}\{D Σ_C + Σ_C S_C diag(\mathbf{\bar{ρ}}) S_C^T Σ_C \}_{j, j}$
+$γ_j^{-1} = \frac{1}{D}\{D Σ_C + Σ_C S_C \ diag(\mathbf{\bar{ρ}}) S_C^T Σ_C \}_{j, j}$
 
 $Σ_0 = Υ_{0, 0}$
 
@@ -671,7 +667,7 @@ $p(c_s|γ, ρ_s) = \mathcal N(μ_0, ρ_s^{-1} diag(γ)^{-1})$
 
 $q(c_s|ρ_s) = \mathcal N(μ_c, ρ_s^{-1}Σ_C)$
 
-where $μ_0 = 0$, and $μ_c = Σ_C S_{C, (s)}$
+where $μ_0 = \mathbf{0}$, and $μ_c = Σ_C S_{C, (s)}$
 
 So, $ρ_s$ will cancel out in the first logdet term, the trace term is: 
 $tr( I - (ρ_s^{-1}Σ_C + (μ_C - μ_0)(μ_C - μ_0)^T)ρ_s \ diag(γ)) \}$
@@ -697,7 +693,7 @@ function kl_A(μ_0, Σ_0, μ_A, Σ_A)
 end
 
 # ╔═╡ 23af67ea-b57d-4cf7-81af-8b2a746f84fe
-# a_0, b_0 -> p(ρ); a_s, b_s -> q(A)
+# a_0, b_0 -> p(ρ); a_s, b_s -> q(ρ)
 function kl_ρ(a_0, b_0, a_s, b_s)
 	kl = a_s*log(b_s) - a_0*log(b_0) - loggamma(a_s) + loggamma(a_0)
 	kl += (a_s - a_0)*(digamma(a_s) - log(b_s))
@@ -738,9 +734,9 @@ $⟨\ln (ρ_s)⟩ = ψ(a + T /2) − \ln(b_s + G_{s, s} /2)$
 function log_Z(ys, μs, Σs, Σs_, exp_np::Exp_ϕ, hpp::HPP)
 	D, T = size(ys)
 	log_Z = 0
-	
 	log_det_R = D*log(2π) - sum(exp_np.log_ρ)
 
+	# t = 1
 	log_Z += -0.5*(log_det_R - logdet(inv(hpp.Σ_0)*Σs_[:, :, 1]*Σs[:, :, 1]) + hpp.μ_0'*inv(hpp.Σ_0)*hpp.μ_0 - μs[:, 1]'*inv(Σs[:, :, 1])*μs[:, 1] + ys[:, 1]'*exp_np.R⁻¹*ys[:, 1] - transpose(inv(hpp.Σ_0)*hpp.μ_0)*Σs_[:, :, 1]*inv(hpp.Σ_0)*hpp.μ_0)
 	
 	for t in 2:T
@@ -751,7 +747,6 @@ function log_Z(ys, μs, Σs, Σs_, exp_np::Exp_ϕ, hpp::HPP)
 		Σ_μ_t = transpose(inv(Σs[:, :, t-1])*μs[:, t-1])*Σs_[:, :, t]*inv(Σs[:, :, t-1])*μs[:, t-1]
 
 		log_Z += -0.5 * (log_det_R - log_det_Σ + μ_t_ - μ_t + y_t - Σ_μ_t)
-
 	end
 
 	return log_Z
@@ -786,7 +781,7 @@ function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP, smooth_out=false)
 		return ωs, Υs
 	end
 
-	# TO-DO: compute log partition ln Z'
+	# compute log partition ln Z' (ELBO and convergence check)
 	log_Z_ = log_Z(ys, μs, Σs, Σs_, exp_np, hpp)
 	
 	return HSS(W_A, S_A, W_C, S_C), ω_0, Υ_0, log_Z_
@@ -827,8 +822,6 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_
 			end
 		end
 
-		#TO-DO: ELBO and Convergence check
-
 		if (i == max_iter)
 			if (debug) # debug a, b update
 				return exp_ρ, exp_log_ρ
@@ -844,7 +837,6 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, 
 	D, T = size(ys)
 	K = length(hpp.α)
 	
-	# no random initialistion
 	W_A = Matrix{Float64}(T*I, K, K)
 	S_A = Matrix{Float64}(T*I, K, K)
 	W_C = Matrix{Float64}(T*I, K, K)
@@ -854,17 +846,10 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, 
 	exp_np = missing
 	elbo_prev = -Inf
 
+	# cf. Beal Algorithm 5.3
 	for i in 1:max_iter
 		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ, qθ = vb_m(ys, hpp, hss)
-		
 		hss, ω_0, Υ_0, log_Z_ = vb_e(ys, exp_np, hpp)
-
-		if (hpp_learn)
-			if (i%5 == 0) # update hyperparam every 5 iterations
-				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
-				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
-			end
-		end
 
 		# Convergence check
 		kl_A_ = sum([kl_A(zeros(K), Diagonal(hpp.α), (qθ.μ_A)[j], qθ.Σ_A) for j in 1:K])
@@ -872,14 +857,21 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, 
 		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
 			
 		elbo = kl_A_ + kl_ρ_ + kl_C_ - log_Z_
-		
+
+		# Hyper-param learning 
+		if (hpp_learn)
+			if (i%5 == 0) # update hyperparam every 5 iterations
+				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
+			end
+		end
+
 		if abs(elbo - elbo_prev) < tol
 			println("Stopped at iteration: $i")
             break
 		end
 		
         elbo_prev = elbo
-
 	end
 		
 	return exp_np
@@ -890,6 +882,11 @@ md"""
 ### Test with/without hyperparam learning
 """
 
+# ╔═╡ 51aa8176-fb01-4510-a193-87487d501fd0
+md"""
+### Test convergence with PPCA
+"""
+
 # ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
 md"""
 ## Appendix
@@ -897,7 +894,7 @@ md"""
 
 # ╔═╡ 8fed847c-93bc-454b-94c7-ba1d13c73b04
 md"""
-**Generate test data**
+### Generate test data
 """
 
 # ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
@@ -1020,12 +1017,10 @@ begin
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	T = 2000
-	
-	# Generate the toy dataset
-	Random.seed!(100)
+	Random.seed!(99)
 	y, x_true = gen_data(A, C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, T)
 	
-	# Test the Kalman filter
+	# Kalman filter (point-param)
 	x_hat, Px, y_hat, Py, _ = p_forward(y, A, C, R, μ_0, Σ_0)
 end
 
@@ -1085,6 +1080,8 @@ let
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	# should recover very similar hss using ground-truth xs
+	# ω_0, Υ_0 ->  μ_0, Σ_0 for initial x_0
+	# ln Z' for convergence check
 	vb_e(y, exp_np, hpp)
 end
 
@@ -1318,14 +1315,29 @@ end
 let
 	Random.seed!(5)
 	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 2000)
-	exp_f = vb_dlm(y_pca, hpp, true, 30)
+	exp_f = vb_dlm(y_pca, hpp, true)
 	xs, σs = vb_e(y_pca, exp_f, hpp, true)
 	println("VB PPCA, MSE, MAD, MAPE: ", error_metrics(xs_pca, xs))
 
 	x_hat, Px, y_hat, Py, _ = p_forward(y_pca, zeros(2, 2), C, R, μ_0, Σ_0)
-	println("Filtered, MSE, MAD, MAPE: ", error_metrics(xs_pca, x_hat))
+	println("\nFiltered, MSE, MAD, MAPE: ", error_metrics(xs_pca, x_hat))
+	
 	# Should recover A as the zero matrices, C and R same as normal setting.
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+end
 
+# ╔═╡ 621f9118-172b-4e5e-8c17-259ff43d70d4
+let
+	Random.seed!(5)
+	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 2000)
+	exp_f = vb_dlm_c(y_pca, hpp, true)
+	xs, σs = vb_e(y_pca, exp_f, hpp, true)
+	println("VB PPCA, MSE, MAD, MAPE: ", error_metrics(xs_pca, xs))
+
+	x_hat, Px, y_hat, Py, _ = p_forward(y_pca, zeros(2, 2), C, R, μ_0, Σ_0)
+	println("\nFiltered, MSE, MAD, MAPE: ", error_metrics(xs_pca, x_hat))
+	
+	# Should recover A as the zero matrices, C and R as usual
 	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
@@ -2490,6 +2502,8 @@ version = "1.4.1+0"
 # ╟─55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 # ╠═3a97cd42-7f14-4068-b711-a6759042269c
 # ╠═b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
+# ╟─51aa8176-fb01-4510-a193-87487d501fd0
+# ╠═621f9118-172b-4e5e-8c17-259ff43d70d4
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
 # ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa

@@ -708,7 +708,7 @@ end
 # ╔═╡ b180f4ec-af24-4f06-a642-b080c8fcdcce
 function kl_C(μ_0, γ, μ_C, Σ_C, exp_ρs)
 	kl = -0.5*logdet(Σ_C*Diagonal(γ))
-	kl -= -0.5*tr(I - (Σ_C*Diagonal(γ) + (μ_C - μ_0)*(μ_C - μ_0)')*exp_ρs*Diagonal(γ))
+	kl -= 0.5*tr(I - (Σ_C*Diagonal(γ) + (μ_C - μ_0)*(μ_C - μ_0)')*exp_ρs*Diagonal(γ))
 	return kl
 end
 

@@ -47,7 +47,7 @@ $p(\mathbf{ρ}|a, b) = \prod_{s=1}^D \mathcal Gam(ρ_s| a, b)$
 
 The joint probability of hidden and observed sequences are:
 
-$p(x_{1:T}, y_{1:T}) = p(x_1)p(y_1|x_1) \prod_{t=2}^T p(x_t|x_{t-1}) p(y_t|x_t)$
+$p(x_{1:T}, y_{1:T}) = p(x_1) \ p(y_1|x_1) \prod_{t=2}^T p(x_t|x_{t-1}) \ p(y_t|x_t)$
 
 It should be noted that, **SSM and HMM have closely related basic assumptions and recursive computations**. 
 
@@ -606,6 +606,12 @@ md"""
 ### Hidden state x inference (variational)
 """
 
+# ╔═╡ f141544a-35ea-46f7-a0bb-5360ba5ee3b8
+# ╠═╡ disabled = true
+#=╠═╡
+y, ys
+  ╠═╡ =#
+
 # ╔═╡ 21c30b9d-fd6e-463d-b51a-5b86fadc3947
 md"""
 Truncate 10 from both ends
@@ -860,8 +866,10 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, 
 	W_A = Matrix{Float64}(T*I, K, K)
 	S_A = Matrix{Float64}(T*I, K, K)
 	W_C = Matrix{Float64}(T*I, K, K)
-	S_C = Matrix{Float64}(T*I, K, K)
-	
+	S_C = Matrix{Float64}(I, K, D)
+	S_C[K, D] = T*1.0
+	S_C[1, 1] = T*1.0
+
 	hss = HSS(W_A, S_A, W_C, S_C)
 	exp_np = missing
 	elbo_prev = -Inf
@@ -907,6 +915,11 @@ md"""
 ### Test convergence with PPCA
 """
 
+# ╔═╡ 7112cfa1-2f3c-4197-92bd-73f43cd1f9d4
+md"""
+### Test with K=3
+"""
+
 # ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
 md"""
 ## Appendix
@@ -917,7 +930,18 @@ md"""
 ### Generate test data
 """
 
+# ╔═╡ c7f8f52b-9984-4d3d-bcd9-44da8a21b78e
+md"""
+#### $K=2$
+"""
+
+# ╔═╡ bbfb3ea5-cf3a-4794-9d8b-1744db578dcb
+md"""
+#### $K=3$
+"""
+
 # ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# A -> transition matrix, C -> emission matrix, Q -> process noise, Q -> observation noise, μ_0, Σ_0 -> auxiliary hidden state x_0
 function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	K, _ = size(A)
 	D, _ = size(C)
@@ -1121,6 +1145,46 @@ end
 # ╔═╡ f871da95-6710-4c0f-a3a1-890dd59a41a1
 A, C, R
 
+# ╔═╡ f3bb4aab-d867-4ddd-bd10-56851a146f76
+begin
+	A_3 = [0.7 0.1 -0.2; 0.1 0.8 -0.1; 0.2 0.1 0.9]
+	C_3 = [1.0 0.0 0.0; 0.0 0.0 1.0]
+
+	μ_i = zeros(3)
+	Σ_i = Matrix{Float64}(I, 3, 3)
+	Q = Matrix{Float64}(I, 3, 3)
+	Random.seed!(99)
+	y_k3, x_k3 = gen_data(A_3, C_3, Q, R, μ_i, Σ_i, 5000)
+end
+
+# ╔═╡ 3ea87e4c-3310-465a-92fb-1b6210a71a72
+let
+	K = size(A_3, 1)
+	D = size(C_3, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+
+	exp_ = vb_dlm_c(y_k3, hpp, true)
+	exp_.A, exp_.C, inv(exp_.R⁻¹)
+end
+
+# ╔═╡ ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
+let
+	K = size(A_3, 1)
+	D = size(C_3, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+
+	exp_ = vb_dlm_c(y_k3, hpp) # no hyperparam learning
+	exp_.A, exp_.C, inv(exp_.R⁻¹)
+end
+
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╠═╡ disabled = true
 #=╠═╡
@@ -1274,12 +1338,6 @@ let
 	a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
 	a/b # ρ̄_s, which is the inverse of R's sth diagonal entry
 end
-
-# ╔═╡ f141544a-35ea-46f7-a0bb-5360ba5ee3b8
-# ╠═╡ disabled = true
-#=╠═╡
-y, ys
-  ╠═╡ =#
 
 # ╔═╡ e0b4574c-8b75-45b7-98f8-8b9b6efd8c56
 let
@@ -2529,7 +2587,7 @@ version = "1.4.1+0"
 # ╟─a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
 # ╠═8a73d154-236d-4660-bb21-24681ed7d315
 # ╟─408dd6d8-cb5f-49ce-944b-50a0d9cebef5
-# ╟─fb472969-3c3c-4787-8cf1-296f2c13ddf5
+# ╠═fb472969-3c3c-4787-8cf1-296f2c13ddf5
 # ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
 # ╠═87667a9e-02aa-4104-b5a0-0f6b9e98ba96
 # ╠═d60b91ea-a020-41b5-9364-787167f0bac9
@@ -2568,9 +2626,15 @@ version = "1.4.1+0"
 # ╠═b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
 # ╟─51aa8176-fb01-4510-a193-87487d501fd0
 # ╠═621f9118-172b-4e5e-8c17-259ff43d70d4
+# ╟─7112cfa1-2f3c-4197-92bd-73f43cd1f9d4
+# ╠═3ea87e4c-3310-465a-92fb-1b6210a71a72
+# ╠═ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
 # ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
+# ╟─c7f8f52b-9984-4d3d-bcd9-44da8a21b78e
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa
+# ╟─bbfb3ea5-cf3a-4794-9d8b-1744db578dcb
+# ╠═f3bb4aab-d867-4ddd-bd10-56851a146f76
 # ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
@@ -2582,6 +2646,6 @@ version = "1.4.1+0"
 # ╟─c417e618-41c2-454c-9b27-470988215d48
 # ╟─8950aa50-22b2-4299-83b2-b9abfd1d5303
 # ╟─30502079-9684-4144-8bcd-a70f2cb5928a
-# ╠═ca825009-564e-43e0-9014-cce87c46533b
+# ╟─ca825009-564e-43e0-9014-cce87c46533b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

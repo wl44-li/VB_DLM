@@ -612,11 +612,6 @@ md"""
 y, ys
   ╠═╡ =#
 
-# ╔═╡ 21c30b9d-fd6e-463d-b51a-5b86fadc3947
-md"""
-Truncate 10 from both ends
-"""
-
 # ╔═╡ 7b185270-58d5-4406-8768-103d798fa326
 md"""
 ### With Hyperparameter learning
@@ -631,7 +626,7 @@ Hidden state (xs) learning outperform Kalman Filter and very close to Kalman smo
 
 # ╔═╡ be042373-ed3e-4e2e-b714-b4f9e5964b57
 md"""
-## Debugging notes: 
+**Debugging notes** 
 
 -> check vb-m with HSS using x_true (✓)
 
@@ -858,17 +853,27 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_
 	return exp_np
 end
 
+# ╔═╡ c15e18ba-543b-4a98-9d5c-41dbc02ca879
+md"""
+### **Complete VB_DLM procedure**
+"""
+
 # ╔═╡ 72e5080a-089e-4869-a0e5-e13ee1d7a83d
-function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, tol=1e-3)
+function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, tol=5e-3)
 	D, T = size(ys)
 	K = length(hpp.α)
 	
 	W_A = Matrix{Float64}(T*I, K, K)
 	S_A = Matrix{Float64}(T*I, K, K)
 	W_C = Matrix{Float64}(T*I, K, K)
-	S_C = Matrix{Float64}(I, K, D)
-	S_C[K, D] = T*1.0
-	S_C[1, 1] = T*1.0
+
+	if (K==D)
+		S_C = Matrix{Float64}(T*I, K, D)
+	else
+		S_C = Matrix{Float64}(I, K, D)
+		S_C[1, 1] = T*1.0
+		S_C[K, D] = T*1.0
+	end
 
 	hss = HSS(W_A, S_A, W_C, S_C)
 	exp_np = missing
@@ -888,7 +893,7 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, 
 
 		# Hyper-param learning 
 		if (hpp_learn)
-			if (i%5 == 0) # update hyperparam every 5 iterations
+			if (i%4 == 0) 
 				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
 				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
 			end
@@ -910,14 +915,74 @@ md"""
 ### Test with/without hyperparam learning
 """
 
+# ╔═╡ 17a8fdf6-dd03-4de9-8969-085dc0043699
+md"""
+No hyper-param learning
+"""
+
 # ╔═╡ 51aa8176-fb01-4510-a193-87487d501fd0
 md"""
 ### Test convergence with PPCA
 """
 
+# ╔═╡ 67ba0061-7809-4391-9410-1aaae787e636
+md"""
+Ground-truth A, C, R
+"""
+
+# ╔═╡ a4526a71-2e74-479e-892d-b5bc04ceebf8
+md"""
+Inferred A, C, R
+"""
+
 # ╔═╡ 7112cfa1-2f3c-4197-92bd-73f43cd1f9d4
 md"""
-### Test with K=3
+### Test with $K=3$
+"""
+
+# ╔═╡ 04fcab96-69ac-4ffe-85e3-ccdd905cc99f
+md"""
+Ground-truth A, C, R
+"""
+
+# ╔═╡ be3571b9-d315-48c0-80bb-c353bfb61028
+md"""
+No hyper-param learning
+"""
+
+# ╔═╡ 7d29d039-7999-4398-8f1e-394511a85f08
+md"""
+Compare with Kalman Filter
+"""
+
+# ╔═╡ 235437f2-89e1-4b9d-a541-d85e81cc5573
+md"""
+### Test with $D=3$
+"""
+
+# ╔═╡ 3f109d8d-5209-4a38-970c-b85eb98a4ac1
+md"""
+Ground-truth A, C, R
+"""
+
+# ╔═╡ 88609025-fedb-4a31-8827-c00ec539595f
+md"""
+Inferred A, C, R
+"""
+
+# ╔═╡ 57ee695f-12f6-4144-8d33-66a331018307
+md"""
+No hyper-param learning
+"""
+
+# ╔═╡ d95f0d89-1730-4856-975e-cb1e70ea0221
+md"""
+Compare with Kalman Filter
+"""
+
+# ╔═╡ ece36508-61eb-4c1e-aebc-6fcf13e74b15
+md"""
+**$D=3, K=2$** DEBUG S_C Initialistion
 """
 
 # ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
@@ -938,6 +1003,11 @@ md"""
 # ╔═╡ bbfb3ea5-cf3a-4794-9d8b-1744db578dcb
 md"""
 #### $K=3$
+"""
+
+# ╔═╡ 7acc5644-20b7-473c-98a2-b5423061f893
+md"""
+#### $D=3$
 """
 
 # ╔═╡ a5ae35dc-cc4b-48bd-869e-37823b8073d2
@@ -1065,8 +1135,6 @@ begin
 	T = 2000
 	Random.seed!(99)
 	y, x_true = gen_data(A, C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, T)
-	
-	# Kalman filter (point-param)
 	x_hat, Px, y_hat, Py, _ = p_forward(y, A, C, R, μ_0, Σ_0)
 end
 
@@ -1145,11 +1213,13 @@ end
 # ╔═╡ f871da95-6710-4c0f-a3a1-890dd59a41a1
 A, C, R
 
+# ╔═╡ 806f343e-2ef7-48c6-964a-f29c0ad63256
+zeros(2, 2), C, R
+
 # ╔═╡ f3bb4aab-d867-4ddd-bd10-56851a146f76
 begin
 	A_3 = [0.7 0.1 -0.2; 0.1 0.8 -0.1; 0.2 0.1 0.9]
 	C_3 = [1.0 0.0 0.0; 0.0 0.0 1.0]
-
 	μ_i = zeros(3)
 	Σ_i = Matrix{Float64}(I, 3, 3)
 	Q = Matrix{Float64}(I, 3, 3)
@@ -1157,33 +1227,28 @@ begin
 	y_k3, x_k3 = gen_data(A_3, C_3, Q, R, μ_i, Σ_i, 5000)
 end
 
-# ╔═╡ 3ea87e4c-3310-465a-92fb-1b6210a71a72
-let
-	K = size(A_3, 1)
-	D = size(C_3, 1)
-	α = ones(K)
-	γ = ones(K)
-	a = 0.001
-	b = 0.001
-	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+# ╔═╡ fbbce4b8-79bc-480f-a294-b3cde52823f0
+A_3, C_3, R
 
-	exp_ = vb_dlm_c(y_k3, hpp, true)
-	exp_.A, exp_.C, inv(exp_.R⁻¹)
+# ╔═╡ b6929d34-b85f-4d20-b19f-d0ff4ebcc46f
+begin
+	C_d3 = [1.0 0.0 0.0; 0.0 0.9 0.1; 0.0 0.1 0.9]
+	R_d3 = Diagonal([0.3, 0.5, 0.1])
+	Random.seed!(99)
+	y_d3, x_d3 = gen_data(A_3, C_d3, Q, R_d3, μ_i, Σ_i, 5000)
 end
 
-# ╔═╡ ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
-let
-	K = size(A_3, 1)
-	D = size(C_3, 1)
-	α = ones(K)
-	γ = ones(K)
-	a = 0.001
-	b = 0.001
-	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+# ╔═╡ c8506c8c-ef40-47b6-a415-c3244e20d5a3
+A_3, C_d3, R_d3
 
-	exp_ = vb_dlm_c(y_k3, hpp) # no hyperparam learning
-	exp_.A, exp_.C, inv(exp_.R⁻¹)
+# ╔═╡ 6c27071e-a984-4450-92d4-4058baa92d1b
+begin
+	C_d3k2 = [1.0 0.0; 0.2 0.8; 0.9 0.1]
+	y_d3k2, x_d3k2 = gen_data(A, C_d3k2, Diagonal([1.0, 1.0]), R_d3, μ_0, Σ_0, T)
 end
+
+# ╔═╡ 93541f59-06f3-48f0-a95b-5bd0b9b8e60a
+A, C_d3k2, R_d3
 
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╠═╡ disabled = true
@@ -1318,16 +1383,16 @@ end
 begin
 	K = size(A, 1)
 	D = size(y, 1)
-	# specify initial priors (hyper-params)
 	α = ones(K)
 	γ = ones(K)
 	a = 0.001
 	b = 0.001
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	exp_f = vb_dlm(y, hpp) # no hyperparameter learning	
+	exp_f = vb_dlm(y, hpp)
 	xs, σs, ys, Qs = vb_e(y, exp_f, hpp, true)
-	
+
+	println("No Hyper-param learning: ")
 	println("\nVB (x) MSE, MAD, MAPE: ", error_metrics(x_true, xs))
 	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
@@ -1352,12 +1417,7 @@ let
 end
 
 # ╔═╡ cdcbb9be-014c-44b2-a126-9445a151994e
-println("VB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 1:end-1], ys[:, 2:end])
-)
-
-# ╔═╡ af9a46dd-8ddc-4422-afeb-7170024a4df6
-println("VB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 6:end-6], ys[:, 7:end-5])
-)
+println("VB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 1:end-1], ys[:, 2:end]))
 
 # ╔═╡ adbf92e5-8a86-4acf-8f50-d82e122a5f5f
 let
@@ -1404,19 +1464,17 @@ end
 let
 	K = size(A, 1)
 	D = size(y, 1)
-	# specify initial priors (hyper-params)
 	α = ones(K)
 	γ = ones(K)
 	a = 0.001
 	b = 0.001
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	exp_f = vb_dlm_c(y, hpp, true) # hyperparameter learning
-	xs, σs, ys, Qs = vb_e(y, exp_f, hpp, true)
+	exp_f = vb_dlm_c(y, hpp, true) # hyper-parameter learning
+	xs, _, ys, _ = vb_e(y, exp_f, hpp, true)
 	println("\nVB (x) MSE, MAD, MAPE: ", error_metrics(x_true, xs))
 	println("\nVB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 1:end-1], ys[:, 2:end]))
 
-	#println("TRUCATED VB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 6:end-6], ys[:, 7:end-5]))
 	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
@@ -1424,15 +1482,14 @@ end
 let
 	K = size(A, 1)
 	D = size(y, 1)
-	# specify initial priors (hyper-params)
 	α = ones(K)
 	γ = ones(K)
 	a = 0.001
 	b = 0.001
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	exp_f = vb_dlm_c(y, hpp) # no hyperparameter learning
-	xs, σs, ys, Qs = vb_e(y, exp_f, hpp, true)
+	exp_f = vb_dlm_c(y, hpp)
+	xs, _, ys, _ = vb_e(y, exp_f, hpp, true)
 	println("\nVB (x) MSE, MAD, MAPE: ", error_metrics(x_true, xs))
 	println("\nVB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 1:end-1], ys[:, 2:end]))
 
@@ -1446,6 +1503,7 @@ begin
 	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 2000)
 	exp_ppca = vb_dlm_c(y_pca, hpp, true)
 	x_s, σ_s, y_s, Q_s = vb_e(y_pca, exp_ppca, hpp, true)
+	
 	println("\nVB (x) PPCA (MSE, MAD, MAPE): ", error_metrics(xs_pca, x_s))
 	println("\nVB (y) PPCA (MSE, MAD, MAPE): ", error_metrics(y_pca[:, 1:end-1], y_s[:, 2:end]))
 
@@ -1454,6 +1512,114 @@ begin
 
 	# Should recover A as the zero matrices, C and R as usual
 	exp_ppca.A, exp_ppca.C, inv(exp_ppca.R⁻¹)
+end
+
+# ╔═╡ 3ea87e4c-3310-465a-92fb-1b6210a71a72
+let
+	K = size(A_3, 1)
+	D = size(C_3, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+	exp_ = vb_dlm_c(y_k3, hpp, true)
+
+	x_s, _, y_s, _ = vb_e(y_k3, exp_, hpp, true)
+	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_k3, x_s))
+	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_k3[:, 1:end-1], y_s[:, 2:end]))
+	
+	exp_.A, exp_.C, inv(exp_.R⁻¹)
+end
+
+# ╔═╡ ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
+let
+	K = size(A_3, 1)
+	D = size(C_3, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+
+	exp_ = vb_dlm_c(y_k3, hpp) # no hyperparam learning
+
+	x_s, _, y_s, _ = vb_e(y_k3, exp_, hpp, true)
+	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_k3, x_s))
+	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_k3[:, 1:end-1], y_s[:, 2:end]))
+
+	exp_.A, exp_.C, inv(exp_.R⁻¹)
+end
+
+# ╔═╡ 35d1162f-4ad1-4e31-8ee3-969028986e4e
+let
+	x_hat, _, y_hat, _, _ = p_forward(y_k3, A_3, C_3, R, μ_i, Σ_i)
+	println("Kalman Filter (x) MSE, MAD, MAPE: ", error_metrics(x_k3, x_hat))
+	println("\nKalman Filtered (y) MSE, MAD, MAPE: ", error_metrics(y_k3[:, 1:end-1], y_hat[:, 2:end]))
+end
+
+# ╔═╡ 5edb253c-471b-432c-8e80-60b768831cd8
+let
+	K = size(A_3, 1)
+	D = size(C_d3, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+
+	exp_ = vb_dlm_c(y_d3, hpp, true) 
+	x_s, _, y_s, _ = vb_e(y_d3, exp_, hpp, true)
+
+	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3, x_s))
+	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_d3[:, 1:end-1], y_s[:, 2:end]))
+
+	exp_.A, exp_.C, inv(exp_.R⁻¹)
+end
+
+# ╔═╡ fea6a707-abdd-4196-a651-8bb86dada5f2
+let
+	K = size(A_3, 1)
+	D = size(C_d3, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+
+	exp_ = vb_dlm_c(y_d3, hpp) 
+	x_s, _, y_s, _ = vb_e(y_d3, exp_, hpp, true)
+
+	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3, x_s))
+	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_d3[:, 1:end-1], y_s[:, 2:end]))
+
+	exp_.A, exp_.C, inv(exp_.R⁻¹)
+end
+
+# ╔═╡ f1ae5beb-c342-4150-b895-749117e9569f
+let
+	x_hat, _, y_hat, _, _ = p_forward(y_d3, A_3, C_d3, R_d3, μ_i, Σ_i)
+	println("Kalman Filter (x) MSE, MAD, MAPE: ", error_metrics(x_d3, x_hat))
+	println("\nKalman Filtered (y) MSE, MAD, MAPE: ", error_metrics(y_d3[:, 1:end-1], y_hat[:, 2:end]))
+end
+
+# ╔═╡ d12c5786-51e6-4b27-a54c-583c4ede13cf
+let
+	K = size(A, 1)
+	D = size(C_d3k2, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	exp_ = vb_dlm_c(y_d3k2, hpp, true) 
+	x_s, _, y_s, _ = vb_e(y_d3k2, exp_, hpp, true)
+
+	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3k2, x_s))
+	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_d3k2[:, 1:end-1], y_s[:, 2:end]))
+
+	exp_.A, exp_.C, inv(exp_.R⁻¹)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2592,23 +2758,21 @@ version = "1.4.1+0"
 # ╠═87667a9e-02aa-4104-b5a0-0f6b9e98ba96
 # ╠═d60b91ea-a020-41b5-9364-787167f0bac9
 # ╟─b0b1f14d-4fbd-4995-845f-f19990460329
-# ╟─1902c1f1-1246-4ab3-88e6-35619d685cdd
+# ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
 # ╟─3c63b27b-76e3-4edc-9b56-345738b97c41
-# ╠═f871da95-6710-4c0f-a3a1-890dd59a41a1
+# ╟─f871da95-6710-4c0f-a3a1-890dd59a41a1
 # ╟─17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
 # ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
 # ╟─f141544a-35ea-46f7-a0bb-5360ba5ee3b8
 # ╠═e0b4574c-8b75-45b7-98f8-8b9b6efd8c56
 # ╠═e6afe143-652b-4ca6-812d-8a67415a84aa
-# ╠═cdcbb9be-014c-44b2-a126-9445a151994e
-# ╟─21c30b9d-fd6e-463d-b51a-5b86fadc3947
-# ╠═af9a46dd-8ddc-4422-afeb-7170024a4df6
+# ╟─cdcbb9be-014c-44b2-a126-9445a151994e
 # ╟─7b185270-58d5-4406-8768-103d798fa326
 # ╠═adbf92e5-8a86-4acf-8f50-d82e122a5f5f
 # ╟─dab1fe9c-20a4-4376-beaf-02b5292ca7cd
 # ╟─6dc12cc2-da6f-4b90-8315-dff1531e09ae
 # ╟─a051753c-87ed-4337-9f88-432141b96e6c
-# ╠═a1fdfcb1-e2d0-4ac9-aa20-62e77efdf4e5
+# ╟─a1fdfcb1-e2d0-4ac9-aa20-62e77efdf4e5
 # ╟─be042373-ed3e-4e2e-b714-b4f9e5964b57
 # ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
@@ -2620,22 +2784,47 @@ version = "1.4.1+0"
 # ╠═b180f4ec-af24-4f06-a642-b080c8fcdcce
 # ╟─b7a7fe42-24b9-4aff-82c7-5964acf25bce
 # ╠═78184b54-60ca-4457-bec3-092848a43f1c
+# ╟─c15e18ba-543b-4a98-9d5c-41dbc02ca879
 # ╠═72e5080a-089e-4869-a0e5-e13ee1d7a83d
 # ╟─55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 # ╠═3a97cd42-7f14-4068-b711-a6759042269c
+# ╟─17a8fdf6-dd03-4de9-8969-085dc0043699
 # ╠═b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
 # ╟─51aa8176-fb01-4510-a193-87487d501fd0
+# ╟─67ba0061-7809-4391-9410-1aaae787e636
+# ╠═806f343e-2ef7-48c6-964a-f29c0ad63256
+# ╟─a4526a71-2e74-479e-892d-b5bc04ceebf8
 # ╠═621f9118-172b-4e5e-8c17-259ff43d70d4
 # ╟─7112cfa1-2f3c-4197-92bd-73f43cd1f9d4
+# ╟─04fcab96-69ac-4ffe-85e3-ccdd905cc99f
+# ╠═fbbce4b8-79bc-480f-a294-b3cde52823f0
 # ╠═3ea87e4c-3310-465a-92fb-1b6210a71a72
+# ╟─be3571b9-d315-48c0-80bb-c353bfb61028
 # ╠═ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
+# ╟─7d29d039-7999-4398-8f1e-394511a85f08
+# ╠═35d1162f-4ad1-4e31-8ee3-969028986e4e
+# ╟─235437f2-89e1-4b9d-a541-d85e81cc5573
+# ╟─3f109d8d-5209-4a38-970c-b85eb98a4ac1
+# ╠═c8506c8c-ef40-47b6-a415-c3244e20d5a3
+# ╟─88609025-fedb-4a31-8827-c00ec539595f
+# ╠═5edb253c-471b-432c-8e80-60b768831cd8
+# ╟─57ee695f-12f6-4144-8d33-66a331018307
+# ╠═fea6a707-abdd-4196-a651-8bb86dada5f2
+# ╟─d95f0d89-1730-4856-975e-cb1e70ea0221
+# ╠═f1ae5beb-c342-4150-b895-749117e9569f
+# ╟─ece36508-61eb-4c1e-aebc-6fcf13e74b15
+# ╠═93541f59-06f3-48f0-a95b-5bd0b9b8e60a
+# ╠═d12c5786-51e6-4b27-a54c-583c4ede13cf
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
 # ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
 # ╟─c7f8f52b-9984-4d3d-bcd9-44da8a21b78e
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa
 # ╟─bbfb3ea5-cf3a-4794-9d8b-1744db578dcb
 # ╠═f3bb4aab-d867-4ddd-bd10-56851a146f76
-# ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╟─7acc5644-20b7-473c-98a2-b5423061f893
+# ╠═6c27071e-a984-4450-92d4-4058baa92d1b
+# ╠═b6929d34-b85f-4d20-b19f-d0ff4ebcc46f
+# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
 # ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb

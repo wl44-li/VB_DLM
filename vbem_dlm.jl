@@ -819,14 +819,14 @@ function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_
 	W_A = rand(K, K) + K*I
 	S_A = rand(K, K) + K*I
 	W_C = rand(K, K) + K*I
-	S_C = rand(D, K) + D*I
+	S_C = rand(K, D) + D*I
 	"""
 	
 	# no random initialistion
 	W_A = Matrix{Float64}(T*I, K, K)
 	S_A = Matrix{Float64}(T*I, K, K)
 	W_C = Matrix{Float64}(T*I, K, K)
-	S_C = Matrix{Float64}(T*I, K, K)
+	S_C = Matrix{Float64}(T*I, K, D)
 	
 	hss = HSS(W_A, S_A, W_C, S_C)
 	exp_np = missing
@@ -858,58 +858,6 @@ md"""
 ### **Complete VB_DLM procedure**
 """
 
-# ╔═╡ 72e5080a-089e-4869-a0e5-e13ee1d7a83d
-function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, tol=5e-3)
-	D, T = size(ys)
-	K = length(hpp.α)
-	
-	W_A = Matrix{Float64}(T*I, K, K)
-	S_A = Matrix{Float64}(T*I, K, K)
-	W_C = Matrix{Float64}(T*I, K, K)
-
-	if (K==D)
-		S_C = Matrix{Float64}(T*I, K, D)
-	else
-		S_C = Matrix{Float64}(I, K, D)
-		S_C[1, 1] = T*1.0
-		S_C[K, D] = T*1.0
-	end
-
-	hss = HSS(W_A, S_A, W_C, S_C)
-	exp_np = missing
-	elbo_prev = -Inf
-
-	# cf. Beal Algorithm 5.3
-	for i in 1:max_iter
-		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ, qθ = vb_m(ys, hpp, hss)
-		hss, ω_0, Υ_0, log_Z_ = vb_e(ys, exp_np, hpp)
-
-		# Convergence check
-		kl_A_ = sum([kl_A(zeros(K), Diagonal(hpp.α), (qθ.μ_A)[j], qθ.Σ_A) for j in 1:K])
-		kl_ρ_ = sum([kl_ρ(hpp.a, hpp.b, qθ.a_s, (qθ.b_s)[s]) for s in 1:D])
-		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
-			
-		elbo = kl_A_ + kl_ρ_ + kl_C_ - log_Z_
-
-		# Hyper-param learning 
-		if (hpp_learn)
-			if (i%4 == 0) 
-				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
-				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
-			end
-		end
-
-		if abs(elbo - elbo_prev) < tol
-			println("Stopped at iteration: $i")
-            break
-		end
-		
-        elbo_prev = elbo
-	end
-		
-	return exp_np
-end
-
 # ╔═╡ 55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 md"""
 ### Test with/without hyperparam learning
@@ -919,6 +867,28 @@ md"""
 md"""
 No hyper-param learning
 """
+
+# ╔═╡ b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
+# ╠═╡ disabled = true
+#=╠═╡
+let
+	K = size(A, 1)
+	D = size(y, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	exp_f = vb_dlm_c(y, hpp)
+	xs, _, ys, _ = vb_e(y, exp_f, hpp, true)
+	println("\nVB (x) MSE, MAD, MAPE: ", error_metrics(x_true, xs))
+	println("\nVB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 1:end-1], ys[:, 2:end]))
+
+	#println("TRUCATED VB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 6:end-6], ys[:, 7:end-5]))
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+end
+  ╠═╡ =#
 
 # ╔═╡ 51aa8176-fb01-4510-a193-87487d501fd0
 md"""
@@ -945,10 +915,37 @@ md"""
 Ground-truth A, C, R
 """
 
+# ╔═╡ 5f884fe3-8dc6-4ec0-98cf-8fe53fcb506f
+md"""
+**$D=2, K=3$**
+"""
+
 # ╔═╡ be3571b9-d315-48c0-80bb-c353bfb61028
 md"""
 No hyper-param learning
 """
+
+# ╔═╡ ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
+# ╠═╡ disabled = true
+#=╠═╡
+let
+	K = size(A_3, 1)
+	D = size(C_3, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+
+	exp_ = vb_dlm_c(y_k3, hpp) # no hyperparam learning
+
+	x_s, _, y_s, _ = vb_e(y_k3, exp_, hpp, true)
+	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_k3, x_s))
+	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_k3[:, 1:end-1], y_s[:, 2:end]))
+
+	exp_.A, exp_.C, inv(exp_.R⁻¹)
+end
+  ╠═╡ =#
 
 # ╔═╡ 7d29d039-7999-4398-8f1e-394511a85f08
 md"""
@@ -975,6 +972,28 @@ md"""
 No hyper-param learning
 """
 
+# ╔═╡ fea6a707-abdd-4196-a651-8bb86dada5f2
+# ╠═╡ disabled = true
+#=╠═╡
+let
+	K = size(A_3, 1)
+	D = size(C_d3, 1)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.001
+	b = 0.001
+	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
+
+	exp_ = vb_dlm_c(y_d3, hpp) 
+	x_s, _, y_s, _ = vb_e(y_d3, exp_, hpp, true)
+
+	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3, x_s))
+	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_d3[:, 1:end-1], y_s[:, 2:end]))
+
+	exp_.A, exp_.C, inv(exp_.R⁻¹)
+end
+  ╠═╡ =#
+
 # ╔═╡ d95f0d89-1730-4856-975e-cb1e70ea0221
 md"""
 Compare with Kalman Filter
@@ -982,7 +1001,7 @@ Compare with Kalman Filter
 
 # ╔═╡ ece36508-61eb-4c1e-aebc-6fcf13e74b15
 md"""
-**$D=3, K=2$** DEBUG S_C Initialistion
+**$D=3, K=2$**
 """
 
 # ╔═╡ b2818ed9-6ef8-4398-a9d4-63b1d399169c
@@ -1224,18 +1243,34 @@ begin
 	Σ_i = Matrix{Float64}(I, 3, 3)
 	Q = Matrix{Float64}(I, 3, 3)
 	Random.seed!(99)
-	y_k3, x_k3 = gen_data(A_3, C_3, Q, R, μ_i, Σ_i, 5000)
+	y_k3, x_k3 = gen_data(A_3, C_3, Q, R, μ_i, Σ_i, T) #K=3, D=2
 end
 
 # ╔═╡ fbbce4b8-79bc-480f-a294-b3cde52823f0
 A_3, C_3, R
+
+# ╔═╡ fabb7306-8601-4da4-8703-03a27dbfe7f0
+let
+	# TO-DO: use linear reg to initialise S_C
+	y_d = reshape(y[1, :], :, 1)
+
+end
+
+# ╔═╡ f356a7c6-b78b-4042-b4e6-a5998e791d7a
+let
+	W_A = sum(x_k3[:, t-1] * x_k3[:, t-1]' for t in 2:T)
+	S_A = sum(x_k3[:, t-1] * x_k3[:, t]' for t in 2:T)
+	W_C = sum(x_k3[:, t] * x_k3[:, t]' for t in 1:T)
+	S_C = sum(x_k3[:, t] * y_k3[:, t]' for t in 1:T)
+	hss = HSS(W_A, S_A, W_C, S_C)
+end
 
 # ╔═╡ b6929d34-b85f-4d20-b19f-d0ff4ebcc46f
 begin
 	C_d3 = [1.0 0.0 0.0; 0.0 0.9 0.1; 0.0 0.1 0.9]
 	R_d3 = Diagonal([0.3, 0.5, 0.1])
 	Random.seed!(99)
-	y_d3, x_d3 = gen_data(A_3, C_d3, Q, R_d3, μ_i, Σ_i, 5000)
+	y_d3, x_d3 = gen_data(A_3, C_d3, Q, R_d3, μ_i, Σ_i, T) #K=3, D=3
 end
 
 # ╔═╡ c8506c8c-ef40-47b6-a415-c3244e20d5a3
@@ -1243,12 +1278,125 @@ A_3, C_d3, R_d3
 
 # ╔═╡ 6c27071e-a984-4450-92d4-4058baa92d1b
 begin
-	C_d3k2 = [1.0 0.0; 0.2 0.8; 0.9 0.1]
+	C_d3k2 = [1.0 0.0; 0.2 0.8; 0.9 0.1] #K=2, D=3
 	y_d3k2, x_d3k2 = gen_data(A, C_d3k2, Diagonal([1.0, 1.0]), R_d3, μ_0, Σ_0, T)
 end
 
 # ╔═╡ 93541f59-06f3-48f0-a95b-5bd0b9b8e60a
 A, C_d3k2, R_d3
+
+# ╔═╡ ff03366d-ae33-4b3e-bc46-2cd039d21c61
+begin
+	using MultivariateStats
+	
+	# Assume y is a D x T matrix
+	model = fit(PCA, y_d3k2; maxoutdim=2)
+	
+	# The principal components are stored in the 'p' field of the model
+	pcs = model.proj[:, 1:2]
+	
+	# Transpose to match our S_C shape (K x D)
+	S_C_init = pcs'
+end
+
+# ╔═╡ 72e5080a-089e-4869-a0e5-e13ee1d7a83d
+function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, S_C_PCA=false, max_iter=500, tol=5e-3)
+	D, T = size(ys)
+	K = length(hpp.α)
+	
+	W_A = Matrix{Float64}(T*I, K, K)
+	S_A = Matrix{Float64}(T*I, K, K)
+	W_C = Matrix{Float64}(T*I, K, K)
+
+	if (K == D)
+		S_C = Matrix{Float64}(T*I, K, D)
+	else
+
+		if (S_C_PCA)
+			model = fit(PCA, ys; maxoutdim=min(K,D))
+			# The principal components are stored in the 'p' field of the model
+			pcs = model.proj[:, 1:min(K,D)]
+			
+			# Transpose to match our S_C shape (K x D)
+			S_C = pcs'
+			
+			# Fill the rest with zeros if K > D
+			if K > D
+			    S_C = [S_C; ones(K-D, D)]
+			end
+		else
+
+			if D > K # factor model econometrics
+				S_C = Matrix{Float64}(max_iter*I, K, D)
+			else
+				# K>D, signal processing 
+				S_C = Matrix{Float64}(I, K, D)
+				S_C[1, 1] = max_iter * 1.0
+				S_C[K, D] = max_iter * 1.0
+			end
+		end
+	end
+
+	hss = HSS(W_A, S_A, W_C, S_C)
+	exp_np = missing
+	elbo_prev = -Inf
+
+	# cf. Beal Algorithm 5.3
+	for i in 1:max_iter
+		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ, qθ = vb_m(ys, hpp, hss)
+		hss, ω_0, Υ_0, log_Z_ = vb_e(ys, exp_np, hpp)
+
+		# Convergence check
+		kl_A_ = sum([kl_A(zeros(K), Diagonal(hpp.α), (qθ.μ_A)[j], qθ.Σ_A) for j in 1:K])
+		kl_ρ_ = sum([kl_ρ(hpp.a, hpp.b, qθ.a_s, (qθ.b_s)[s]) for s in 1:D])
+		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
+			
+		elbo = kl_A_ + kl_ρ_ + kl_C_ - log_Z_
+
+		# Hyper-param learning 
+		if (hpp_learn)
+			if (i%4 == 0) 
+				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
+			end
+		end
+
+		if abs(elbo - elbo_prev) < tol
+			println("Stopped at iteration: $i")
+            break
+		end
+		
+        elbo_prev = elbo
+
+		if (i == max_iter)
+			println("Warning: VB have not necessarily converged at $max_iter iterations")
+		end
+	end
+		
+	return exp_np
+end
+
+# ╔═╡ 89611fad-e400-474c-8646-8ecddf91ca6d
+let
+	# Assume y is a D x T matrix
+	model = fit(PCA, y_k3; maxoutdim=2)
+	
+	# The principal components are stored in the 'p' field of the model
+	pcs = model.proj[:, 1:2]
+	
+	# Transpose to match our S_C shape (K x D)
+	S_C_init = [pcs'; ones(1, 2)]
+end
+
+# ╔═╡ 0b4973f6-b30c-47b6-82ad-7763cd09ad43
+let
+	W_A = sum(x_d3k2[:, t-1] * x_d3k2[:, t-1]' for t in 2:T)
+	S_A = sum(x_d3k2[:, t-1] * x_d3k2[:, t]' for t in 2:T)
+	W_C = sum(x_d3k2[:, t] * x_d3k2[:, t]' for t in 1:T)
+	S_C = sum(x_d3k2[:, t] * y_d3k2[:, t]' for t in 1:T)
+	hss = HSS(W_A, S_A, W_C, S_C)
+	S_C
+end
 
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╠═╡ disabled = true
@@ -1478,25 +1626,6 @@ let
 	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
-# ╔═╡ b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
-let
-	K = size(A, 1)
-	D = size(y, 1)
-	α = ones(K)
-	γ = ones(K)
-	a = 0.001
-	b = 0.001
-	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
-
-	exp_f = vb_dlm_c(y, hpp)
-	xs, _, ys, _ = vb_e(y, exp_f, hpp, true)
-	println("\nVB (x) MSE, MAD, MAPE: ", error_metrics(x_true, xs))
-	println("\nVB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 1:end-1], ys[:, 2:end]))
-
-	#println("TRUCATED VB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 6:end-6], ys[:, 7:end-5]))
-	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
-end
-
 # ╔═╡ 621f9118-172b-4e5e-8c17-259ff43d70d4
 begin
 	Random.seed!(99)
@@ -1532,25 +1661,6 @@ let
 	exp_.A, exp_.C, inv(exp_.R⁻¹)
 end
 
-# ╔═╡ ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
-let
-	K = size(A_3, 1)
-	D = size(C_3, 1)
-	α = ones(K)
-	γ = ones(K)
-	a = 0.001
-	b = 0.001
-	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
-
-	exp_ = vb_dlm_c(y_k3, hpp) # no hyperparam learning
-
-	x_s, _, y_s, _ = vb_e(y_k3, exp_, hpp, true)
-	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_k3, x_s))
-	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_k3[:, 1:end-1], y_s[:, 2:end]))
-
-	exp_.A, exp_.C, inv(exp_.R⁻¹)
-end
-
 # ╔═╡ 35d1162f-4ad1-4e31-8ee3-969028986e4e
 let
 	x_hat, _, y_hat, _, _ = p_forward(y_k3, A_3, C_3, R, μ_i, Σ_i)
@@ -1569,25 +1679,6 @@ let
 	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
 
 	exp_ = vb_dlm_c(y_d3, hpp, true) 
-	x_s, _, y_s, _ = vb_e(y_d3, exp_, hpp, true)
-
-	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3, x_s))
-	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_d3[:, 1:end-1], y_s[:, 2:end]))
-
-	exp_.A, exp_.C, inv(exp_.R⁻¹)
-end
-
-# ╔═╡ fea6a707-abdd-4196-a651-8bb86dada5f2
-let
-	K = size(A_3, 1)
-	D = size(C_d3, 1)
-	α = ones(K)
-	γ = ones(K)
-	a = 0.001
-	b = 0.001
-	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
-
-	exp_ = vb_dlm_c(y_d3, hpp) 
 	x_s, _, y_s, _ = vb_e(y_d3, exp_, hpp, true)
 
 	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3, x_s))
@@ -1622,11 +1713,19 @@ let
 	exp_.A, exp_.C, inv(exp_.R⁻¹)
 end
 
+# ╔═╡ c5f0d1dd-5a54-49bf-987f-b7aab5274db6
+let
+	x_hat, _, y_hat, _, _ = p_forward(y_d3k2, A, C_d3k2, R_d3, μ_0, Σ_0)
+	println("Kalman Filter (x) MSE, MAD, MAPE: ", error_metrics(x_d3k2, x_hat))
+	println("\nKalman Filtered (y) MSE, MAD, MAPE: ", error_metrics(y_d3k2[:, 1:end-1], y_hat[:, 2:end]))
+end
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+MultivariateStats = "6f286f6a-111f-5878-ab1e-185364afe411"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -1635,6 +1734,7 @@ StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 
 [compat]
 Distributions = "~0.25.87"
+MultivariateStats = "~0.10.2"
 Plots = "~1.38.9"
 PlutoUI = "~0.7.50"
 SpecialFunctions = "~2.2.0"
@@ -1647,7 +1747,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.0"
 manifest_format = "2.0"
-project_hash = "d5999de436990a28cca4f7280892b159fec7b049"
+project_hash = "a0f57b238b2a9ca79677c7bbed187e459ce714cb"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -1658,6 +1758,18 @@ version = "1.1.4"
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.1"
+
+[[deps.Arpack]]
+deps = ["Arpack_jll", "Libdl", "LinearAlgebra", "Logging"]
+git-tree-sha1 = "9b9b347613394885fd1c8c7729bfc60528faa436"
+uuid = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
+version = "0.5.4"
+
+[[deps.Arpack_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "OpenBLAS_jll", "Pkg"]
+git-tree-sha1 = "5ba6c757e8feccf03a1554dfaf3e26b3cfc7fd5e"
+uuid = "68821587-b530-5797-8361-c406ea357684"
+version = "3.5.1+1"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -2142,6 +2254,12 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 [[deps.MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 version = "2022.10.11"
+
+[[deps.MultivariateStats]]
+deps = ["Arpack", "LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI", "StatsBase"]
+git-tree-sha1 = "68bf5103e002c44adfd71fea6bd770b3f0586843"
+uuid = "6f286f6a-111f-5878-ab1e-185364afe411"
+version = "0.10.2"
 
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
@@ -2789,7 +2907,7 @@ version = "1.4.1+0"
 # ╟─55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 # ╠═3a97cd42-7f14-4068-b711-a6759042269c
 # ╟─17a8fdf6-dd03-4de9-8969-085dc0043699
-# ╠═b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
+# ╟─b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
 # ╟─51aa8176-fb01-4510-a193-87487d501fd0
 # ╟─67ba0061-7809-4391-9410-1aaae787e636
 # ╠═806f343e-2ef7-48c6-964a-f29c0ad63256
@@ -2798,9 +2916,10 @@ version = "1.4.1+0"
 # ╟─7112cfa1-2f3c-4197-92bd-73f43cd1f9d4
 # ╟─04fcab96-69ac-4ffe-85e3-ccdd905cc99f
 # ╠═fbbce4b8-79bc-480f-a294-b3cde52823f0
+# ╟─5f884fe3-8dc6-4ec0-98cf-8fe53fcb506f
 # ╠═3ea87e4c-3310-465a-92fb-1b6210a71a72
 # ╟─be3571b9-d315-48c0-80bb-c353bfb61028
-# ╠═ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
+# ╟─ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
 # ╟─7d29d039-7999-4398-8f1e-394511a85f08
 # ╠═35d1162f-4ad1-4e31-8ee3-969028986e4e
 # ╟─235437f2-89e1-4b9d-a541-d85e81cc5573
@@ -2809,20 +2928,26 @@ version = "1.4.1+0"
 # ╟─88609025-fedb-4a31-8827-c00ec539595f
 # ╠═5edb253c-471b-432c-8e80-60b768831cd8
 # ╟─57ee695f-12f6-4144-8d33-66a331018307
-# ╠═fea6a707-abdd-4196-a651-8bb86dada5f2
+# ╟─fea6a707-abdd-4196-a651-8bb86dada5f2
 # ╟─d95f0d89-1730-4856-975e-cb1e70ea0221
 # ╠═f1ae5beb-c342-4150-b895-749117e9569f
 # ╟─ece36508-61eb-4c1e-aebc-6fcf13e74b15
 # ╠═93541f59-06f3-48f0-a95b-5bd0b9b8e60a
 # ╠═d12c5786-51e6-4b27-a54c-583c4ede13cf
+# ╠═c5f0d1dd-5a54-49bf-987f-b7aab5274db6
 # ╟─b2818ed9-6ef8-4398-a9d4-63b1d399169c
 # ╟─8fed847c-93bc-454b-94c7-ba1d13c73b04
 # ╟─c7f8f52b-9984-4d3d-bcd9-44da8a21b78e
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa
 # ╟─bbfb3ea5-cf3a-4794-9d8b-1744db578dcb
 # ╠═f3bb4aab-d867-4ddd-bd10-56851a146f76
+# ╠═fabb7306-8601-4da4-8703-03a27dbfe7f0
+# ╠═89611fad-e400-474c-8646-8ecddf91ca6d
+# ╠═f356a7c6-b78b-4042-b4e6-a5998e791d7a
 # ╟─7acc5644-20b7-473c-98a2-b5423061f893
 # ╠═6c27071e-a984-4450-92d4-4058baa92d1b
+# ╠═ff03366d-ae33-4b3e-bc46-2cd039d21c61
+# ╠═0b4973f6-b30c-47b6-82ad-7763cd09ad43
 # ╠═b6929d34-b85f-4d20-b19f-d0ff4ebcc46f
 # ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8

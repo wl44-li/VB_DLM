@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.25
+# v0.19.26
 
 using Markdown
 using InteractiveUtils
@@ -606,12 +606,6 @@ md"""
 ### Hidden state x inference (variational)
 """
 
-# ╔═╡ f141544a-35ea-46f7-a0bb-5360ba5ee3b8
-# ╠═╡ disabled = true
-#=╠═╡
-y, ys
-  ╠═╡ =#
-
 # ╔═╡ 7b185270-58d5-4406-8768-103d798fa326
 md"""
 ### With Hyperparameter learning
@@ -991,28 +985,6 @@ md"""
 No hyper-param learning
 """
 
-# ╔═╡ fea6a707-abdd-4196-a651-8bb86dada5f2
-# ╠═╡ disabled = true
-#=╠═╡
-let
-	K = size(A_3, 1)
-	D = size(C_d3, 1)
-	α = ones(K)
-	γ = ones(K)
-	a = 0.001
-	b = 0.001
-	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
-
-	exp_ = vb_dlm_c(y_d3, hpp) 
-	x_s, _, y_s, _ = vb_e(y_d3, exp_, hpp, true)
-
-	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3, x_s))
-	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_d3[:, 1:end-1], y_s[:, 2:end]))
-
-	exp_.A, exp_.C, inv(exp_.R⁻¹)
-end
-  ╠═╡ =#
-
 # ╔═╡ d95f0d89-1730-4856-975e-cb1e70ea0221
 md"""
 Compare with Kalman Filter
@@ -1303,6 +1275,7 @@ end
 # ╔═╡ fbbce4b8-79bc-480f-a294-b3cde52823f0
 A_3, C_3, R
 
+<<<<<<< Updated upstream
 # ╔═╡ fabb7306-8601-4da4-8703-03a27dbfe7f0
 function init_alt(ys, K)
 	D, T = size(ys)
@@ -1323,6 +1296,8 @@ end
 # ╔═╡ 9119d3cf-a7f5-4e07-971d-6044c68e3b66
 init_HSS(y_k3, 3)
 
+=======
+>>>>>>> Stashed changes
 # ╔═╡ f356a7c6-b78b-4042-b4e6-a5998e791d7a
 let
 	W_A = sum(x_k3[:, t-1] * x_k3[:, t-1]' for t in 2:T)
@@ -1369,6 +1344,7 @@ begin
 	S_C_init = pcs'
 end
 
+<<<<<<< Updated upstream
 # ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
 # ╠═╡ disabled = true
 #=╠═╡
@@ -1388,6 +1364,94 @@ let
 	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
 end
   ╠═╡ =#
+=======
+# ╔═╡ 72e5080a-089e-4869-a0e5-e13ee1d7a83d
+function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, S_C_PCA=false, max_iter=500, tol=5e-3)
+	D, T = size(ys)
+	K = length(hpp.α)
+	
+	W_A = Matrix{Float64}(T*I, K, K)
+	S_A = Matrix{Float64}(T*I, K, K)
+	W_C = Matrix{Float64}(T*I, K, K)
+
+	if (K == D)
+		S_C = Matrix{Float64}(T*I, K, D)
+	else
+
+		if (S_C_PCA)
+			model = fit(PCA, ys; maxoutdim=min(K,D))
+			# The principal components are stored in the 'p' field of the model
+			pcs = model.proj[:, 1:min(K,D)]
+			
+			# Transpose to match our S_C shape (K x D)
+			S_C = pcs'
+			
+			# Fill the rest with zeros if K > D
+			if K > D
+			    S_C = [S_C; ones(K-D, D)]
+			end
+		else
+
+			if D > K # factor model econometrics
+				S_C = Matrix{Float64}(max_iter*I, K, D)
+			else
+				# K>D, signal processing 
+				S_C = Matrix{Float64}(I, K, D)
+				S_C[1, 1] = max_iter * 1.0
+				S_C[K, D] = max_iter * 1.0
+			end
+		end
+	end
+
+	hss = HSS(W_A, S_A, W_C, S_C)
+	exp_np = missing
+	elbo_prev = -Inf
+
+	# cf. Beal Algorithm 5.3
+	for i in 1:max_iter
+		exp_np, α_n, γ_n, exp_ρ, exp_log_ρ, qθ = vb_m(ys, hpp, hss)
+		hss, ω_0, Υ_0, log_Z_ = vb_e(ys, exp_np, hpp)
+
+		# Convergence check
+		kl_A_ = sum([kl_A(zeros(K), Diagonal(hpp.α), (qθ.μ_A)[j], qθ.Σ_A) for j in 1:K])
+		kl_ρ_ = sum([kl_ρ(hpp.a, hpp.b, qθ.a_s, (qθ.b_s)[s]) for s in 1:D])
+		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
+			
+		elbo = kl_A_ + kl_ρ_ + kl_C_ - log_Z_
+
+		# Hyper-param learning 
+		if (hpp_learn)
+			if (i%4 == 0) 
+				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+				hpp = HPP(α_n, γ_n, a, b, ω_0, Υ_0)
+			end
+		end
+
+		if abs(elbo - elbo_prev) < tol
+			println("Stopped at iteration: $i")
+            break
+		end
+		
+        elbo_prev = elbo
+
+		if (i == max_iter)
+			println("Warning: VB have not necessarily converged at $max_iter iterations")
+		end
+	end
+		
+	return exp_np
+end
+
+# ╔═╡ 0b4973f6-b30c-47b6-82ad-7763cd09ad43
+let
+	W_A = sum(x_d3k2[:, t-1] * x_d3k2[:, t-1]' for t in 2:T)
+	S_A = sum(x_d3k2[:, t-1] * x_d3k2[:, t]' for t in 2:T)
+	W_C = sum(x_d3k2[:, t] * x_d3k2[:, t]' for t in 1:T)
+	S_C = sum(x_d3k2[:, t] * y_d3k2[:, t]' for t in 1:T)
+	hss = HSS(W_A, S_A, W_C, S_C)
+	S_C
+end
+>>>>>>> Stashed changes
 
 # ╔═╡ 7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
 let
@@ -1753,7 +1817,7 @@ StatsFuns = "~1.3.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.0"
+julia_version = "1.9.1"
 manifest_format = "2.0"
 project_hash = "a0f57b238b2a9ca79677c7bbed187e459ce714cb"
 
@@ -2797,7 +2861,7 @@ version = "0.15.1+0"
 [[deps.libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
-version = "5.7.0+0"
+version = "5.8.0+0"
 
 [[deps.libfdk_aac_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -2949,8 +3013,11 @@ version = "1.4.1+0"
 # ╠═1a129b6f-74f0-404c-ae4f-3ae39c8431aa
 # ╟─bbfb3ea5-cf3a-4794-9d8b-1744db578dcb
 # ╠═f3bb4aab-d867-4ddd-bd10-56851a146f76
+<<<<<<< Updated upstream
 # ╟─9da500ea-c828-4842-9b91-6a556ebcc83c
 # ╟─fabb7306-8601-4da4-8703-03a27dbfe7f0
+=======
+>>>>>>> Stashed changes
 # ╠═f356a7c6-b78b-4042-b4e6-a5998e791d7a
 # ╠═9119d3cf-a7f5-4e07-971d-6044c68e3b66
 # ╟─7acc5644-20b7-473c-98a2-b5423061f893
@@ -2970,6 +3037,6 @@ version = "1.4.1+0"
 # ╟─c417e618-41c2-454c-9b27-470988215d48
 # ╟─8950aa50-22b2-4299-83b2-b9abfd1d5303
 # ╟─30502079-9684-4144-8bcd-a70f2cb5928a
-# ╟─ca825009-564e-43e0-9014-cce87c46533b
+# ╠═ca825009-564e-43e0-9014-cce87c46533b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

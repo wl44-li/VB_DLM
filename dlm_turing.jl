@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.25
+# v0.19.26
 
 using Markdown
 using InteractiveUtils
@@ -48,7 +48,7 @@ begin
 	T = 500
 	
 	# Generate the test dataset
-	Random.seed!(123)
+	Random.seed!(111)
 	y, x_true = gen_data(A, C, R, μ_0, Σ_0, T)
 end
 
@@ -57,28 +57,12 @@ begin
 	@model function dlm_model(y, K)
 		D, T  = size(y)
 
-		"""
-	    # Priors
-	    A ~ arraydist([MvNormal(zeros(K), Diagonal(1 ./ α)) for _ in 1:K])
-	    ρ ~ filldist(Gamma(a, 1/b), D)
-	    C ~ arraydist([MvNormal(zeros(K), Diagonal(1 ./ γ) * (1/ρ[i])) for i in 1:D])
-	    
-	    x = Vector{Vector{Float64}}(undef, T)
-	    x[1] ~ MvNormal(μ₀, Σ₀)
-		y[:, 1] ~ MvNormal(C * x[1], Diagonal(1 ./ ρ))
-
-	    for t in 2:T
-	        x[t] ~ MvNormal(A * x[t-1], I)
-	        y[:, t] ~ MvNormal(C * x[t], Diagonal(1 ./ ρ))
-	    end
-		"""
-
 		# Priors for A, C, and R
     	A ~ arraydist([Normal(0, 1.0) for _ in 1:K, _ in 1:K])
 		
     	C ~ arraydist([Normal(0, 1.0) for _ in 1:D, _ in 1:K])
 		
-   		ρ ~ arraydist([Gamma(1.0, 3.0) for _ in 1:D])
+   		ρ ~ arraydist([Gamma(0.01, 0.01) for _ in 1:D])
 		
     	R_inv = Diagonal(ρ)
 		
@@ -97,8 +81,10 @@ end
 
 # ╔═╡ f61e3364-0a42-421a-b4bf-b23976dc3651
 begin
+	Random.seed!(134)
 	model = dlm_model(y, 2)
-	chain = sample(model, NUTS(0.65), 1000)
+	chain = sample(model, NUTS(0.65), 1100)
+	chain = chain[100:end]
 end
 
 # ╔═╡ cfd3fc64-498c-4fae-b9f2-18fbb7244b7b
@@ -107,7 +93,7 @@ Solving A, C, R using MCMC
 """
 
 # ╔═╡ 6b6a1cfe-1820-4174-a5ca-71ec57b3190c
-A, C, R # MCMC sample = 1000 NOT enough
+A, C, R
 
 # ╔═╡ 8bdd9eaa-fdf0-4cc7-9f1a-1f3cdc6808fd
 describe(chain)
@@ -175,7 +161,7 @@ Turing = "~0.25.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.0"
+julia_version = "1.9.1"
 manifest_format = "2.0"
 project_hash = "fdd50779e27966ef6a64b1885e254edc95b48fab"
 
@@ -1326,7 +1312,7 @@ version = "0.2.3"
 [[deps.libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
-version = "5.7.0+0"
+version = "5.8.0+0"
 
 [[deps.nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
@@ -1342,7 +1328,7 @@ version = "17.4.0+0"
 # ╔═╡ Cell order:
 # ╠═f002009c-f056-11ed-3e01-51570d2d712d
 # ╟─ac7636e9-6314-4116-8fb2-cc17ca90024b
-# ╠═86b7739d-5bba-4527-b36c-b16978ab209e
+# ╟─86b7739d-5bba-4527-b36c-b16978ab209e
 # ╠═2534a47c-b3a6-4acb-8cec-521fd9fdce28
 # ╠═f61e3364-0a42-421a-b4bf-b23976dc3651
 # ╟─cfd3fc64-498c-4fae-b9f2-18fbb7244b7b

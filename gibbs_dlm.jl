@@ -9,10 +9,14 @@ begin
 	using Distributions, Plots, Random
 	using LinearAlgebra
 	using StatsFuns
+	using PlutoUI
 end
 
 # ╔═╡ 2119bc4b-794b-4a46-ab8f-47e960a0968d
 using MCMCChains
+
+# ╔═╡ 6c0ecec8-afdc-4072-9dac-4658af3706d5
+TableOfContents()
 
 # ╔═╡ 73e449fb-81d2-4a9e-a89d-38909093863b
 md"""
@@ -47,28 +51,74 @@ function error_metrics(true_means, smoothed_means)
     T = size(true_means)[2]
     mse = sum((true_means .- smoothed_means).^2) / T
     mad = sum(abs.(true_means .- smoothed_means)) / T
-    mape = sum(abs.((true_means .- smoothed_means) ./ true_means)) / T * 100
 
-	# mean squared error (MSE), mean absolute deviation (MAD), and mean absolute percentage error (MAPE) 
-    return mse, mad, mape
+	# mean squared error (MSE), mean absolute deviation (MAD)
+    return mse, mad
 end
+
+# ╔═╡ 46d87386-7c36-486f-ba59-15d71e88869c
+md"""
+Establish ground-truth and test data
+"""
 
 # ╔═╡ e1bd9dd3-855e-4aa6-91aa-2695da07ba48
 begin
 	A = [0.8 -0.1; 0.3 0.6]
 	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([1.0, 1.0])
+	Q = Diagonal([1.0, 1.0]) # assume known
 	R = Diagonal([0.33, 0.33])
-	T = 3000
+	T = 1000
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
 end
 
+# ╔═╡ df41dbec-6f39-437c-9f59-8a74a7f5a8dd
+md"""
+Some assumptions to keep in-line with VBEM:
+
+	Row-wise MVN Prior: A row-wise MVN prior for A or C assumes that the elements of each row are jointly normally distributed, but it treats each row as independent from the others. This means that there are dependencies between the elements within each row, but not between different rows. This is a simpler assumption that can be easier to handle computationally, but it may not capture all the relationships in the data if there are important dependencies between different rows.
+
+	Diagonal Covariance Matrix: If R is a diagonal matrix, then the noise in different dimensions of the observations is assumed to be uncorrelated. This means that high (or low) noise values in one dimension are independent of the noise values in other dimensions. This is a simpler assumption that can be easier to handle computationally, but it may not capture all the noise structures in the data if there are important correlations between different dimensions.
+
+	Known and Fixed Q: Q is the identity matrix. This is possible since noise co-varaince can be incorportated in the state dynamics governed by A.
+"""
+
 # ╔═╡ fbf64d6a-0cc7-4150-9891-e659f43a3b39
 md"""
 ## Sample A
+"""
+
+# ╔═╡ cfe224e3-dbb3-42bc-ac1b-b96fea5da00d
+md"""
+
+For sampling $A$, we need according to Gibbs sampling: 
+
+$$\log p(A∣x_{1:T}, y_{1:T}, C, R, Q)$$
+
+$$= \log p(A∣x_{1:T}, Q)$$
+
+The state transition model in a multivariate dynamic linear model (DLM) is given by:
+
+$$x_t = A x_{t−1} + w_t, w_t \sim \mathcal N (\mathbf{0}, Q)$$
+
+The likelihood of the states $x_{1:T}$ given $A$ and the previous states $x_{1:T−1}$ is a product of MVNs:
+
+$$p(x_{1:T}∣ A, Q)= \prod_{t=2}^T \mathcal N(x_t|A x_{t−1}, Q)$$
+
+Taking the log likelihood and keeping only terms that relate to $A$:
+
+$$\log p(x_{1:T}∣ A, Q) \propto -\frac{1}{2} \sum_{t=2}^T (x_t − Ax_{t−1})^TQ^{−1}(x_t − A x_{t−1})$$
+
+Given $A$ has row-wise MVN prior $\mathcal N(μ_a, Σ_a)$, we can express the log prior as:
+
+$$\log p(A) \propto-\frac{1}{2} \sum_{i=1}^K (A_i − μ_a)^T Σ_a^{-1} (A_i - μ_a)$$
+
+Adding the log-likelihood and the log-prior, we obtain the log-posterior for sampling $A$:
+
+$$\log p(A∣x_{1:T}, Q) = \log p(x_{1:T}∣ A, Q) + \log p(A) + C$$
+
 """
 
 # ╔═╡ fc535acb-afd6-4f2a-a9f1-15dc83e4a53c
@@ -79,7 +129,7 @@ function sample_A(Xs, μ_A, Σ_A, Q)
 	for i in 1:K
      	Σ_post = inv(Σ_A_inv + (Xs[:, 1:T-1] * Xs[:, 1:T-1]') ./ Q[i, i])
         μ_post = Σ_post * (Σ_A_inv * μ_A + (Xs[:, 1:T-1] * Xs[i, 2:T]) ./ Q[i, i])
-		A[i, :] = rand(MultivariateNormal(μ_post, Σ_post))
+		A[i, :] = rand(MultivariateNormal(μ_post, Σ_post)) # Hermittian check ?
     end
     return A
 end
@@ -94,6 +144,11 @@ end
 # ╔═╡ bb13a886-0877-42fb-876e-38709f041d65
 md"""
 ## Sample C
+"""
+
+# ╔═╡ 3308752f-d770-4951-9a21-73f1c3886df4
+md"""
+For sampling $C$, 
 """
 
 # ╔═╡ 4b9cad0a-7ec4-4a58-bf4c-4f103371de33
@@ -124,6 +179,11 @@ md"""
 ## Sample R
 """
 
+# ╔═╡ 19d6e8cd-31d9-4556-8c29-faa1babd8d13
+md"""
+For sampling $R$, 
+"""
+
 # ╔═╡ d8c05722-a79b-4132-b1c2-982ef39af257
 function sample_R(Xs, Ys, C, α_ρ, β_ρ)
     P, T = size(Ys)
@@ -148,6 +208,11 @@ end
 # ╔═╡ 647dc0f6-8c06-40df-bb7c-d103d4b119fc
 md"""
 ## Sample latent X (FFBS)
+"""
+
+# ╔═╡ b3a936e9-de47-4c13-8ea4-504931c8c6e3
+md"""
+For sampling $X$, 
 """
 
 # ╔═╡ 8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
@@ -201,6 +266,11 @@ function sample_x_ffbs(Ys, A, C, R, Q, μ₀, Σ₀)
     return Xs_sampled
 end
 
+# ╔═╡ b6fa79f5-0452-49a4-8de9-d59093078b01
+md"""
+Test with ground-truth
+"""
+
 # ╔═╡ eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
 let
 	xss = []
@@ -212,6 +282,11 @@ let
 	xs_m = mean(xss, dims=1)[1]
 	error_metrics(x_true, xs_m)
 end
+
+# ╔═╡ e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
+md"""
+Putting together Gibbs sampling
+"""
 
 # ╔═╡ 120d3c31-bba9-476d-8a63-95cdf2457a1b
 function gibbs_dlm(y, K, Q=Matrix{Float64}(I, K, K), mcmc=6000, burn_in=500, thinning=3)
@@ -257,7 +332,13 @@ function gibbs_dlm(y, K, Q=Matrix{Float64}(I, K, K), mcmc=6000, burn_in=500, thi
 end
 
 # ╔═╡ df166b81-a6c3-490b-8cbc-4061f19b750b
-A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
+begin
+	Random.seed!(931)
+	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
+end
+
+# ╔═╡ 97b66cb6-c143-45d1-84fa-3db7cef42c09
+A, C, R
 
 # ╔═╡ 56cad0cb-352b-4612-b3a3-ddb34de607ad
 md"""
@@ -265,22 +346,28 @@ Analyse Gibbs results with Chains
 """
 
 # ╔═╡ af9c5548-14f2-4771-84cf-bf93eebcd3f2
- chn_A = Chains(reshape(A_samples, 4, 2000)',  ["A_{$(1),$(1)}", "A_{$(2),$(1)}", "A_{$(1),$(2)}", "A_{$(2),$(2)}"]);
+ chn_A = Chains(reshape(A_samples, 4, 2000)');
 
 # ╔═╡ 779e0cef-0865-4087-b3d1-563aec15a734
 describe(chn_A)
 
 # ╔═╡ 611e868a-e808-4a1f-8dd3-2d7ef64e2984
-chn_C = Chains(reshape(C_samples, 4, 2000)',  ["C_{$(1),$(1)}", "C$(2),$(1)", "C$(1),$(2)", "C_{$(2),$(2)}"]);
+chn_C = Chains(reshape(C_samples, 4, 2000)');
 
 # ╔═╡ 69efb78d-1297-46b4-a6bb-218c07c9b2af
 describe(chn_C)
 
 # ╔═╡ 9f1a120d-80ac-46e0-ae7c-949d2f571b98
-chn_R = Chains(reshape(R_samples, 4, 2000)',  ["R_{$(1),$(1)}", "R$(2),$(1)", "R$(1),$(2)", "R_{$(2),$(2)}"]);
+chn_R = Chains(reshape(R_samples, 4, 2000)');
 
 # ╔═╡ f08a6391-24da-4d3e-8a3e-55806bb9efbb
 describe(chn_R)
+
+# ╔═╡ a143751f-24a7-489b-8031-629fb5476bdc
+let
+	Random.seed!(977)
+	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -289,6 +376,7 @@ Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MCMCChains = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 
@@ -296,6 +384,7 @@ StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 Distributions = "~0.25.96"
 MCMCChains = "~6.0.3"
 Plots = "~1.38.16"
+PlutoUI = "~0.7.51"
 StatsFuns = "~1.3.0"
 """
 
@@ -305,7 +394,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.1"
 manifest_format = "2.0"
-project_hash = "332e55372916b4f69e9910f3b1957744f4bb245d"
+project_hash = "682356d1b232f58829f06826095ce8e2101fdd20"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -322,6 +411,12 @@ deps = ["BangBang", "ConsoleProgressMonitor", "Distributed", "LogDensityProblems
 git-tree-sha1 = "87e63dcb990029346b091b170252f3c416568afc"
 uuid = "80f14c24-f653-4e6a-9b94-39d6b0f70001"
 version = "4.4.2"
+
+[[deps.AbstractPlutoDingetjes]]
+deps = ["Pkg"]
+git-tree-sha1 = "8eaf9f1b4921132a4cff3f36a1d9ba923b14a481"
+uuid = "6e696c72-6542-2067-7265-42206c756150"
+version = "1.1.4"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "faa260e4cb5aba097a73fab382dd4b5819d8ec8c"
@@ -712,6 +807,24 @@ git-tree-sha1 = "0ec02c648befc2f94156eaef13b0f38106212f3f"
 uuid = "34004b35-14d8-5ef3-9330-4cdb6864b03a"
 version = "0.3.17"
 
+[[deps.Hyperscript]]
+deps = ["Test"]
+git-tree-sha1 = "8d511d5b81240fc8e6802386302675bdf47737b9"
+uuid = "47d2ed2b-36de-50cf-bf87-49c2cf4b8b91"
+version = "0.0.4"
+
+[[deps.HypertextLiteral]]
+deps = ["Tricks"]
+git-tree-sha1 = "c47c5fa4c5308f27ccaac35504858d8914e102f9"
+uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
+version = "0.9.4"
+
+[[deps.IOCapture]]
+deps = ["Logging", "Random"]
+git-tree-sha1 = "d75853a0bdbfb1ac815478bacd89cd27b550ace6"
+uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
+version = "0.2.3"
+
 [[deps.InitialValues]]
 git-tree-sha1 = "4da0f88e9a39111c2fa3add390ab15f3a44f3ca3"
 uuid = "22cec73e-a1b8-11e9-2c92-598750a2cf9c"
@@ -954,6 +1067,11 @@ git-tree-sha1 = "695e91605361d1932c3e89a812be78480a4a4595"
 uuid = "be115224-59cd-429b-ad48-344e309966f0"
 version = "0.3.4"
 
+[[deps.MIMEs]]
+git-tree-sha1 = "65f28ad4b594aebe22157d6fac869786a255b7eb"
+uuid = "6c6e2e6c-3030-632d-7369-2d6c69616d65"
+version = "0.1.4"
+
 [[deps.MKL_jll]]
 deps = ["Artifacts", "IntelOpenMP_jll", "JLLWrappers", "LazyArtifacts", "Libdl", "Pkg"]
 git-tree-sha1 = "154d7aaa82d24db6d8f7e4ffcfe596f40bff214b"
@@ -1141,6 +1259,12 @@ version = "1.38.16"
     IJulia = "7073ff75-c697-5162-941a-fcdaad2a7d2a"
     ImageInTerminal = "d8c32880-2388-543b-8c61-d9f865259254"
     Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
+
+[[deps.PlutoUI]]
+deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "FixedPointNumbers", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "MIMEs", "Markdown", "Random", "Reexport", "URIs", "UUIDs"]
+git-tree-sha1 = "b478a748be27bd2f2c73a7690da219d0844db305"
+uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+version = "0.7.51"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
@@ -1432,6 +1556,11 @@ git-tree-sha1 = "25358a5f2384c490e98abd565ed321ffae2cbb37"
 uuid = "28d57a85-8fef-5791-bfe6-a80928e7c999"
 version = "0.4.76"
 
+[[deps.Tricks]]
+git-tree-sha1 = "aadb748be58b492045b4f56166b5188aa63ce549"
+uuid = "410a4b4d-49e4-4fbc-ab6d-cb71b17b3775"
+version = "0.1.7"
+
 [[deps.URIs]]
 git-tree-sha1 = "074f993b0ca030848b897beff716d93aca60f06a"
 uuid = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
@@ -1712,25 +1841,35 @@ version = "1.4.1+0"
 
 # ╔═╡ Cell order:
 # ╠═ee858a0c-1414-11ee-3b47-2fb4b9112c53
+# ╟─6c0ecec8-afdc-4072-9dac-4658af3706d5
 # ╟─73e449fb-81d2-4a9e-a89d-38909093863b
-# ╠═e1f22c73-dee8-4507-af03-3d2d0ceb9011
+# ╟─e1f22c73-dee8-4507-af03-3d2d0ceb9011
 # ╠═544ac3d9-a2b8-4950-a501-40c14c84b2d8
+# ╟─46d87386-7c36-486f-ba59-15d71e88869c
 # ╠═e1bd9dd3-855e-4aa6-91aa-2695da07ba48
+# ╟─df41dbec-6f39-437c-9f59-8a74a7f5a8dd
 # ╟─fbf64d6a-0cc7-4150-9891-e659f43a3b39
+# ╟─cfe224e3-dbb3-42bc-ac1b-b96fea5da00d
 # ╠═fc535acb-afd6-4f2a-a9f1-15dc83e4a53c
 # ╠═e9318f52-e918-42c6-9aa9-45a39ad73ec7
 # ╟─bb13a886-0877-42fb-876e-38709f041d65
+# ╠═3308752f-d770-4951-9a21-73f1c3886df4
 # ╠═4b9cad0a-7ec4-4a58-bf4c-4f103371de33
 # ╠═9e73e982-a4ae-4e9b-9650-3cf7c519657c
 # ╟─a41bd4a5-a7be-48fe-a222-6e8b3cf98dec
+# ╠═19d6e8cd-31d9-4556-8c29-faa1babd8d13
 # ╠═d8c05722-a79b-4132-b1c2-982ef39af257
 # ╠═65b7e5f4-aff8-4671-9a3a-7aeebef6b83e
 # ╟─647dc0f6-8c06-40df-bb7c-d103d4b119fc
+# ╠═b3a936e9-de47-4c13-8ea4-504931c8c6e3
 # ╠═8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
+# ╟─b6fa79f5-0452-49a4-8de9-d59093078b01
 # ╠═eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
+# ╟─e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 # ╠═120d3c31-bba9-476d-8a63-95cdf2457a1b
-# ╠═df166b81-a6c3-490b-8cbc-4061f19b750b
 # ╠═2119bc4b-794b-4a46-ab8f-47e960a0968d
+# ╠═df166b81-a6c3-490b-8cbc-4061f19b750b
+# ╠═97b66cb6-c143-45d1-84fa-3db7cef42c09
 # ╟─56cad0cb-352b-4612-b3a3-ddb34de607ad
 # ╠═af9c5548-14f2-4771-84cf-bf93eebcd3f2
 # ╠═779e0cef-0865-4087-b3d1-563aec15a734
@@ -1738,5 +1877,6 @@ version = "1.4.1+0"
 # ╠═69efb78d-1297-46b4-a6bb-218c07c9b2af
 # ╠═9f1a120d-80ac-46e0-ae7c-949d2f571b98
 # ╠═f08a6391-24da-4d3e-8a3e-55806bb9efbb
+# ╠═a143751f-24a7-489b-8031-629fb5476bdc
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

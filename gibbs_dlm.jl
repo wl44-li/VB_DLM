@@ -20,7 +20,7 @@ TableOfContents()
 
 # ╔═╡ 73e449fb-81d2-4a9e-a89d-38909093863b
 md"""
-## Gibbs sampling analog to VBEM-DLM
+# Gibbs sampling analog to VBEM-DLM
 """
 
 # ╔═╡ e1f22c73-dee8-4507-af03-3d2d0ceb9011
@@ -76,7 +76,7 @@ end
 
 # ╔═╡ df41dbec-6f39-437c-9f59-8a74a7f5a8dd
 md"""
-Some assumptions to keep in-line with VBEM:
+Some assumptions to keep in-line with VBEM (Beale 2003):
 
 	Row-wise MVN Prior: A row-wise MVN prior for A or C assumes that the elements of each row are jointly normally distributed, but it treats each row as independent from the others. This means that there are dependencies between the elements within each row, but not between different rows. This is a simpler assumption that can be easier to handle computationally, but it may not capture all the relationships in the data if there are important dependencies between different rows.
 
@@ -268,7 +268,7 @@ end
 
 # ╔═╡ b6fa79f5-0452-49a4-8de9-d59093078b01
 md"""
-Test with ground-truth
+Test FFBS with ground-truth y, A, C, R
 """
 
 # ╔═╡ eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
@@ -285,7 +285,7 @@ end
 
 # ╔═╡ e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 md"""
-Putting together Gibbs sampling
+## Gibbs sampling
 """
 
 # ╔═╡ 120d3c31-bba9-476d-8a63-95cdf2457a1b
@@ -364,10 +364,22 @@ chn_R = Chains(reshape(R_samples, 4, 2000)');
 describe(chn_R)
 
 # ╔═╡ a143751f-24a7-489b-8031-629fb5476bdc
+# ╠═╡ disabled = true
+#=╠═╡
 let
 	Random.seed!(977)
 	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
 end
+  ╠═╡ =#
+
+# ╔═╡ 0a9c1721-6901-4dc1-a93d-8d8e18f7f375
+md"""
+## TO-DO:
+
+- Single-move sampler of X v.s. FFBS
+- Manually derive sampling for unknown Q (DLM with R) with known A, C
+- Understand the difference between Beale and Petris (DLM with R), and possible implications for time series inference
+"""
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1843,7 +1855,7 @@ version = "1.4.1+0"
 # ╠═ee858a0c-1414-11ee-3b47-2fb4b9112c53
 # ╟─6c0ecec8-afdc-4072-9dac-4658af3706d5
 # ╟─73e449fb-81d2-4a9e-a89d-38909093863b
-# ╟─e1f22c73-dee8-4507-af03-3d2d0ceb9011
+# ╠═e1f22c73-dee8-4507-af03-3d2d0ceb9011
 # ╠═544ac3d9-a2b8-4950-a501-40c14c84b2d8
 # ╟─46d87386-7c36-486f-ba59-15d71e88869c
 # ╠═e1bd9dd3-855e-4aa6-91aa-2695da07ba48
@@ -1865,7 +1877,7 @@ version = "1.4.1+0"
 # ╠═8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
 # ╟─b6fa79f5-0452-49a4-8de9-d59093078b01
 # ╠═eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
-# ╟─e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
+# ╠═e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 # ╠═120d3c31-bba9-476d-8a63-95cdf2457a1b
 # ╠═2119bc4b-794b-4a46-ab8f-47e960a0968d
 # ╠═df166b81-a6c3-490b-8cbc-4061f19b750b
@@ -1878,5 +1890,6 @@ version = "1.4.1+0"
 # ╠═9f1a120d-80ac-46e0-ae7c-949d2f571b98
 # ╠═f08a6391-24da-4d3e-8a3e-55806bb9efbb
 # ╠═a143751f-24a7-489b-8031-629fb5476bdc
+# ╟─0a9c1721-6901-4dc1-a93d-8d8e18f7f375
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -516,7 +516,7 @@ md"""
 """
 
 # ╔═╡ da1598b0-9920-427a-89cd-3af37b67380e
-let
+begin
 	@model function DLM_Turing(y)
 	    T = length(y)
 	    
@@ -744,6 +744,14 @@ md"""
 Manual Gibbs derivation is faster than NUTS by Turing,
 
 but c estimates not very stable (sometimes negative 1?), and Gibbs tend to require more samples 
+"""
+
+# ╔═╡ 1c0ed9fb-c56a-4aab-a765-49c394123a42
+md"""
+# TO-DO:
+- Beale treatment v.s DLM with R treatment
+- Add Inference step for Q, fix A, C to known
+- Compare FFBS sampler and single-move sampler
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2747,7 +2755,7 @@ version = "1.4.1+0"
 # ╟─a4e3933c-f487-4447-8b94-dcb58eaec886
 # ╟─e56e975c-ccdd-40c1-8c32-30cab01fe5ce
 # ╟─ab8b0d77-9eb0-4eb7-b047-737fec53bc39
-# ╟─a7d4f30b-d21e-400e-ba13-a58fdb424fa6
+# ╠═a7d4f30b-d21e-400e-ba13-a58fdb424fa6
 # ╟─d1ab75c8-5d7e-4d42-9b54-c48cd0e61e90
 # ╠═f108fc16-b3c2-4a89-87e8-f735a1d04301
 # ╟─05be6f30-1936-40b1-83cc-743f8704610e
@@ -2803,5 +2811,6 @@ version = "1.4.1+0"
 # ╠═678b89ee-0302-4ab9-865e-564460f2d691
 # ╠═737782c3-17a7-4684-b912-8ac392422941
 # ╟─b07bcd90-d9c0-4a71-886c-756cb03b9bc1
+# ╟─1c0ed9fb-c56a-4aab-a765-49c394123a42
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -66,7 +66,7 @@ begin
 	A = [0.8 -0.1; 0.3 0.6]
 	C = [1.0 0.0; 0.0 1.0]
 	Q = Diagonal([1.0, 1.0]) # assume known
-	R = Diagonal([0.33, 0.33])
+	R = Diagonal([0.5, 0.5])
 	T = 1000
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
@@ -179,11 +179,6 @@ md"""
 ## Sample R
 """
 
-# ╔═╡ 19d6e8cd-31d9-4556-8c29-faa1babd8d13
-md"""
-For sampling $R$, 
-"""
-
 # ╔═╡ d8c05722-a79b-4132-b1c2-982ef39af257
 function sample_R(Xs, Ys, C, α_ρ, β_ρ)
     P, T = size(Ys)
@@ -208,11 +203,6 @@ end
 # ╔═╡ 647dc0f6-8c06-40df-bb7c-d103d4b119fc
 md"""
 ## Sample latent X (FFBS)
-"""
-
-# ╔═╡ b3a936e9-de47-4c13-8ea4-504931c8c6e3
-md"""
-For sampling $X$, 
 """
 
 # ╔═╡ 8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
@@ -245,11 +235,6 @@ function sample_x_ffbs(Ys, A, C, R, Q, μ₀, Σ₀)
 	end
     
 	for t in (T-1):-1:1
-		"""
-		J = Σs[:, :, t] * A' * inv(A * Σs[:, :, t] * A' + Q)
-        m_post = μs[:, t] + J * (Xs_sampled[:, t+1] - A * μs[:, t])
-        P_post = Σs[:, :, t] - J * (Σs[:, :, t+1] - Σs[:, :, t]) * J'
-		"""
  		m_post = μs[:, t] + Σs[:, :, t] * A' * inv(A * Σs[:, :, t] * A' + Q) * (Xs_sampled[:, t+1] - A * μs[:, t])
 		
         P_post = Σs[:, :, t] - Σs[:, :, t] * A' * inv(A * Σs[:, :, t] * A' + Q) * A * Σs[:, :, t]
@@ -273,14 +258,16 @@ Test FFBS with ground-truth y, A, C, R
 
 # ╔═╡ eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
 let
-	xss = []
-	for _ in 1:100
+	xss = zeros(2, 1000, 100)
+	for i in 1:100
 		x_ffbs = sample_x_ffbs(y, A, C, R, Matrix{Float64}(I, 2, 2), zeros(2), Matrix{Float64}(I, 2, 2))
-		push!(xss, x_ffbs)
+		xss[:, :, i] = x_ffbs
 	end
 
-	xs_m = mean(xss, dims=1)[1]
-	error_metrics(x_true, xs_m)
+	xs_m = mean(xss, dims=3)[:, :, 1]
+	println(error_metrics(x_true, xs_m))
+
+	
 end
 
 # ╔═╡ e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
@@ -380,6 +367,250 @@ md"""
 - Manually derive sampling for unknown Q (DLM with R) with known A, C
 - Understand the difference between Beale and Petris (DLM with R), and possible implications for time series inference
 """
+
+# ╔═╡ 91892a1b-b55c-4f83-91b3-dab4132b1863
+md"""
+## Closed-form Bayesian Inference
+"""
+
+# ╔═╡ 9d2a6daf-2b06-409e-b034-6e787e64fea8
+md"""
+According to the formulation in `DLM with R` _4.3_:
+
+- Known A, C
+- Q, R have identitcal scaling factor σ², which is Unknown
+- This allows for conjugate inference (closed-form)
+"""
+
+# ╔═╡ 3e3d4c01-8a97-4ede-a341-27ab6fd07b95
+md"""
+Choosing a Normal Gamma prior for $\frac{1}{σ^2}$ and initial state $x_0$
+
+Posterior mean of $σ^2$ can be computed as $\frac{β_T}{(α_T−1)}$
+"""
+
+# ╔═╡ 369366a2-b4c7-44b5-8f64-d11616e99290
+function kf_ng_σ(Ys, A, C, Q̃, R̃, μ_0, Σ_0, α_0, β_0)
+    p, T = size(Ys)
+    d, _ = size(A)
+	
+    # Initialize
+    m = zeros(d, T)
+    P = zeros(d, d, T)
+	
+    m[:, 1] = μ_0
+    P[:, :, 1] = Σ_0
+	
+    α_T = α_0
+    β_T = β_0
+	
+    # Kalman filter (Prep 4.1)
+    for t in 2:T
+		
+        # Prediction
+        a_t = A * m[:, t-1]
+        P_t = A * P[:, :, t-1] * A' + Q̃
+        
+		# Update
+        f_t = C * a_t
+        S_t = C * P_t * C' + R̃
+
+		# filter 
+        m[:, t] = a_t + P_t * C' * inv(S_t) * (Ys[:, t] - f_t)
+        P[:, :, t] = P_t - P_t * C' * inv(S_t) * P_t'
+        
+		# Update Normal-Gamma parameters
+        α_T += p / 2
+        β_T += 0.5 * (Ys[:, t] - f_t)' * inv(S_t) * (Ys[:, t] - f_t)
+    end
+	
+    return m[:, T], P[:, :, T], α_T, β_T
+end
+
+# ╔═╡ 57c87102-04bc-4414-9258-e2220f9d2e22
+let
+	σ_true = 2.0
+	Q̃ = Q ./ σ_true
+	R̃ = R ./ σ_true
+	Σ_0̃  = Σ_0 ./ σ_true
+	
+	 _, _, α_t, β_t = kf_ng_σ(y, A, C, Q̃, R̃, μ_0, Σ_0̃ , 0.01, 0.01)
+
+	println("unknown_scale_mean: ", β_t / (α_t - 1))
+	println("unknown_scale_variance: ", β_t^2 / ((α_t - 1)^2 * (α_t - 2)))
+end
+
+# ╔═╡ 11700202-40fe-408b-a8b8-5c073daec12d
+md"""
+## FFBS
+"""
+
+# ╔═╡ 8c9357c8-8339-4889-8a91-b62e542f0407
+md"""
+DLM with R< _4.4_: Simulation-based Bayesian Inference.
+
+Joint posterior of all unknown variables, where $ψ$ is model specific parameters: 
+
+$$p(ψ, x_{0: T}|y_{1:T})$$
+
+Gibbs sampling involves two main full conditionals:
+
+$$p(x_{0: T} | y_{1:T}, ψ)$$
+
+$$p(ψ | x_{0: T}, y_{1:T})$$
+
+The first can be obtained via **FFBS**, essentially a simulation version of the smoothing recursions
+
+$\begin{align}
+p(x_{0: T} | y_{1:T}) &= \prod_{t=0}^T p(x_t| x_{t+1:T}, y_{1:T}) \\
+&= \prod_{t=0}^T p(x_t| x_{t+1}, y_{1:T})
+\end{align}$
+TO-DO: Numerical stability?
+"""
+
+# ╔═╡ a9621810-e0cb-4925-8b6a-726f78d13510
+function ffbs_x(Ys, A, C, R, Q, μ_0, Σ_0)
+	p, T = size(Ys)
+    d, _ = size(A)
+	
+    # Initialize
+    m = zeros(d, T)
+	P = zeros(d, d, T)
+	
+	a = zeros(d, T)
+	RR = zeros(d, d, T)
+	X = zeros(d, T)
+	
+    m[:, 1] = μ_0
+    P[:, :, 1] = Σ_0
+
+	# Kalman filter (Prep 4.1)
+    for t in 2:T
+		
+        # Prediction
+        a[:, t] = A * m[:, t-1]
+        P_t = A * P[:, :, t-1] * A' + Q
+		RR[:, :, t] = P_t
+		
+
+		# Update
+        f_t = C * a[:, t]
+        S_t = C * P_t * C' + R
+
+		# filter 
+        m[:, t] = a[:, t] + RR[:, :, t] * C' * inv(S_t) * (Ys[:, t] - f_t)
+
+		# svd not working? # DEBUG
+       	Σ_t = RR[:, :, t] - RR[:, :, t] * C' * inv(S_t) * C * RR[:, :, t]
+		#println(t)
+		#U_s, Σ_s, V_s = svd(S_t)
+   		#P[:, :, t] = U_s * Diagonal(Σ_s) * V_s'
+		P[:, :, t] = Σ_t
+	end
+	
+		X[:, T] = rand(MultivariateNormal(m[:, T], P[:, :, T]))
+	
+	# backward sampling
+	for t in (T-1):-1:1
+		h_t = m[:, t] +  P[:, :, t] * A' * inv(RR[:, :, t+1])*(X[:, t+1] - a[:, t+1])
+		H_t = P[:, :, t] - P[:, :, t] * A' * inv(RR[:, :, t+1]) * A * P[:, :, t]
+		U_s, Σ_s, V_s = svd(H_t)
+		X[:, t] = rand(MultivariateNormal(h_t, U_s * Diagonal(Σ_s) * V_s'))
+	end
+
+	return X
+end
+
+# ╔═╡ 36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
+# ╠═╡ disabled = true
+#=╠═╡
+let
+	Random.seed!(177)
+	xss = []
+	for _ in 1:100
+		x_ffbs = ffbs_x(y, A, C, R, Matrix{Float64}(I, 2, 2), zeros(2), Matrix{Float64}(I, 2, 2))
+		push!(xss, x_ffbs)
+	end
+
+	xs_m = mean(xss, dims=1)[1]
+	error_metrics(x_true, xs_m)
+end
+  ╠═╡ =#
+
+# ╔═╡ fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
+md"""
+## Compare with Single-move
+""" 
+
+# ╔═╡ e9f3b9e2-5689-40ce-b5b5-bc571ba35c10
+md"""
+Case at both end, $t=1$, $t=T$
+
+$$p(x_1| y_1, x_2) ∝ p(x_2| x_1) p(y_1|x_1)$$
+
+$$p(x_T| y_T, x_{t-1}) ∝ p(x_T| x_{T-1}) p(y_T|x_T)$$
+
+General case:
+
+$$p(x_i| y_i, x_{i-1}, x_{i+1}) ∝ p(x_i| x_{i-1}) p(x_{i+1}| x_i) p(y_i|x_i)$$
+"""
+
+# ╔═╡ 3a8ceb49-403e-424f-bedb-49f5b01c8d7a
+function sample_x_1(y_1, x_2, A, C, Q, R)
+    Sigma_x_1_inv = C' * inv(R) * C + A' * inv(Q) * A
+    mu_x_1 = inv(Sigma_x_1_inv) * (C' * inv(R) * y_1 + A' * inv(Q) * x_2)
+    Sigma_x_1 = inv(Sigma_x_1_inv)
+    return rand(MultivariateNormal(mu_x_1, Sigma_x_1))
+end
+
+# ╔═╡ 0a609b97-7859-4053-900d-c1be5d61e68c
+function sample_x_T(y_T, x_T_1, A, C, Q, R)
+    Sigma_x_T_inv = C' * inv(R) * C + inv(Q) * A
+    mu_x_T = inv(Sigma_x_T_inv) * (C' * inv(R) * y_T + inv(Q) * A * x_T_1)
+    Sigma_x_T = inv(Sigma_x_T_inv)
+
+	# temp fix, need to deal with numerical stability
+    return rand(MultivariateNormal(mu_x_T, Diagonal(Sigma_x_T)))
+end
+
+# ╔═╡ c9f6fad7-518c-442b-a385-e3fa74431cb1
+function sample_x_i(y_i, x_i_minus_1, x_i_plus_1, A, C, Q, R)
+    Sigma_x_i_inv = C' * inv(R) * C + inv(Q) * A + A' * inv(Q)
+    mu_x_i = inv(Sigma_x_i_inv) * (C' * inv(R) * y_i + inv(Q) * A * x_i_minus_1 + A' * inv(Q) * x_i_plus_1)
+    Sigma_x_i = inv(Sigma_x_i_inv)
+    return rand(MultivariateNormal(mu_x_i, Sigma_x_i))
+end
+
+# ╔═╡ a8971bb3-cf38-4445-b66e-65ff35ca13ca
+function single_move_sampler(Ys, A, C, Q, R, mcmc=2000)
+    p, T = size(Ys)
+    d, _ = size(A)
+	xs = rand(d, T)
+    # Sample each latent state one at a time
+
+	xss = zeros(d, T, mcmc)
+	xss[:, :, 1] = xs
+	
+    for m in 2:mcmc
+		xs[:, 1] = sample_x_1(Ys[:, 1], xs[:, 2], A, C, Q, R)
+
+		for i in 2:T-2
+			xs[:, i] = sample_x_i(Ys[:, i], xs[:, i-1], xs[:, i+1], A, C, Q, R)
+		end
+		xs[:, T] = sample_x_T(Ys[:, T], xs[:, T-1], A, C, Q, R)
+		xss[:, :, m] = xs
+    end
+	
+    return xss
+end
+
+# ╔═╡ 13007ba3-7ce2-4201-aa93-559fcbf9d12f
+let
+	xss = single_move_sampler(y, A, C, Q, R, 100)
+
+	xs_m = mean(xss, dims=3)[:, :, 1]
+	println(error_metrics(x_true, xs_m))
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1869,15 +2100,13 @@ version = "1.4.1+0"
 # ╠═4b9cad0a-7ec4-4a58-bf4c-4f103371de33
 # ╠═9e73e982-a4ae-4e9b-9650-3cf7c519657c
 # ╟─a41bd4a5-a7be-48fe-a222-6e8b3cf98dec
-# ╠═19d6e8cd-31d9-4556-8c29-faa1babd8d13
 # ╠═d8c05722-a79b-4132-b1c2-982ef39af257
 # ╠═65b7e5f4-aff8-4671-9a3a-7aeebef6b83e
 # ╟─647dc0f6-8c06-40df-bb7c-d103d4b119fc
-# ╠═b3a936e9-de47-4c13-8ea4-504931c8c6e3
 # ╠═8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
 # ╟─b6fa79f5-0452-49a4-8de9-d59093078b01
 # ╠═eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
-# ╠═e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
+# ╟─e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 # ╠═120d3c31-bba9-476d-8a63-95cdf2457a1b
 # ╠═2119bc4b-794b-4a46-ab8f-47e960a0968d
 # ╠═df166b81-a6c3-490b-8cbc-4061f19b750b
@@ -1891,5 +2120,21 @@ version = "1.4.1+0"
 # ╠═f08a6391-24da-4d3e-8a3e-55806bb9efbb
 # ╠═a143751f-24a7-489b-8031-629fb5476bdc
 # ╟─0a9c1721-6901-4dc1-a93d-8d8e18f7f375
+# ╟─91892a1b-b55c-4f83-91b3-dab4132b1863
+# ╟─9d2a6daf-2b06-409e-b034-6e787e64fea8
+# ╟─3e3d4c01-8a97-4ede-a341-27ab6fd07b95
+# ╠═369366a2-b4c7-44b5-8f64-d11616e99290
+# ╠═57c87102-04bc-4414-9258-e2220f9d2e22
+# ╟─11700202-40fe-408b-a8b8-5c073daec12d
+# ╟─8c9357c8-8339-4889-8a91-b62e542f0407
+# ╠═a9621810-e0cb-4925-8b6a-726f78d13510
+# ╠═36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
+# ╟─fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
+# ╟─e9f3b9e2-5689-40ce-b5b5-bc571ba35c10
+# ╠═3a8ceb49-403e-424f-bedb-49f5b01c8d7a
+# ╠═0a609b97-7859-4053-900d-c1be5d61e68c
+# ╠═c9f6fad7-518c-442b-a385-e3fa74431cb1
+# ╠═a8971bb3-cf38-4445-b66e-65ff35ca13ca
+# ╠═13007ba3-7ce2-4201-aa93-559fcbf9d12f
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

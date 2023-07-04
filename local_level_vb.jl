@@ -860,6 +860,213 @@ let
 	plot!(r_ss)
 end
 
+# ╔═╡ 69e31afc-7893-4099-8d48-937d8ebffa86
+md"""
+## VB Derivation for local level model above
+
+we assume $a = c = 1.0$ is known and fixed in local level model, so the unknown model parameters are $r$ and $q$:
+
+Full joint probability:
+
+$$p(r, q, x_{0:T}, y_{1:T}) = p(r) p(q) p(x_0) \prod_{t=1}^{T} p(x_t | x_{t-1}, q) \prod_{t=1}^{T} p(y_t | x_t, r)$$
+
+Log marginal likelihood:
+
+$\begin{align}
+\log p(y_{1:T}) &= \log \int p(r, q, x_{0:T}, y_{1:T}) \ dr \ dq \ dx_{0:T} \\
+&\geq \int \ dr \ dq \ dx_{0:T} \  q(r, q, x_{0:T}) \log \frac{p(r, q, x_{0:T}, y_{1:T})}{q(r, q, x_{0:T})} \\
+&= \mathcal F
+\end{align}$
+
+$\mathcal{F}(q) = E_q[\log p(r, q, x_{0:T}, y_{1:T})] - E_q[\log q(r, q, x_{0:T})]$
+
+
+To make the variational inference tractable, we often assume that the variational distribution factorizes over the model parameters and the latent states, 
+
+$$q(r, q, x_{0:T}) = q(r) \ q(q) \ q(x_{0:T})$$
+"""
+
+# ╔═╡ 94caa09c-59b6-461f-b56f-178992d2bc83
+md"""
+### Choice of prior
+let $τ_r = 1/r, τ_q = 1/q$, a natural prior for the precision is the gamma distribution: 
+
+$$τ_r \sim \mathcal Gamma(\alpha, \beta)$$
+$$τ_q \sim \mathcal Gamma(\alpha, \beta)$$
+"""
+
+# ╔═╡ bb4de2cf-e4b6-4788-9f8b-ff5fd2ca2570
+md"""
+### VB-M 
+Given that we have assumed $τ_r$ and $τ_q$ to follow Gamma distributions in the variational family, their variational posteriors $q(τ_r)$ and $q(τ_q)$ will also be Gamma distributions. The parameters of these Gamma distributions are updated in the M-step:
+
+$\alpha_r' = \alpha + T/2$
+$\beta_r' = \beta + 0.5 \sum_{t=1}^{T} E_q[(y_t - x_t)^2]$
+
+$\alpha_q' = \alpha + (T-1)/2$
+$\beta_q' = \beta + 0.5 \sum_{t=2}^{T} E_q[(x_t - x_{t-1})^2]$
+
+Here, $E_q[\cdot]$ denotes the expectation with respect to the variational distribution $q(x_{0:T})$, and the expectations are computed using the current parameters of the variational distribution from the E-step --- latent state sufficient statistics (hss)
+
+$\begin{align}
+E_q[(y_t - x_t)^2] &= E_q[y_t^2 - 2y_tx_t + x_t^2] \\
+                   &= y_t^2 - 2y_tE_q[x_t] + E_q[x_t^2] \\
+                   &= y_t^2 - 2y_t\mu_t + \mu_t^2 + \sigma_t^2
+\end{align}$
+
+
+
+$\begin{align}
+E_q[(x_t - x_{t-1})^2] &= E_q[x_t^2 - 2x_tx_{t-1} + x_{t-1}^2] \\
+                       &= \mu_t^2 + \sigma_t^2 - 2 E_q[x_tx_{t-1}] + \mu_{t-1}^2 + \sigma_{t-1}^2
+\end{align}$
+
+
+This motivates E-step to compute the following HSS:
+
+$w_c = \sum_{t=1}^{T} E_q[x_t^2] = \sum_{t=1}^{T} (\sigma_t^2 + \mu_t^2)$
+$w_a = \sum_{t=1}^{T} E_q[x_{t-1}^2] = \sum_{t=1}^{T} (\sigma_{t-1}^2 + \mu_{t-1}^2)$
+$s_c = \sum_{t=1}^{T} y_t E_q[x_t] = \sum_{t=1}^{T} \mu_t y_t$
+$s_a = \sum_{t=1}^{T} E_q[x_{t-1} x_t] = \sum_{t=1}^{T} \sigma_{t-1, t}^2 + \mu_{t-1}\mu_t$
+
+
+"""
+
+# ╔═╡ 981608f2-57f6-44f1-95ed-82e8cca04718
+begin
+	struct HSS_ll
+	    w_c::Float64
+	    w_a::Float64
+	    s_c::Float64
+	    s_a::Float64
+	end
+	
+	# Define the struct for the priors
+	struct Priors_ll
+	    α_r::Float64
+	    β_r::Float64
+	    α_q::Float64
+	    β_q::Float64
+	    μ_0::Float64
+	    σ_0::Float64
+	end
+end
+
+# ╔═╡ 241e587f-b3dd-4bf8-83d0-1459c389fcc0
+function vb_m_ll(hss::HSS_ll, priors::Priors_ll)
+    T = length(hss.s_c)
+
+    # Update parameters for τ_r
+    α_r_p = priors.α_r + T / 2
+    β_r_p = priors.β_r + 0.5 * (hss.w_c - 2 * hss.s_c + T * priors.μ_0^2 + T * priors.σ_0)
+
+    # Update parameters for τ_q
+    α_q_p = priors.α_q + (T - 1) / 2
+    β_q_p = priors.β_q + 0.5 * (hss.w_a - 2 * hss.s_a + (T - 1) * priors.μ_0^2 + (T - 1) * priors.σ_0)
+
+    # Compute expectations
+    E_τ_r = α_r_p / β_r_p
+    E_τ_q = α_q_p / β_q_p
+
+    return E_τ_r, E_τ_q	
+end
+
+# ╔═╡ 1adc874e-e024-464a-80d5-5ded04f62f24
+md"""
+### VB-E
+In the VB-E step, we compute the variational distribution $q(x_{0:T})$ for the latent states. This is done using the forward-backward algorithm, which is a dynamic programming algorithm 
+
+We need expected parameters computed from vb-m step: 
+
+$E_q[τ_r] = \alpha_r' / \beta_r'$
+$E_q[τ_q] = \alpha_q' / \beta_q'$
+
+#### Forward pass
+The forward pass computes the filtered distribution for each latent state $x_t$ given the observations up to $y_{1:t}$. The filtered distributions are computed recursively from $t=1$ to $T$, the filtered mean and filtered variance are:
+
+
+$$\mu_t^f = \mu_{t-1} + K_t (y_t - \mu_{t-1})$$
+$$\sigma_t^{f2} = (1 - K_t) \sigma_{t-1}^2$$
+
+where the Kalman gain matrix is given as: 
+
+$$K_t = \frac{\sigma_{t-1}^2}{\sigma_{t-1}^2 + 1/E_q[τ_r]}$$
+"""
+
+# ╔═╡ ece11b32-cc61-447b-bbcf-018829360b73
+md"""
+#### Backward pass
+The backward pass computes the smoothed distribution for each latent state $x_t$ given all the observations $y_{1:T}$. The smoothed distributions are computed recursively from $t = T ... 1$. 
+
+The recursion is initialized with the filtered distribution at time $T$, and it also uses the expected parameters computed in the VB-M step.
+
+The smoothed mean $\mu_t^s$ and variance $\sigma_t^{s2}$ at time $t$ are computed as follows: 
+
+$$\mu_t^s = \mu_t^f + J_{t-1} (\mu_{t+1}^s - \mu_t^f)$$
+$$\sigma_t^{s2} = \sigma_t^{f2} + J_{t-1}^2 (\sigma_{t+1}^{s2} - \sigma_t^{f2})$$
+
+where the smoothing factor $J_{t-1}$ is given by:
+
+$$J_{t-1} = \frac{\sigma_{t-1}^{f2}}{\sigma_{t-1}^{f2} + 1/E_q[τ_q]}$$
+"""
+
+# ╔═╡ aa5caae7-638d-441f-a306-5442a5c8f75f
+md"""
+#### Cross-variance
+
+The term $\sigma_{t-1,t}^2$ represents the cross-variance between the latent state at time $t−1$ and the latent state at time $t$, under the variational distribution. This term can be computed from the joint marginal distribution $p(x_{t−1},x_t∣y_{1:T})$ which is a bivariate normal distribution:
+
+$$\sigma_{t-1,t}^2 = J_{t-1} \sigma_t^{s2}$$
+"""
+
+# ╔═╡ d359f3aa-b238-420f-99d2-52f85ce9ff82
+function forward_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
+    T = length(y)
+    μ_f = zeros(T)
+    σ_f2 = zeros(T)
+    μ_f[1] = priors.μ_0
+    σ_f2[1] = priors.σ_0
+    for t = 2:T
+        K_t = σ_f2[t-1] / (σ_f2[t-1] + 1/E_τ_r)
+        μ_f[t] = μ_f[t-1] + K_t * (y[t] - μ_f[t-1])
+        σ_f2[t] = (1 - K_t) * σ_f2[t-1]
+    end
+    return μ_f, σ_f2
+end
+
+# ╔═╡ c29b63f3-0d32-46ad-99a4-3cae4a3f6181
+function backward_ll(μ_f, σ_f2, E_τ_q)
+    T = length(μ_f)
+    μ_s = copy(μ_f)
+    σ_s2 = copy(σ_f2)
+    σ_s2_cross = zeros(T)
+    for t = T-1:-1:1
+        J_t = σ_f2[t] / (σ_f2[t] + 1/E_τ_q)
+        μ_s[t] = μ_f[t] + J_t * (μ_s[t+1] - μ_f[t])
+        σ_s2[t] = σ_f2[t] + J_t^2 * (σ_s2[t+1] - σ_f2[t])
+        σ_s2_cross[t] = J_t * σ_s2[t+1]
+    end
+    return μ_s, σ_s2, σ_s2_cross
+end
+
+# ╔═╡ bee6469f-13a1-4bd8-8f14-f01e8405a949
+function vb_e_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
+    # Forward pass
+    μ_f, σ_f2 = forward(y, E_τ_r, E_τ_q, priors)
+
+    # Backward pass
+    μ_s, σ_s2, σ_s2_cross = backward(μ_f, σ_f2, E_τ_q)
+
+    # Compute the sufficient statistics
+    w_c = sum(σ_s2 .+ μ_s.^2)
+    w_a = sum(σ_s2[1:end-1] .+ μ_s[1:end-1].^2)
+    s_c = sum(y .* μ_s)
+    s_a = sum(σ_s2_cross[1:end-1] .+ μ_s[1:end-1] .* μ_s[2:end])
+
+    # Return the sufficient statistics in a HSS struct
+    return HSS(w_c, w_a, s_c, s_a)
+end
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
@@ -2923,5 +3130,16 @@ version = "1.4.1+0"
 # ╠═ce1f3eed-13ab-4fa7-aafc-a97954dd818b
 # ╠═7e4fa23d-b05b-4f77-959e-29577e349333
 # ╠═d57adc7b-fcd5-468b-aa50-919d884a916a
+# ╟─69e31afc-7893-4099-8d48-937d8ebffa86
+# ╟─94caa09c-59b6-461f-b56f-178992d2bc83
+# ╟─bb4de2cf-e4b6-4788-9f8b-ff5fd2ca2570
+# ╠═981608f2-57f6-44f1-95ed-82e8cca04718
+# ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
+# ╟─1adc874e-e024-464a-80d5-5ded04f62f24
+# ╟─ece11b32-cc61-447b-bbcf-018829360b73
+# ╟─aa5caae7-638d-441f-a306-5442a5c8f75f
+# ╠═d359f3aa-b238-420f-99d2-52f85ce9ff82
+# ╠═c29b63f3-0d32-46ad-99a4-3cae4a3f6181
+# ╠═bee6469f-13a1-4bd8-8f14-f01e8405a949
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

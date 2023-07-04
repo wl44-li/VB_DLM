@@ -10,10 +10,10 @@ begin
 	using LinearAlgebra
 	using StatsFuns
 	using PlutoUI
+	using MCMCChains
+	using Statistics
+	using DataFrames
 end
-
-# ╔═╡ 2119bc4b-794b-4a46-ab8f-47e960a0968d
-using MCMCChains
 
 # ╔═╡ 6c0ecec8-afdc-4072-9dac-4658af3706d5
 TableOfContents()
@@ -65,9 +65,9 @@ Establish ground-truth and test data
 begin
 	A = [0.8 -0.1; 0.3 0.6]
 	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([1.0, 1.0]) # assume known
+	Q = Diagonal([1.0, 1.0])
 	R = Diagonal([0.5, 0.5])
-	T = 1000
+	T = 500
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
@@ -76,7 +76,7 @@ end
 
 # ╔═╡ df41dbec-6f39-437c-9f59-8a74a7f5a8dd
 md"""
-Some assumptions to keep in-line with VBEM (Beale 2003):
+Some assumptions to keep in-line with VBEM `Beale 2003 Thesis`:
 
 	Row-wise MVN Prior: A row-wise MVN prior for A or C assumes that the elements of each row are jointly normally distributed, but it treats each row as independent from the others. This means that there are dependencies between the elements within each row, but not between different rows. This is a simpler assumption that can be easier to handle computationally, but it may not capture all the relationships in the data if there are important dependencies between different rows.
 
@@ -129,7 +129,7 @@ function sample_A(Xs, μ_A, Σ_A, Q)
 	for i in 1:K
      	Σ_post = inv(Σ_A_inv + (Xs[:, 1:T-1] * Xs[:, 1:T-1]') ./ Q[i, i])
         μ_post = Σ_post * (Σ_A_inv * μ_A + (Xs[:, 1:T-1] * Xs[i, 2:T]) ./ Q[i, i])
-		A[i, :] = rand(MultivariateNormal(μ_post, Σ_post)) # Hermittian check ?
+		A[i, :] = rand(MvNormal(μ_post, Symmetric(Σ_post)))
     end
     return A
 end
@@ -162,7 +162,7 @@ function sample_C(Xs, Ys, μ_C, Σ_C, R)
         Σ_C_inv = inv(Σ_C)
         Σ_post = inv(Σ_C_inv + (Xs * Xs') ./ R[i, i])
         μ_post = Σ_post * (Σ_C_inv * μ_C + Xs * Y / R[i, i])
-        C_sampled[i, :] = rand(MultivariateNormal(μ_post, Σ_post))
+        C_sampled[i, :] = rand(MvNormal(μ_post, Symmetric(Σ_post)))
     end
     return C_sampled
 end
@@ -227,23 +227,23 @@ function sample_x_ffbs(Ys, A, C, R, Q, μ₀, Σ₀)
 	
     # Backward sampling
 	try
-		Xs_sampled[:, T] = rand(MultivariateNormal(μs[:, T], Σs[:, :, T]))
+		Xs_sampled[:, T] = rand(MvNormal(μs[:, T], Σs[:, :, T]))
 	catch e
 		if isa(e, PosDefException)
-			Xs_sampled[:, T] = rand(MultivariateNormal(μs[:, T], Diagonal(Σs[:, :, T])))
+			Xs_sampled[:, T] = rand(MvNormal(μs[:, T], Symmetric(Σs[:, :, T])))
 		end
 	end
     
 	for t in (T-1):-1:1
- 		m_post = μs[:, t] + Σs[:, :, t] * A' * inv(A * Σs[:, :, t] * A' + Q) * (Xs_sampled[:, t+1] - A * μs[:, t])
+ 		μ_p = μs[:, t] + Σs[:, :, t] * A' * inv(A * Σs[:, :, t] * A' + Q) * (Xs_sampled[:, t+1] - A * μs[:, t])
 		
-        P_post = Σs[:, :, t] - Σs[:, :, t] * A' * inv(A * Σs[:, :, t] * A' + Q) * A * Σs[:, :, t]
+        P_p = Σs[:, :, t] - Σs[:, :, t] * A' * inv(A * Σs[:, :, t] * A' + Q) * A * Σs[:, :, t]
 		
 		try
-            Xs_sampled[:, t] = rand(MultivariateNormal(m_post, P_post))
+            Xs_sampled[:, t] = rand(MvNormal(μ_p, P_p))
         catch e
             if isa(e, PosDefException)
-                Xs_sampled[:, t] = rand(MultivariateNormal(m_post, Diagonal(P_post)))
+                Xs_sampled[:, t] = rand(MvNormal(μ_p, Symmetric(P_p)))
 			end
 		end
     end
@@ -258,7 +258,7 @@ Test FFBS with ground-truth y, A, C, R
 
 # ╔═╡ eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
 let
-	xss = zeros(2, 1000, 100)
+	xss = zeros(2, T, 100)
 	for i in 1:100
 		x_ffbs = sample_x_ffbs(y, A, C, R, Matrix{Float64}(I, 2, 2), zeros(2), Matrix{Float64}(I, 2, 2))
 		xss[:, :, i] = x_ffbs
@@ -266,8 +266,6 @@ let
 
 	xs_m = mean(xss, dims=3)[:, :, 1]
 	println(error_metrics(x_true, xs_m))
-
-	
 end
 
 # ╔═╡ e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
@@ -275,54 +273,10 @@ md"""
 ## Gibbs sampling
 """
 
-# ╔═╡ 120d3c31-bba9-476d-8a63-95cdf2457a1b
-function gibbs_dlm(y, K, Q=Matrix{Float64}(I, K, K), mcmc=6000, burn_in=500, thinning=3)
-	P, T = size(y)
-
-	n_samples = Int.(mcmc/thinning)
-    A_samples = zeros(K, K, n_samples)
-    C_samples = zeros(P, K, n_samples)
-    R_samples = zeros(P, P, n_samples)
-    Xs_samples = zeros(K, T, n_samples)
-	
-    # Initialize A, C, and R, using fixed prior 
-    A_init = rand(MultivariateNormal(zeros(K), Matrix{Float64}(I, K, K)), K)'
-    C_init = rand(MultivariateNormal(zeros(K), Matrix{Float64}(I, K, K)), P)'
-
-	a = 0.1
-	b = 0.1
-	ρ = rand(Gamma(a, b), 2)
-    R_init = Diagonal(1 ./ ρ)
-	
-    A = A_init
-    C = C_init
-    R = R_init
-
-	μ₀, Σ₀ = zeros(K), Matrix{Float64}(I, K, K)
-    for iter in 1:(mcmc + burn_in)
-        # Sample latent states Xs
-        Xs = sample_x_ffbs(y, A, C, R, Q, μ₀, Σ₀)
-        # Sample model parameters A, C, and R
-        A = sample_A(Xs, μ₀, Σ₀, Q)
-        C = sample_C(Xs, y, μ₀, Σ₀, R)
-        R = sample_R(Xs, y, C, a, b)
-        # Store samples after burn-in
-        if iter > burn_in && mod(iter - burn_in, thinning) == 0
-			index = div(iter - burn_in, thinning)
-            A_samples[:, :, index] = A
-            C_samples[:, :, index] = C
-            R_samples[:, :, index] = R
-            Xs_samples[:, :, index] = Xs
-        end
-    end
-    return A_samples, C_samples, R_samples, Xs_samples
-end
-
-# ╔═╡ df166b81-a6c3-490b-8cbc-4061f19b750b
-begin
-	Random.seed!(931)
-	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
-end
+# ╔═╡ 6a4af386-bfe0-48bb-8d40-300e02680703
+md"""
+VBEM Analog with Beale Chap 5
+"""
 
 # ╔═╡ 97b66cb6-c143-45d1-84fa-3db7cef42c09
 A, C, R
@@ -332,40 +286,24 @@ md"""
 Analyse Gibbs results with Chains
 """
 
-# ╔═╡ af9c5548-14f2-4771-84cf-bf93eebcd3f2
- chn_A = Chains(reshape(A_samples, 4, 2000)');
+# ╔═╡ 2dce7f45-fe4a-4e11-b690-75517e14c068
+md"""
+Compare with single-move sampler
+"""
 
-# ╔═╡ 779e0cef-0865-4087-b3d1-563aec15a734
-describe(chn_A)
-
-# ╔═╡ 611e868a-e808-4a1f-8dd3-2d7ef64e2984
-chn_C = Chains(reshape(C_samples, 4, 2000)');
-
-# ╔═╡ 69efb78d-1297-46b4-a6bb-218c07c9b2af
-describe(chn_C)
-
-# ╔═╡ 9f1a120d-80ac-46e0-ae7c-949d2f571b98
-chn_R = Chains(reshape(R_samples, 4, 2000)');
-
-# ╔═╡ f08a6391-24da-4d3e-8a3e-55806bb9efbb
-describe(chn_R)
-
-# ╔═╡ a143751f-24a7-489b-8031-629fb5476bdc
-# ╠═╡ disabled = true
-#=╠═╡
-let
-	Random.seed!(977)
-	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
-end
-  ╠═╡ =#
+# ╔═╡ 79fc7c88-d31a-4753-81bc-9092576eda35
+md"""
+DEBUG? single-move X sampler gave very poor learning compared to FFBS based state sampler 
+"""
 
 # ╔═╡ 0a9c1721-6901-4dc1-a93d-8d8e18f7f375
 md"""
-## TO-DO:
+# TO-DO:
 
-- Single-move sampler of X v.s. FFBS
-- Manually derive sampling for unknown Q (DLM with R) with known A, C
-- Understand the difference between Beale and Petris (DLM with R), and possible implications for time series inference
+- Single-move sampler of X v.s. FFBS of DLM latent states X
+- Manually derive sampling for unknown Q (`DLM with R`) with **known** A, C
+- Understand the difference between Beale and Petris `DLM with R`, and possible implications for time series inference 
+- design tests/experiments to verify
 """
 
 # ╔═╡ 91892a1b-b55c-4f83-91b3-dab4132b1863
@@ -486,13 +424,11 @@ function ffbs_x(Ys, A, C, R, Q, μ_0, Σ_0)
 
 	# Kalman filter (Prep 4.1)
     for t in 2:T
-		
         # Prediction
         a[:, t] = A * m[:, t-1]
         P_t = A * P[:, :, t-1] * A' + Q
 		RR[:, :, t] = P_t
 		
-
 		# Update
         f_t = C * a[:, t]
         S_t = C * P_t * C' + R
@@ -500,42 +436,51 @@ function ffbs_x(Ys, A, C, R, Q, μ_0, Σ_0)
 		# filter 
         m[:, t] = a[:, t] + RR[:, :, t] * C' * inv(S_t) * (Ys[:, t] - f_t)
 
-		# svd not working? # DEBUG
        	Σ_t = RR[:, :, t] - RR[:, :, t] * C' * inv(S_t) * C * RR[:, :, t]
-		#println(t)
-		#U_s, Σ_s, V_s = svd(S_t)
-   		#P[:, :, t] = U_s * Diagonal(Σ_s) * V_s'
 		P[:, :, t] = Σ_t
 	end
 	
-		X[:, T] = rand(MultivariateNormal(m[:, T], P[:, :, T]))
+		X[:, T] = rand(MvNormal(m[:, T], Symmetric(P[:, :, T])))
 	
 	# backward sampling
 	for t in (T-1):-1:1
 		h_t = m[:, t] +  P[:, :, t] * A' * inv(RR[:, :, t+1])*(X[:, t+1] - a[:, t+1])
 		H_t = P[:, :, t] - P[:, :, t] * A' * inv(RR[:, :, t+1]) * A * P[:, :, t]
-		U_s, Σ_s, V_s = svd(H_t)
-		X[:, t] = rand(MultivariateNormal(h_t, U_s * Diagonal(Σ_s) * V_s'))
+	
+		X[:, t] = rand(MvNormal(h_t, Symmetric(H_t)))
 	end
 
 	return X
 end
 
 # ╔═╡ 36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
-# ╠═╡ disabled = true
-#=╠═╡
 let
 	Random.seed!(177)
-	xss = []
-	for _ in 1:100
+	xss = zeros(2, T, 3000)
+	for i in 1:3000
 		x_ffbs = ffbs_x(y, A, C, R, Matrix{Float64}(I, 2, 2), zeros(2), Matrix{Float64}(I, 2, 2))
-		push!(xss, x_ffbs)
+		xss[:, :, i] = x_ffbs
 	end
 
-	xs_m = mean(xss, dims=1)[1]
-	error_metrics(x_true, xs_m)
+	xs_m = mean(xss, dims=3)[:, :, 1]
+	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
+	reshaped_samples = reshape(xss, 3000, 2*500, 1)
+	chains = Chains(reshaped_samples)
+	
+	ess = ess(chains)
+	rhat = rhat(chains)
+	# Convert to DataFrame
+	ess_df = DataFrame(ess)
+	rhat_df = DataFrame(rhat)
+	
+	# Get the mean ESS and Rhat across all parameters
+	mean_ess = mean(skipmissing(ess_df.ess))
+	mean_rhat = mean(skipmissing(rhat_df.rhat))
+	
+	println("Mean ESS: $mean_ess")
+	println("Mean Rhat: $mean_rhat")
+	ess_df, rhat_df
 end
-  ╠═╡ =#
 
 # ╔═╡ fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
 md"""
@@ -560,7 +505,7 @@ function sample_x_1(y_1, x_2, A, C, Q, R)
     Sigma_x_1_inv = C' * inv(R) * C + A' * inv(Q) * A
     mu_x_1 = inv(Sigma_x_1_inv) * (C' * inv(R) * y_1 + A' * inv(Q) * x_2)
     Sigma_x_1 = inv(Sigma_x_1_inv)
-    return rand(MultivariateNormal(mu_x_1, Sigma_x_1))
+    return rand(MvNormal(mu_x_1, Symmetric(Sigma_x_1)))
 end
 
 # ╔═╡ 0a609b97-7859-4053-900d-c1be5d61e68c
@@ -569,8 +514,7 @@ function sample_x_T(y_T, x_T_1, A, C, Q, R)
     mu_x_T = inv(Sigma_x_T_inv) * (C' * inv(R) * y_T + inv(Q) * A * x_T_1)
     Sigma_x_T = inv(Sigma_x_T_inv)
 
-	# temp fix, need to deal with numerical stability
-    return rand(MultivariateNormal(mu_x_T, Diagonal(Sigma_x_T)))
+    return rand(MvNormal(mu_x_T, Symmetric(Sigma_x_T)))
 end
 
 # ╔═╡ c9f6fad7-518c-442b-a385-e3fa74431cb1
@@ -578,7 +522,7 @@ function sample_x_i(y_i, x_i_minus_1, x_i_plus_1, A, C, Q, R)
     Sigma_x_i_inv = C' * inv(R) * C + inv(Q) * A + A' * inv(Q)
     mu_x_i = inv(Sigma_x_i_inv) * (C' * inv(R) * y_i + inv(Q) * A * x_i_minus_1 + A' * inv(Q) * x_i_plus_1)
     Sigma_x_i = inv(Sigma_x_i_inv)
-    return rand(MultivariateNormal(mu_x_i, Sigma_x_i))
+    return rand(MvNormal(mu_x_i, Symmetric(Sigma_x_i)))
 end
 
 # ╔═╡ a8971bb3-cf38-4445-b66e-65ff35ca13ca
@@ -604,26 +548,242 @@ function single_move_sampler(Ys, A, C, Q, R, mcmc=2000)
     return xss
 end
 
+# ╔═╡ 120d3c31-bba9-476d-8a63-95cdf2457a1b
+function gibbs_dlm(y, K, single_move=false, Q=Matrix{Float64}(I, K, K), mcmc=3000, burn_in=1000, thinning=1)
+	P, T = size(y)
+
+	n_samples = Int.(mcmc/thinning)
+    A_samples = zeros(K, K, n_samples)
+    C_samples = zeros(P, K, n_samples)
+    R_samples = zeros(P, P, n_samples)
+    Xs_samples = zeros(K, T, n_samples)
+	
+    # Initialize A, C, and R, using fixed prior 
+    A_init = rand(MvNormal(zeros(K), Matrix{Float64}(I, K, K)), K)'
+    C_init = rand(MvNormal(zeros(K), Matrix{Float64}(I, K, K)), P)'
+
+	a = 0.1
+	b = 0.1
+	ρ = rand(Gamma(a, b), 2)
+    R_init = Diagonal(1 ./ ρ)
+    A = A_init
+    C = C_init
+    R = R_init
+	μ₀, Σ₀ = zeros(K), Matrix{Float64}(I, K, K)
+	
+    for iter in 1:(mcmc + burn_in)
+		Xs = missing
+        # Sample latent states Xs
+		if single_move
+			Xs = single_move_sampler(y, A, C, Q, R, 1)[:, :, 1]
+		else
+        	Xs = ffbs_x(y, A, C, R, Q, μ₀, Σ₀)
+		end
+		
+        # Sample model parameters A, C, and R
+        A = sample_A(Xs, μ₀, Σ₀, Q)
+        C = sample_C(Xs, y, μ₀, Σ₀, R)
+        R = sample_R(Xs, y, C, a, b)
+        # Store samples after burn-in
+        if iter > burn_in && mod(iter - burn_in, thinning) == 0
+			index = div(iter - burn_in, thinning)
+            A_samples[:, :, index] = A
+            C_samples[:, :, index] = C
+            R_samples[:, :, index] = R
+            Xs_samples[:, :, index] = Xs
+        end
+    end
+    return A_samples, C_samples, R_samples, Xs_samples
+end
+
+# ╔═╡ df166b81-a6c3-490b-8cbc-4061f19b750b
+begin
+	Random.seed!(99)
+	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
+end
+
+# ╔═╡ af9c5548-14f2-4771-84cf-bf93eebcd3f2
+ chn_A = Chains(reshape(A_samples, 4, 3000)');
+
+# ╔═╡ 779e0cef-0865-4087-b3d1-563aec15a734
+describe(chn_A)
+
+# ╔═╡ 611e868a-e808-4a1f-8dd3-2d7ef64e2984
+chn_C = Chains(reshape(C_samples, 4, 3000)');
+
+# ╔═╡ 69efb78d-1297-46b4-a6bb-218c07c9b2af
+describe(chn_C)
+
+# ╔═╡ 9f1a120d-80ac-46e0-ae7c-949d2f571b98
+chn_R = Chains(reshape(R_samples, 4, 3000)');
+
+# ╔═╡ f08a6391-24da-4d3e-8a3e-55806bb9efbb
+describe(chn_R)
+
+# ╔═╡ 39ecddfa-89a0-49ec-86f1-4794336215d0
+let
+	xs_m = mean(X_samples, dims=3)[:, :, 1]
+	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
+	reshaped_samples = reshape(X_samples, 3000, 2*500, 1)
+	xss_chains = Chains(reshaped_samples)
+	
+	ess = ess(xss_chains)
+	rhat = rhat(xss_chains)
+	# Convert to DataFrame
+	ess_df = DataFrame(ess)
+	rhat_df = DataFrame(rhat)
+	
+	# Get the mean ESS and Rhat across all parameters
+	mean_ess = mean(skipmissing(ess_df.ess))
+	mean_rhat = mean(skipmissing(rhat_df.rhat))
+	
+	println("X Mean ESS: $mean_ess")
+	println("X Mean Rhat: $mean_rhat")
+	ess, rhat
+end
+
+# ╔═╡ ad1c98fd-ffdf-430f-ae3e-59fa63a9433e
+let
+	Random.seed!(99)
+	#A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2, true, Matrix{Float64}(I, 2, 2), 15000, 20000, 5)
+	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2, true)
+	chn_A = Chains(reshape(A_samples, 4, 3000)');
+	chn_C = Chains(reshape(C_samples, 4, 3000)');
+	chn_R = Chains(reshape(R_samples, 4, 3000)');
+	xs_m = mean(X_samples, dims=3)[:, :, 1]
+	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
+	reshaped_samples = reshape(X_samples, 3000, 2*500, 1)
+	xss_chains = Chains(reshaped_samples)
+	
+	ess = ess(xss_chains)
+	rhat = rhat(xss_chains)
+	# Convert to DataFrame
+	ess_df = DataFrame(ess)
+	rhat_df = DataFrame(rhat)
+	
+	# Get the mean ESS and Rhat across all parameters
+	mean_ess = mean(skipmissing(ess_df.ess))
+	mean_rhat = mean(skipmissing(rhat_df.rhat))
+	
+	println("X Mean ESS: $mean_ess")
+	println("X Mean Rhat: $mean_rhat")
+
+	describe(chn_A), describe(chn_C), describe(chn_R)
+end
+
 # ╔═╡ 13007ba3-7ce2-4201-aa93-559fcbf9d12f
 let
-	xss = single_move_sampler(y, A, C, Q, R, 100)
-
+	Random.seed!(177)
+	xss = single_move_sampler(y, A, C, Q, R, 3000)
 	xs_m = mean(xss, dims=3)[:, :, 1]
-	println(error_metrics(x_true, xs_m))
+	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
+
+	reshaped_samples = reshape(xss, 3000, 2*500, 1)
+	chains = Chains(reshaped_samples)
+
+	ess = ess(chains)
+	rhat = rhat(chains)
+
+	# Convert to DataFrame
+	ess_df = DataFrame(ess)
+	rhat_df = DataFrame(rhat)
+	
+	# Get the mean ESS and Rhat across all parameters
+	mean_ess = mean(skipmissing(ess_df.ess))
+	mean_rhat = mean(skipmissing(rhat_df.rhat))
+	
+	println("Mean ESS: $mean_ess")
+	println("Mean Rhat: $mean_rhat")
+	ess_df, rhat_df
 end
+
+# ╔═╡ b4c11a46-438d-4653-89e7-bc2b99e84f48
+md"""
+Multi-variate DLM with unknown $R, Q$
+
+Assume the $P \times P$ observation precision matrix $Φ_0 = R^{-1}$ is Wishart distributed with prior:
+
+$$Φ_0 \sim \mathcal Wi(v_0, S_0)$$
+
+The Gibbs step full-conditional is 
+
+$$p(Φ_0| ...) \sim \mathcal Wi(v_0 + T/2, S_0 + 1/2 * S S_y)$$
+
+$$SS_y = \sum_{t=1}^T (y_t - C x_t)(y_t - C x_t)^T$$
+"""
+
+# ╔═╡ 494eed09-a6e8-488b-bea2-55b7ddb37082
+function sample_R_(y, x, C, v_0, S_0)
+    T = size(y, 2)
+	
+    residuals = [y[:, t] - C * x[:, t] for t in 1:T]
+	SS_y = sum([residuals[t] * residuals[t]' for t in 1:T])
+	
+    scale_posterior = S_0 + SS_y .* 0.5
+    df_posterior = v_0 + 0.5 * T
+
+	R⁻¹ = rand(Wishart(df_posterior, inv(scale_posterior)))
+    return inv(R⁻¹)
+end
+
+# ╔═╡ 060ae93d-12fe-47c6-abe1-ff7728bda572
+let
+	sample_R_(y, x_true, C, 3, Matrix{Float64}(0.01 * I, 2, 2)), R
+end
+
+# ╔═╡ 425782f9-4764-4880-ab72-3b481a2cf55a
+md"""
+Assume the $K \times K$ system precision matrix $Φ_1 = Q^{-1}$ is also Wishart distributed with prior:
+
+$$Φ_1 \sim \mathcal Wi(v_1, S_1)$$
+
+The Gibbs step full-conditional is 
+
+$$p(Φ_1| ...) \sim \mathcal Wi(v_1 + T/2, S_1 + 1/2 * S S_1)$$
+
+$$SS_1 = \sum_{t=1}^T (x_t - A x_t)(x_t - A x_t)^T$$
+"""
+
+# ╔═╡ cc216d03-956c-45bb-a6ef-38bf79d6a597
+function sample_Q_(x, A, v_1, S_1, x_0)
+    T = size(x, 2)
+	
+    residuals = [x[:, t] - A * x[:, t-1] for t in 2:T]
+	SS_1 = sum([residuals[t] * residuals[t]' for t in 1:T-1])
+    scale_posterior = S_1 + SS_1 .* 0.5
+
+	scale_posterior += (x[:, 1] - A * x_0) * (x[:, 1] - A * x_0)' .* 0.5
+    df_posterior = v_1 + 0.5 * T
+
+	Q⁻¹ = rand(Wishart(df_posterior, inv(scale_posterior)))
+    return inv(Q⁻¹)
+end
+
+# ╔═╡ 7dfa5042-227b-43aa-a55c-30decee08413
+let
+	sample_Q_(x_true, A, 3, Matrix{Float64}(0.01 * I, 2, 2), zeros(2)), Q
+end
+
+# ╔═╡ 68c26d99-8f54-4580-8357-5598eb1c8cdf
+md"""
+## Gibbs sampling of Unknown Co-variances
+"""
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MCMCChains = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 
 [compat]
+DataFrames = "~1.5.0"
 Distributions = "~0.25.96"
 MCMCChains = "~6.0.3"
 Plots = "~1.38.16"
@@ -637,7 +797,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.1"
 manifest_format = "2.0"
-project_hash = "682356d1b232f58829f06826095ce8e2101fdd20"
+project_hash = "11a85631ff3d4c8862c0e5fe9509ccacbdee7a61"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -850,6 +1010,12 @@ version = "4.1.1"
 git-tree-sha1 = "8da84edb865b0b5b0100c0666a9bc9a0b71c553c"
 uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.15.0"
+
+[[deps.DataFrames]]
+deps = ["Compat", "DataAPI", "Future", "InlineStrings", "InvertedIndices", "IteratorInterfaceExtensions", "LinearAlgebra", "Markdown", "Missings", "PooledArrays", "PrettyTables", "Printf", "REPL", "Random", "Reexport", "SentinelArrays", "SnoopPrecompile", "SortingAlgorithms", "Statistics", "TableTraits", "Tables", "Unicode"]
+git-tree-sha1 = "aa51303df86f8626a962fccb878430cdb0a97eee"
+uuid = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+version = "1.5.0"
 
 [[deps.DataStructures]]
 deps = ["Compat", "InteractiveUtils", "OrderedCollections"]
@@ -1073,6 +1239,12 @@ git-tree-sha1 = "4da0f88e9a39111c2fa3add390ab15f3a44f3ca3"
 uuid = "22cec73e-a1b8-11e9-2c92-598750a2cf9c"
 version = "0.3.1"
 
+[[deps.InlineStrings]]
+deps = ["Parsers"]
+git-tree-sha1 = "9cc2baf75c6d09f9da536ddf58eb2f29dedaf461"
+uuid = "842dd82b-1e85-43dc-bf29-5d0ee9dffc48"
+version = "1.4.0"
+
 [[deps.IntelOpenMP_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "0cb9352ef2e01574eeebdb102948a58740dcaf83"
@@ -1094,6 +1266,11 @@ deps = ["Dates", "Random", "Statistics"]
 git-tree-sha1 = "16c0cc91853084cb5f58a78bd209513900206ce6"
 uuid = "8197267c-284f-5f27-9208-e0e47529a953"
 version = "0.7.4"
+
+[[deps.InvertedIndices]]
+git-tree-sha1 = "0dc7b50b8d436461be01300fd8cd45aa0274b038"
+uuid = "41ab1584-1d38-5bbf-9106-f11c6c58b48f"
+version = "1.3.0"
 
 [[deps.IrrationalConstants]]
 git-tree-sha1 = "630b497eafcc20001bba38a4651b327dcfc491d2"
@@ -1509,6 +1686,12 @@ git-tree-sha1 = "b478a748be27bd2f2c73a7690da219d0844db305"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 version = "0.7.51"
 
+[[deps.PooledArrays]]
+deps = ["DataAPI", "Future"]
+git-tree-sha1 = "a6062fe4063cdafe78f4a0a81cfffb89721b30e7"
+uuid = "2dfb63ee-cc39-5dd5-95bd-886bf059d720"
+version = "1.4.2"
+
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
 git-tree-sha1 = "9673d39decc5feece56ef3940e5dafba15ba0f81"
@@ -1634,6 +1817,12 @@ git-tree-sha1 = "30449ee12237627992a99d5e30ae63e4d78cd24a"
 uuid = "6c6a2e73-6563-6170-7368-637461726353"
 version = "1.2.0"
 
+[[deps.SentinelArrays]]
+deps = ["Dates", "Random"]
+git-tree-sha1 = "04bdff0b09c65ff3e06a05e3eb7b120223da3d39"
+uuid = "91c51154-3ec4-41a3-a24f-3f23e20d615c"
+version = "1.4.0"
+
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 
@@ -1657,6 +1846,12 @@ version = "1.0.3"
 git-tree-sha1 = "874e8867b33a00e784c8a7e4b60afe9e037b74e1"
 uuid = "777ac1f9-54b0-4bf8-805c-2214025038e7"
 version = "1.1.0"
+
+[[deps.SnoopPrecompile]]
+deps = ["Preferences"]
+git-tree-sha1 = "e760a70afdcd461cf01a575947738d359234665c"
+uuid = "66db9d55-30c0-4569-8b51-7e840670fc0c"
+version = "1.0.3"
 
 [[deps.Sockets]]
 uuid = "6462fe0b-24de-5631-8697-dd941f90decc"
@@ -2086,7 +2281,7 @@ version = "1.4.1+0"
 # ╠═ee858a0c-1414-11ee-3b47-2fb4b9112c53
 # ╟─6c0ecec8-afdc-4072-9dac-4658af3706d5
 # ╟─73e449fb-81d2-4a9e-a89d-38909093863b
-# ╠═e1f22c73-dee8-4507-af03-3d2d0ceb9011
+# ╟─e1f22c73-dee8-4507-af03-3d2d0ceb9011
 # ╠═544ac3d9-a2b8-4950-a501-40c14c84b2d8
 # ╟─46d87386-7c36-486f-ba59-15d71e88869c
 # ╠═e1bd9dd3-855e-4aa6-91aa-2695da07ba48
@@ -2096,19 +2291,19 @@ version = "1.4.1+0"
 # ╠═fc535acb-afd6-4f2a-a9f1-15dc83e4a53c
 # ╠═e9318f52-e918-42c6-9aa9-45a39ad73ec7
 # ╟─bb13a886-0877-42fb-876e-38709f041d65
-# ╠═3308752f-d770-4951-9a21-73f1c3886df4
+# ╟─3308752f-d770-4951-9a21-73f1c3886df4
 # ╠═4b9cad0a-7ec4-4a58-bf4c-4f103371de33
 # ╠═9e73e982-a4ae-4e9b-9650-3cf7c519657c
 # ╟─a41bd4a5-a7be-48fe-a222-6e8b3cf98dec
 # ╠═d8c05722-a79b-4132-b1c2-982ef39af257
 # ╠═65b7e5f4-aff8-4671-9a3a-7aeebef6b83e
 # ╟─647dc0f6-8c06-40df-bb7c-d103d4b119fc
-# ╠═8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
+# ╟─8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
 # ╟─b6fa79f5-0452-49a4-8de9-d59093078b01
 # ╠═eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
 # ╟─e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
+# ╟─6a4af386-bfe0-48bb-8d40-300e02680703
 # ╠═120d3c31-bba9-476d-8a63-95cdf2457a1b
-# ╠═2119bc4b-794b-4a46-ab8f-47e960a0968d
 # ╠═df166b81-a6c3-490b-8cbc-4061f19b750b
 # ╠═97b66cb6-c143-45d1-84fa-3db7cef42c09
 # ╟─56cad0cb-352b-4612-b3a3-ddb34de607ad
@@ -2118,7 +2313,10 @@ version = "1.4.1+0"
 # ╠═69efb78d-1297-46b4-a6bb-218c07c9b2af
 # ╠═9f1a120d-80ac-46e0-ae7c-949d2f571b98
 # ╠═f08a6391-24da-4d3e-8a3e-55806bb9efbb
-# ╠═a143751f-24a7-489b-8031-629fb5476bdc
+# ╟─39ecddfa-89a0-49ec-86f1-4794336215d0
+# ╟─2dce7f45-fe4a-4e11-b690-75517e14c068
+# ╠═ad1c98fd-ffdf-430f-ae3e-59fa63a9433e
+# ╟─79fc7c88-d31a-4753-81bc-9092576eda35
 # ╟─0a9c1721-6901-4dc1-a93d-8d8e18f7f375
 # ╟─91892a1b-b55c-4f83-91b3-dab4132b1863
 # ╟─9d2a6daf-2b06-409e-b034-6e787e64fea8
@@ -2136,5 +2334,12 @@ version = "1.4.1+0"
 # ╠═c9f6fad7-518c-442b-a385-e3fa74431cb1
 # ╠═a8971bb3-cf38-4445-b66e-65ff35ca13ca
 # ╠═13007ba3-7ce2-4201-aa93-559fcbf9d12f
+# ╟─b4c11a46-438d-4653-89e7-bc2b99e84f48
+# ╠═494eed09-a6e8-488b-bea2-55b7ddb37082
+# ╠═060ae93d-12fe-47c6-abe1-ff7728bda572
+# ╟─425782f9-4764-4880-ab72-3b481a2cf55a
+# ╠═cc216d03-956c-45bb-a6ef-38bf79d6a597
+# ╠═7dfa5042-227b-43aa-a55c-30decee08413
+# ╟─68c26d99-8f54-4580-8357-5598eb1c8cdf
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

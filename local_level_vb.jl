@@ -71,7 +71,8 @@ begin
 	A = 1.0
 	C = 1.0
 	R = 0.2
-	y, x_true = gen_data(A, C, 1.0, R, 0.0, 1.0, T) #A, C = 1.0, R = 0.2, Q = 1.0
+	Q = 1.0 # assume fixed in Beale
+	y, x_true = gen_data(A, C, Q, R, 0.0, 1.0, T)
 end
 
 # ╔═╡ d1ab75c8-5d7e-4d42-9b54-c48cd0e61e90
@@ -245,7 +246,7 @@ let
 
 	# f_var = v_forward(y, true_exp_np, 0.0, 1.0)[2]
 
-	error_metrics(x_true, fm)
+	println("MSE, MAD, MAPE: ", error_metrics(x_true, fm))
 end
 
 # ╔═╡ 2bae2d86-2a3f-446c-aa34-7582b383d2b2
@@ -418,6 +419,44 @@ end
 # ╔═╡ c3669042-bb56-423e-a077-b0cb82ce74a3
 function vb_dlm(y::Vector{Float64}, hpp::HPP_uni, max_iter=1000)
 	T = length(y)
+	W_A = 1.0
+	S_A = 1.0
+	W_C = 1.0
+	S_C = 1.0
+	
+	hss = HSS_uni(W_A, S_A, W_C, S_C)
+	exp_np = missing
+	
+	for i in 1:max_iter
+		exp_np = vb_m_uni(y, hss, hpp)
+				
+		hss, ω_0, Υ_0 = vb_e_uni(y, hpp, exp_np)
+	end
+
+	return exp_np
+end
+
+# ╔═╡ 40b0773b-fc7d-4b28-9684-7e4e36ee81c9
+begin
+	α = 1.0
+	γ = 1.0
+	a = 0.001
+	b = 0.001
+	μ_0 = 0.0
+	σ_0 = 1.0
+	hpp = HPP_uni(a, b, α, γ, μ_0, σ_0)
+	@time exp_f = vb_dlm(y, hpp, 1500) 
+	exp_f.A, exp_f.C, 1 / exp_f.R⁻¹
+end
+
+# ╔═╡ fd2784db-87b3-4c2e-9d4d-7bbca8ec3aba
+md"""
+## Ploting the parameteres, A, C, R
+"""
+
+# ╔═╡ 0e431880-8449-44bc-8996-2c50439b0eac
+function vb_ll_his(y::Vector{Float64}, hpp::HPP_uni, max_iter=1000)
+	T = length(y)
 	
 	# no randomness
 	W_A = 1.0
@@ -428,9 +467,9 @@ function vb_dlm(y::Vector{Float64}, hpp::HPP_uni, max_iter=1000)
 	hss = HSS_uni(W_A, S_A, W_C, S_C)
 	exp_np = missing
 
-    history_A = []
-    history_C = []
-    history_R = []
+	history_A = Vector{Float64}(undef, max_iter - 50)
+    history_C = Vector{Float64}(undef, max_iter - 50)
+    history_R = Vector{Float64}(undef, max_iter - 50)
 	
 	for i in 1:max_iter
 		exp_np = vb_m_uni(y, hss, hpp)
@@ -438,22 +477,17 @@ function vb_dlm(y::Vector{Float64}, hpp::HPP_uni, max_iter=1000)
 		hss, ω_0, Υ_0 = vb_e_uni(y, hpp, exp_np)
 
 		if(i > 50) # discard the first 10 to see better plots
-			push!(history_A, deepcopy(exp_np.A))
-			push!(history_C, deepcopy(exp_np.C))
-       	 	push!(history_R, deepcopy(1/exp_np.R⁻¹))
+			history_A[i-50] = exp_np.A
+			history_C[i-50] = exp_np.C
+       		history_R[i-50] = 1/exp_np.R⁻¹
 		end
 	end
 
 	return exp_np, history_A, history_C, history_R
 end
 
-# ╔═╡ fd2784db-87b3-4c2e-9d4d-7bbca8ec3aba
-md"""
-## Ploting the parameteres, A, C, R
-"""
-
 # ╔═╡ e93f8a5f-fd02-4894-aba5-7cabb9dc76b3
-begin
+let
 	α = 1.0
 	γ = 1.0
 	a = 0.001
@@ -462,7 +496,7 @@ begin
 	σ_0 = 1.0
 
 	hpp = HPP_uni(a, b, α, γ, μ_0, σ_0)
-	@time exp_f, As, Cs, Rs = vb_dlm(y, hpp, 2000) 
+	exp_f, As, Cs, Rs = vb_ll_his(y, hpp, 2000) 
 
 	p1 = plot(As, title = "A over iterations", legend = false)
 	p2 = plot(Cs, title = "C over iterations", legend = false)
@@ -471,9 +505,6 @@ begin
 	# A convergence is quick, but C and R are relatively slow
 	plot(p1, p2, p3, layout = (3, 1))
 end
-
-# ╔═╡ 40b0773b-fc7d-4b28-9684-7e4e36ee81c9
-exp_f
 
 # ╔═╡ 418b6277-da40-4232-ab0b-a07c1dc0d5e9
 md"""
@@ -485,11 +516,6 @@ xs, σs = vb_e_uni(y, hpp, exp_f, true);
 
 # ╔═╡ 5b2a3a4b-0a0d-4eb6-9ea1-c794a0911b4c
 error_metrics(x_true, xs) # MSE, MAD, MAPE of VB inference
-
-# ╔═╡ 17c95e9b-958e-4b85-a146-686868d7760c
-md"""
-**TO-DO**: investigate different low data-regime performance? here at $T=300$, VB is able to outperform traditional Kalman filter and smoother, but at the expense of 4000 VB iterations.
-"""
 
 # ╔═╡ 06b9d658-7d19-448d-8c02-6fabc5d4a551
 md"""
@@ -551,7 +577,7 @@ describe(chain)
 
 # ╔═╡ 80e4b5da-9d6e-46cd-9f84-59fa86c201b1
 md"""
-## Gibbs sampling 
+## Gibbs sampling uni-variate DLM
 """
 
 # ╔═╡ 29489270-20ee-4835-8451-db12fe46cf4c
@@ -604,13 +630,14 @@ $p(r | y_{1:T}, x_{1:T}, a, c) = p(r | y_{1:T}, x_{1:T}, c) \propto p(r) p (y_{1
 """
 
 # ╔═╡ 8e3edeee-c940-4975-99e8-bc27c3b18939
-function sample_r(xs, ys, c, alpha, beta)
+function sample_r(xs, ys, c, α_r, β_r)
 	T = length(ys)
-    alpha_post = alpha + T / 2
-    beta_post = beta + sum((ys - c * xs).^2) / 2
-    #r = rand(InverseGamma(alpha_post, beta_post))
-	λ = rand(Gamma(alpha_post, 1 / beta_post))
-	return 1/λ
+    α_post = α_r + T / 2
+    β_post = β_r + sum((ys - c * xs).^2) / 2
+	
+	λ_r = rand(Gamma(α_post, 1 / β_post))
+	
+	return 1/λ_r # inverse precision is variance
 end
 
 # ╔═╡ 5985ac18-636e-4606-9978-7e1e0ce1fd09
@@ -632,17 +659,16 @@ $p(x_t∣x_{t−1}, x_{t+1}, y_t, a, c, r)$
 
 # ╔═╡ aa404f69-e857-4eb6-87f1-298d62429891
 md"""
-Multi-move
+Multi-move FFBS sampling
 """
 
 # ╔═╡ 7ea26a1d-b6be-4d47-ad30-222ec6ea1a5a
-function sample_x_ffbs(y, A, C, R, μ_0, σ_0)
+function sample_x_ffbs(y, A, C, Q, R, μ_0, σ_0)
     T = length(y)
     μs = Vector{Float64}(undef, T)
     σs = Vector{Float64}(undef, T)
     μs[1] = μ_0
     σs[1] = σ_0
-	Q = 1.0
 	
     for t in 2:T
         μ_pred = A * μs[t-1]
@@ -667,12 +693,12 @@ end
 
 # ╔═╡ 494373d7-3a8c-4717-bc9b-6e57267b3a58
 let
-	xs_ffbs = sample_x_ffbs(y, 1.0, 1.0, 0.2, 0, 1.0)
+	xs_ffbs = sample_x_ffbs(y, 1.0, 1.0, 1.0, 0.2, 0, 1.0)
 	error_metrics(x_true, xs_ffbs)
 end
 
 # ╔═╡ 427fcde3-c719-4504-89c3-dfc0491677f9
-function gibbs_local(y, num_iterations=2000, burn_in=200, thinning=5)
+function gibbs_uni_dlm(y, num_iterations=2000, burn_in=200, thinning=5)
 	T = length(y)
 	μ_0 = 0.0  # Prior mean for the states
 	λ_0 = 1.0  # Prior precision for the states
@@ -696,7 +722,7 @@ function gibbs_local(y, num_iterations=2000, burn_in=200, thinning=5)
 	# Gibbs sampler
 	for i in 1:num_iterations+burn_in
 	    # Update the states
-		x = sample_x_ffbs(y, a, c, r, μ_0, 1/λ_0)
+		x = sample_x_ffbs(y, a, c, q, r, μ_0, 1/λ_0)
 	
 	    # Update the state transition factor
 	    a = sample_a(x, q)
@@ -723,7 +749,7 @@ end
 # ╔═╡ bf512fa9-3501-47d5-8cad-30f30dd37186
 begin
 	Random.seed!(888)
-	@time x_ss, a_ss, c_ss, r_ss = gibbs_local(y, 6000, 500, 3)
+	@time x_ss, a_ss, c_ss, r_ss = gibbs_uni_dlm(y, 6000, 500, 3)
 
 	plot(a_ss)
 	plot!(c_ss)
@@ -750,9 +776,89 @@ but c estimates not very stable (sometimes negative 1?), and Gibbs tend to requi
 md"""
 # TO-DO:
 - Beale treatment v.s DLM with R treatment
-- Add Inference step for Q, fix A, C to known
+- Add Inference step for Q, fix A, C as known constants
 - Compare FFBS sampler and single-move sampler
 """
+
+# ╔═╡ 8dbf29db-cefd-4bd4-95e7-a302c7aa858a
+md"""
+## Gibbs sampling of local level model
+`DLM with R` _4.4.3_
+
+Given gamma prior on the precision (inverse variance) with prior parameter α, β
+"""
+
+# ╔═╡ 1075e6dc-be4b-4594-838e-60d44100c92d
+function sample_q(xs, a, α_q, β_q, x_0)
+	T = length(xs)
+    α_post = α_q + T / 2
+    β_post = β_q + sum((xs[2:T] .- (a .* xs[1:T-1])).^2) /2 
+	
+	β_post += (xs[1] - a * x_0)^2 /2
+	λ_q = rand(Gamma(α_post, 1 / β_post))
+	
+	return 1/λ_q # inverse precision is variance
+end
+
+# ╔═╡ ce1f3eed-13ab-4fa7-aafc-a97954dd818b
+let
+	sample_q(x_true, 1.0, 0.01, 0.01, 0.0)
+end
+
+# ╔═╡ 7e4fa23d-b05b-4f77-959e-29577e349333
+function gibbs_ll(y, a, c, mcmc=3000, burn_in=300, thinning=1)
+	T = length(y)
+	μ_0 = 0.0  # Prior mean for the states
+	λ_0 = 1.0  # Prior precision for the states
+	
+	α = 0.01  # Shape parameter for Inverse-Gamma prior
+	β = 0.01  # Scale parameter for Inverse-Gamma prior
+	
+	# Initial values for the parameters
+	r = rand(InverseGamma(α, β))
+	q = rand(InverseGamma(α, β))
+
+	n_samples = Int.(mcmc/thinning)
+	# Store the samples
+	samples_x = zeros(n_samples, T)
+	samples_q = zeros(n_samples)
+	samples_r = zeros(n_samples)
+	
+	# Gibbs sampler
+	for i in 1:mcmc+burn_in
+	    # Update the states
+		x = sample_x_ffbs(y, a, c, q, r, μ_0, 1/λ_0)
+		
+		# Update the system noise
+		q = sample_q(x, a, α, β, μ_0)
+		
+	    # Update the observation noise
+		r = sample_r(x, y, c, α, β)
+	
+	    # Store the samples
+		if i > burn_in && mod(i - burn_in, thinning) == 0
+			index = div(i - burn_in, thinning)
+		    samples_x[index, :] = x
+			samples_q[index] = q
+		    samples_r[index] = r
+		end
+	end
+
+	return samples_x, samples_q, samples_r
+end
+
+# ╔═╡ d57adc7b-fcd5-468b-aa50-919d884a916a
+let
+	Random.seed!(123)
+
+	# fix a = c = 1.0 for local level model
+	@time x_ss, q_ss, r_ss = gibbs_ll(y, 1.0, 1.0)
+
+	println("mean system noise: ", mean(q_ss))
+	println("mean observation noise: ", mean(r_ss))
+	plot(q_ss)
+	plot!(r_ss)
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -2759,31 +2865,31 @@ version = "1.4.1+0"
 # ╟─d1ab75c8-5d7e-4d42-9b54-c48cd0e61e90
 # ╠═f108fc16-b3c2-4a89-87e8-f735a1d04301
 # ╟─05be6f30-1936-40b1-83cc-743f8704610e
-# ╠═99198a4a-6322-4c0f-be9f-24c9bb86f2ca
+# ╟─99198a4a-6322-4c0f-be9f-24c9bb86f2ca
 # ╠═d7a5cb1a-c768-4aed-beec-eaad552735b6
 # ╟─cd96215e-5ec9-4031-b2e8-39d76b5e5bee
-# ╠═7db0f68b-f27f-4529-961a-7b9a9c1b7500
+# ╟─7db0f68b-f27f-4529-961a-7b9a9c1b7500
 # ╠═a78d2f18-af12-4285-944f-4297a69f2369
-# ╠═3f882bc0-b27f-48c2-997e-3bfa8fda421e
+# ╟─3f882bc0-b27f-48c2-997e-3bfa8fda421e
 # ╟─720ce158-f0b6-4165-a742-938c83146cff
 # ╠═2b65eb50-0ff3-441f-9c0e-964bf10d29bc
 # ╠═2bae2d86-2a3f-446c-aa34-7582b383d2b2
 # ╠═68564ae6-2540-4a6c-aed5-0794d413e6ef
-# ╠═cc5e1e9a-9087-437a-b832-1918de6d4c48
+# ╟─cc5e1e9a-9087-437a-b832-1918de6d4c48
 # ╟─5d9cf8b5-82f4-496f-ad7d-44b83a6ef157
 # ╠═5758e9c4-4c8c-4573-80a7-8270e8b428e4
 # ╠═2969a12c-8fe1-4b76-bf0e-b7be6425eb21
 # ╠═738519e3-c469-4def-ae9d-dbdd92563120
-# ╠═668197a9-91e4-461d-8552-a20a34b6eb3d
-# ╠═363fbc94-afa6-4a85-9ac5-4d253b21df69
+# ╟─668197a9-91e4-461d-8552-a20a34b6eb3d
+# ╟─363fbc94-afa6-4a85-9ac5-4d253b21df69
 # ╠═c3669042-bb56-423e-a077-b0cb82ce74a3
-# ╟─fd2784db-87b3-4c2e-9d4d-7bbca8ec3aba
-# ╠═e93f8a5f-fd02-4894-aba5-7cabb9dc76b3
 # ╠═40b0773b-fc7d-4b28-9684-7e4e36ee81c9
+# ╟─fd2784db-87b3-4c2e-9d4d-7bbca8ec3aba
+# ╟─0e431880-8449-44bc-8996-2c50439b0eac
+# ╟─e93f8a5f-fd02-4894-aba5-7cabb9dc76b3
 # ╟─418b6277-da40-4232-ab0b-a07c1dc0d5e9
 # ╠═69f8a317-7d62-4a81-9c64-7d85ee43ee07
 # ╠═5b2a3a4b-0a0d-4eb6-9ea1-c794a0911b4c
-# ╟─17c95e9b-958e-4b85-a146-686868d7760c
 # ╟─06b9d658-7d19-448d-8c02-6fabc5d4a551
 # ╠═1ba53bec-658c-4e07-8728-f9799a5514e8
 # ╟─5cc8a85a-2542-4b69-b79a-736b87a5a8c4
@@ -2812,5 +2918,10 @@ version = "1.4.1+0"
 # ╠═737782c3-17a7-4684-b912-8ac392422941
 # ╟─b07bcd90-d9c0-4a71-886c-756cb03b9bc1
 # ╟─1c0ed9fb-c56a-4aab-a765-49c394123a42
+# ╟─8dbf29db-cefd-4bd4-95e7-a302c7aa858a
+# ╠═1075e6dc-be4b-4594-838e-60d44100c92d
+# ╠═ce1f3eed-13ab-4fa7-aafc-a97954dd818b
+# ╠═7e4fa23d-b05b-4f77-959e-29577e349333
+# ╠═d57adc7b-fcd5-468b-aa50-919d884a916a
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

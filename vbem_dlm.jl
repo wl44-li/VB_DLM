@@ -606,12 +606,6 @@ md"""
 ### Hidden state x inference (variational)
 """
 
-# ╔═╡ f141544a-35ea-46f7-a0bb-5360ba5ee3b8
-# ╠═╡ disabled = true
-#=╠═╡
-y, ys
-  ╠═╡ =#
-
 # ╔═╡ 7b185270-58d5-4406-8768-103d798fa326
 md"""
 ### With Hyperparameter learning
@@ -1301,26 +1295,6 @@ let
 	hss = HSS(W_A, S_A, W_C, S_C)
 	S_C
 end
-
-# ╔═╡ 14a209dd-be4c-47f0-a343-1cfb97b7d04a
-# ╠═╡ disabled = true
-#=╠═╡
-let
-	T = size(y, 2)
-	p1 = plot(1:T, x_true[1, :], label="True xs[1]", linewidth=2)
-	plot!(1:T, x_hat[1, :], label="Filtered xs[1]", linewidth=2, linestyle=:dash)
-end
-  ╠═╡ =#
-
-# ╔═╡ 5c221210-e1df-4015-b959-6d330b47be29
-# ╠═╡ disabled = true
-#=╠═╡
-let
-	T = size(y, 2)
-	p2 = plot(1:T, x_true[2, :], label="True xs[2]", linewidth=2)
-	plot!(1:T, x_hat[2, :], label="Filtered xs[2]", linewidth=2, linestyle=:dash)
-end
-  ╠═╡ =#
 
 # ╔═╡ 7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
 let

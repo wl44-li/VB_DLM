@@ -542,6 +542,8 @@ md"""
 """
 
 # ╔═╡ da1598b0-9920-427a-89cd-3af37b67380e
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	@model function DLM_Turing(y)
 	    T = length(y)
@@ -571,9 +573,12 @@ begin
 	chain = sample(model, NUTS(), 1000)
 	chain = chain[100:end]
 end;
+  ╠═╡ =#
 
 # ╔═╡ 3e4e0ceb-974c-4bdc-8e25-21b24a25d0b8
+#=╠═╡
 describe(chain)
+  ╠═╡ =#
 
 # ╔═╡ 80e4b5da-9d6e-46cd-9f84-59fa86c201b1
 md"""
@@ -854,8 +859,12 @@ let
 	# fix a = c = 1.0 for local level model
 	@time x_ss, q_ss, r_ss = gibbs_ll(y, 1.0, 1.0)
 
-	println("mean system noise: ", mean(q_ss))
-	println("mean observation noise: ", mean(r_ss))
+	println("mean system noise (q): ", mean(q_ss))
+	println("mean observation noise (r): ", mean(r_ss))
+
+	x_m = mean(x_ss, dims=1)[1,:]
+	println("average x sample error ", error_metrics(x_true, x_ss[end,: ]))
+	println("end x sample error" , error_metrics(x_true, x_m))
 	plot(q_ss)
 	plot!(r_ss)
 end
@@ -898,6 +907,11 @@ $$τ_q \sim \mathcal Gamma(\alpha, \beta)$$
 # ╔═╡ bb4de2cf-e4b6-4788-9f8b-ff5fd2ca2570
 md"""
 ### VB-M 
+
+#### Updating $q(τ_r, τ_q)$
+
+$\ln q(τ_r, τ_q) =  \langle \ln p(τ_r, τ_q, x_{0:T}, y_{1:T}) \rangle_{\hat q(x_{0:T})} + c$
+
 Given that we have assumed $τ_r$ and $τ_q$ to follow Gamma distributions in the variational family, their variational posteriors $q(τ_r)$ and $q(τ_q)$ will also be Gamma distributions. The parameters of these Gamma distributions are updated in the M-step:
 
 $\alpha_r' = \alpha + T/2$
@@ -929,7 +943,6 @@ $w_a = \sum_{t=1}^{T} E_q[x_{t-1}^2] = \sum_{t=1}^{T} (\sigma_{t-1}^2 + \mu_{t-1
 $s_c = \sum_{t=1}^{T} y_t E_q[x_t] = \sum_{t=1}^{T} \mu_t y_t$
 $s_a = \sum_{t=1}^{T} E_q[x_{t-1} x_t] = \sum_{t=1}^{T} \sigma_{t-1, t}^2 + \mu_{t-1}\mu_t$
 
-
 """
 
 # ╔═╡ 981608f2-57f6-44f1-95ed-82e8cca04718
@@ -953,16 +966,16 @@ begin
 end
 
 # ╔═╡ 241e587f-b3dd-4bf8-83d0-1459c389fcc0
-function vb_m_ll(hss::HSS_ll, priors::Priors_ll)
-    T = length(hss.s_c)
+function vb_m_ll(y, hss::HSS_ll, priors::Priors_ll)
+    T = length(y)
 
     # Update parameters for τ_r
     α_r_p = priors.α_r + T / 2
-    β_r_p = priors.β_r + 0.5 * (hss.w_c - 2 * hss.s_c + T * priors.μ_0^2 + T * priors.σ_0)
+    β_r_p = priors.β_r + 0.5 * (y' * y - 2 * hss.s_c + hss.w_c)
 
     # Update parameters for τ_q
-    α_q_p = priors.α_q + (T - 1) / 2
-    β_q_p = priors.β_q + 0.5 * (hss.w_a - 2 * hss.s_a + (T - 1) * priors.μ_0^2 + (T - 1) * priors.σ_0)
+    α_q_p = priors.α_q + T / 2
+    β_q_p = priors.β_q + 0.5 * (hss.w_a + hss.w_c - 2 * hss.s_a)
 
     # Compute expectations
     E_τ_r = α_r_p / β_r_p
@@ -971,9 +984,36 @@ function vb_m_ll(hss::HSS_ll, priors::Priors_ll)
     return E_τ_r, E_τ_q	
 end
 
+# ╔═╡ 168d4dbd-f0dd-433b-bb4a-e3bb918fb184
+md"""
+Test m-step
+"""
+
+# ╔═╡ 2308aa4c-bb99-4546-a108-9fa88fca130b
+let
+	T = length(y)
+	w_a = sum(x_true[t-1] * x_true[t-1] for t in 2:T)
+	s_a = sum(x_true[t-1] * x_true[t] for t in 2:T)
+	w_c = sum(x_true[t] * x_true[t] for t in 1:T)
+	s_c = sum(x_true[t] * y[t] for t in 1:T)
+
+	hss = HSS_ll(w_c, w_a, s_c, s_a)
+
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+
+	# should recover values of A, C, R close to ground truth
+	exp_np = vb_m_ll(y, hss, hpp)
+
+	1 ./ exp_np # r = 0.2, q = 1.0
+end
+
 # ╔═╡ 1adc874e-e024-464a-80d5-5ded04f62f24
 md"""
 ### VB-E
+#### Updating $q(x_{0:T})$
+
+$\ln q(x_{0:T}) =  \langle \ln p(r, q, x_{0:T}, y_{1:T}) \rangle_{\hat q(r, q)} + c$
+
 In the VB-E step, we compute the variational distribution $q(x_{0:T})$ for the latent states. This is done using the forward-backward algorithm, which is a dynamic programming algorithm 
 
 We need expected parameters computed from vb-m step: 
@@ -1020,51 +1060,56 @@ $$\sigma_{t-1,t}^2 = J_{t-1} \sigma_t^{s2}$$
 """
 
 # ╔═╡ d359f3aa-b238-420f-99d2-52f85ce9ff82
-function forward_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
+function forward_ll(y, E_τ_r, priors::Priors_ll)
     T = length(y)
-    μ_f = zeros(T)
-    σ_f2 = zeros(T)
-    μ_f[1] = priors.μ_0
-    σ_f2[1] = priors.σ_0
-    for t = 2:T
-        K_t = σ_f2[t-1] / (σ_f2[t-1] + 1/E_τ_r)
-        μ_f[t] = μ_f[t-1] + K_t * (y[t] - μ_f[t-1])
-        σ_f2[t] = (1 - K_t) * σ_f2[t-1]
+    μs_f = zeros(T)
+    σs_f2 = zeros(T)
+    μs_f[1] = priors.μ_0
+    σs_f2[1] = priors.σ_0
+	
+    for t in 2:T
+        K_t = σs_f2[t-1] / (σs_f2[t-1] + 1/E_τ_r)
+        μs_f[t] = μs_f[t-1] + K_t * (y[t] - μs_f[t-1])
+        σs_f2[t] = (1 - K_t) * σ_f2[t-1]
     end
-    return μ_f, σ_f2
+    return μs_f, σs_f2
 end
 
 # ╔═╡ c29b63f3-0d32-46ad-99a4-3cae4a3f6181
-function backward_ll(μ_f, σ_f2, E_τ_q)
-    T = length(μ_f)
-    μ_s = copy(μ_f)
-    σ_s2 = copy(σ_f2)
-    σ_s2_cross = zeros(T)
-    for t = T-1:-1:1
-        J_t = σ_f2[t] / (σ_f2[t] + 1/E_τ_q)
-        μ_s[t] = μ_f[t] + J_t * (μ_s[t+1] - μ_f[t])
-        σ_s2[t] = σ_f2[t] + J_t^2 * (σ_s2[t+1] - σ_f2[t])
-        σ_s2_cross[t] = J_t * σ_s2[t+1]
+function backward_ll(μs_f, σs_f2, E_τ_q)
+    T = length(μs_f)
+    μs_s = zeros(T)
+    σs_s2 = zeros(T)
+    σs_s2_cross = zeros(T-1)
+	
+	μs_s[T] = μs_f[T]
+	σs_s2[T] = σs_f2[T]
+	
+    for t in T-1:-1:1
+        J_t = σs_f2[t] / (σs_f2[t] + 1/E_τ_q)
+        μs_s[t] = μs_f[t] + J_t * (μs_s[t+1] - μs_f[t])
+        σs_s2[t] = σs_f2[t] + J_t^2 * (σs_s2[t+1] - σs_f2[t])
+        σs_s2_cross[t] = J_t * σs_s2[t+1]
     end
-    return μ_s, σ_s2, σ_s2_cross
+    return μs_s, σs_s2, σs_s2_cross
 end
 
 # ╔═╡ bee6469f-13a1-4bd8-8f14-f01e8405a949
 function vb_e_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
     # Forward pass
-    μ_f, σ_f2 = forward(y, E_τ_r, E_τ_q, priors)
+    μs_f, σs_f2 = forward_ll(y, E_τ_r, priors)
 
     # Backward pass
-    μ_s, σ_s2, σ_s2_cross = backward(μ_f, σ_f2, E_τ_q)
+    μs_s, σs_s2, σs_s2_cross = backward_ll(μs_f, σs_f2, E_τ_q)
 
     # Compute the sufficient statistics
-    w_c = sum(σ_s2 .+ μ_s.^2)
-    w_a = sum(σ_s2[1:end-1] .+ μ_s[1:end-1].^2)
-    s_c = sum(y .* μ_s)
-    s_a = sum(σ_s2_cross[1:end-1] .+ μ_s[1:end-1] .* μ_s[2:end])
+    w_c = sum(σs_s2 .+ μs_s.^2)
+    w_a = sum(σs_s2[1:end-1] .+ μs_s[1:end-1].^2)
+    s_c = sum(y .* μs_s)
+    s_a = sum(σs_s2_cross[1:end-1] .+ μ_s[1:end-1] .* μ_s[2:end])
 
     # Return the sufficient statistics in a HSS struct
-    return HSS(w_c, w_a, s_c, s_a)
+    return HSS_ll(w_c, w_a, s_c, s_a)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -3075,7 +3120,7 @@ version = "1.4.1+0"
 # ╟─99198a4a-6322-4c0f-be9f-24c9bb86f2ca
 # ╠═d7a5cb1a-c768-4aed-beec-eaad552735b6
 # ╟─cd96215e-5ec9-4031-b2e8-39d76b5e5bee
-# ╟─7db0f68b-f27f-4529-961a-7b9a9c1b7500
+# ╠═7db0f68b-f27f-4529-961a-7b9a9c1b7500
 # ╠═a78d2f18-af12-4285-944f-4297a69f2369
 # ╟─3f882bc0-b27f-48c2-997e-3bfa8fda421e
 # ╟─720ce158-f0b6-4165-a742-938c83146cff
@@ -3102,7 +3147,7 @@ version = "1.4.1+0"
 # ╟─5cc8a85a-2542-4b69-b79a-736b87a5a8c4
 # ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
 # ╠═4cc367d1-37a1-4712-a63e-8826b5646a1b
-# ╠═da1598b0-9920-427a-89cd-3af37b67380e
+# ╟─da1598b0-9920-427a-89cd-3af37b67380e
 # ╠═3e4e0ceb-974c-4bdc-8e25-21b24a25d0b8
 # ╟─80e4b5da-9d6e-46cd-9f84-59fa86c201b1
 # ╟─29489270-20ee-4835-8451-db12fe46cf4c
@@ -3135,6 +3180,8 @@ version = "1.4.1+0"
 # ╟─bb4de2cf-e4b6-4788-9f8b-ff5fd2ca2570
 # ╠═981608f2-57f6-44f1-95ed-82e8cca04718
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
+# ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184
+# ╠═2308aa4c-bb99-4546-a108-9fa88fca130b
 # ╟─1adc874e-e024-464a-80d5-5ded04f62f24
 # ╟─ece11b32-cc61-447b-bbcf-018829360b73
 # ╟─aa5caae7-638d-441f-a306-5442a5c8f75f

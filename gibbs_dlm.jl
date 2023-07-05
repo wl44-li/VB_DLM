@@ -15,6 +15,9 @@ begin
 	using DataFrames
 end
 
+# ╔═╡ 72f82a78-828a-42f2-9b63-9950af4c7be3
+using PDMats
+
 # ╔═╡ 6c0ecec8-afdc-4072-9dac-4658af3706d5
 TableOfContents()
 
@@ -66,8 +69,8 @@ begin
 	A = [0.8 -0.1; 0.3 0.6]
 	C = [1.0 0.0; 0.0 1.0]
 	Q = Diagonal([1.0, 1.0])
-	R = Diagonal([0.5, 0.5])
-	T = 500
+	R = Diagonal([0.2, 0.2])
+	T = 1000
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
@@ -260,7 +263,7 @@ Test FFBS with ground-truth y, A, C, R
 let
 	xss = zeros(2, T, 100)
 	for i in 1:100
-		x_ffbs = sample_x_ffbs(y, A, C, R, Matrix{Float64}(I, 2, 2), zeros(2), Matrix{Float64}(I, 2, 2))
+		x_ffbs = sample_x_ffbs(y, A, C, R, Q, zeros(2), Matrix{Float64}(I, 2, 2))
 		xss[:, :, i] = x_ffbs
 	end
 
@@ -293,7 +296,7 @@ Compare with single-move sampler
 
 # ╔═╡ 79fc7c88-d31a-4753-81bc-9092576eda35
 md"""
-DEBUG? single-move X sampler gave very poor learning compared to FFBS based state sampler 
+DEBUG? single-move X sampler gave very poor learning in the Gibbs routine
 """
 
 # ╔═╡ 0a9c1721-6901-4dc1-a93d-8d8e18f7f375
@@ -403,7 +406,8 @@ $\begin{align}
 p(x_{0: T} | y_{1:T}) &= \prod_{t=0}^T p(x_t| x_{t+1:T}, y_{1:T}) \\
 &= \prod_{t=0}^T p(x_t| x_{t+1}, y_{1:T})
 \end{align}$
-TO-DO: Numerical stability?
+
+Numerical stability? - Symmetric() on co-variance matrices
 """
 
 # ╔═╡ a9621810-e0cb-4925-8b6a-726f78d13510
@@ -464,7 +468,7 @@ let
 
 	xs_m = mean(xss, dims=3)[:, :, 1]
 	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
-	reshaped_samples = reshape(xss, 3000, 2*500, 1)
+	reshaped_samples = reshape(xss, 3000, 2*1000, 1)
 	chains = Chains(reshaped_samples)
 	
 	ess = ess(chains)
@@ -502,27 +506,27 @@ $$p(x_i| y_i, x_{i-1}, x_{i+1}) ∝ p(x_i| x_{i-1}) p(x_{i+1}| x_i) p(y_i|x_i)$$
 
 # ╔═╡ 3a8ceb49-403e-424f-bedb-49f5b01c8d7a
 function sample_x_1(y_1, x_2, A, C, Q, R)
-    Sigma_x_1_inv = C' * inv(R) * C + A' * inv(Q) * A
-    mu_x_1 = inv(Sigma_x_1_inv) * (C' * inv(R) * y_1 + A' * inv(Q) * x_2)
-    Sigma_x_1 = inv(Sigma_x_1_inv)
-    return rand(MvNormal(mu_x_1, Symmetric(Sigma_x_1)))
+    Σ_x_1_inv = C' * inv(R) * C + A' * inv(Q) * A
+    μ_x_1 = inv(Σ_x_1_inv) * (C' * inv(R) * y_1 + A' * inv(Q) * x_2)
+    Σ_x_1 = inv(Σ_x_1_inv)
+    return rand(MvNormal(μ_x_1, Symmetric(Σ_x_1)))
 end
 
 # ╔═╡ 0a609b97-7859-4053-900d-c1be5d61e68c
 function sample_x_T(y_T, x_T_1, A, C, Q, R)
-    Sigma_x_T_inv = C' * inv(R) * C + inv(Q) * A
-    mu_x_T = inv(Sigma_x_T_inv) * (C' * inv(R) * y_T + inv(Q) * A * x_T_1)
-    Sigma_x_T = inv(Sigma_x_T_inv)
+    Σ_x_T_inv = C' * inv(R) * C + inv(Q) * A
+    μ_x_T = inv(Σ_x_T_inv) * (C' * inv(R) * y_T + inv(Q) * A * x_T_1)
+    Σ_x_T = inv(Σ_x_T_inv)
 
-    return rand(MvNormal(mu_x_T, Symmetric(Sigma_x_T)))
+    return rand(MvNormal(μ_x_T, Symmetric(Σ_x_T)))
 end
 
 # ╔═╡ c9f6fad7-518c-442b-a385-e3fa74431cb1
 function sample_x_i(y_i, x_i_minus_1, x_i_plus_1, A, C, Q, R)
-    Sigma_x_i_inv = C' * inv(R) * C + inv(Q) * A + A' * inv(Q)
-    mu_x_i = inv(Sigma_x_i_inv) * (C' * inv(R) * y_i + inv(Q) * A * x_i_minus_1 + A' * inv(Q) * x_i_plus_1)
-    Sigma_x_i = inv(Sigma_x_i_inv)
-    return rand(MvNormal(mu_x_i, Symmetric(Sigma_x_i)))
+    Σ_x_i_inv = C' * inv(R) * C + inv(Q) * A + A' * inv(Q)
+    μ_x_i = inv(Σ_x_i_inv) * (C' * inv(R) * y_i + inv(Q) * A * x_i_minus_1 + A' * inv(Q) * x_i_plus_1)
+    Σ_x_i = inv(Σ_x_i_inv)
+    return rand(MvNormal(μ_x_i, Symmetric(Σ_x_i)))
 end
 
 # ╔═╡ a8971bb3-cf38-4445-b66e-65ff35ca13ca
@@ -624,7 +628,7 @@ describe(chn_R)
 let
 	xs_m = mean(X_samples, dims=3)[:, :, 1]
 	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
-	reshaped_samples = reshape(X_samples, 3000, 2*500, 1)
+	reshaped_samples = reshape(X_samples, 3000, 2*1000, 1)
 	xss_chains = Chains(reshaped_samples)
 	
 	ess = ess(xss_chains)
@@ -652,7 +656,7 @@ let
 	chn_R = Chains(reshape(R_samples, 4, 3000)');
 	xs_m = mean(X_samples, dims=3)[:, :, 1]
 	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
-	reshaped_samples = reshape(X_samples, 3000, 2*500, 1)
+	reshaped_samples = reshape(X_samples, 3000, 2*1000, 1)
 	xss_chains = Chains(reshaped_samples)
 	
 	ess = ess(xss_chains)
@@ -678,17 +682,13 @@ let
 	xs_m = mean(xss, dims=3)[:, :, 1]
 	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
 
-	reshaped_samples = reshape(xss, 3000, 2*500, 1)
+	reshaped_samples = reshape(xss, 3000, 2*1000, 1)
 	chains = Chains(reshaped_samples)
 
 	ess = ess(chains)
 	rhat = rhat(chains)
-
-	# Convert to DataFrame
 	ess_df = DataFrame(ess)
 	rhat_df = DataFrame(rhat)
-	
-	# Get the mean ESS and Rhat across all parameters
 	mean_ess = mean(skipmissing(ess_df.ess))
 	mean_rhat = mean(skipmissing(rhat_df.rhat))
 	
@@ -699,7 +699,7 @@ end
 
 # ╔═╡ b4c11a46-438d-4653-89e7-bc2b99e84f48
 md"""
-Multi-variate DLM with unknown $R, Q$
+## Multi-variate DLM with unknown $R, Q$
 
 Assume the $P \times P$ observation precision matrix $Φ_0 = R^{-1}$ is Wishart distributed with prior:
 
@@ -720,9 +720,10 @@ function sample_R_(y, x, C, v_0, S_0)
 	SS_y = sum([residuals[t] * residuals[t]' for t in 1:T])
 	
     scale_posterior = S_0 + SS_y .* 0.5
-    df_posterior = v_0 + 0.5 * T
+    v_p = v_0 + 0.5 * T
 
-	R⁻¹ = rand(Wishart(df_posterior, inv(scale_posterior)))
+	S_p = PDMat(Symmetric(inv(scale_posterior)))
+	R⁻¹ = rand(Wishart(v_p, S_p))
     return inv(R⁻¹)
 end
 
@@ -753,9 +754,9 @@ function sample_Q_(x, A, v_1, S_1, x_0)
     scale_posterior = S_1 + SS_1 .* 0.5
 
 	scale_posterior += (x[:, 1] - A * x_0) * (x[:, 1] - A * x_0)' .* 0.5
-    df_posterior = v_1 + 0.5 * T
+    v_p = v_1 + 0.5 * T
 
-	Q⁻¹ = rand(Wishart(df_posterior, inv(scale_posterior)))
+	Q⁻¹ = rand(Wishart(v_p, inv(scale_posterior)))
     return inv(Q⁻¹)
 end
 
@@ -769,6 +770,188 @@ md"""
 ## Gibbs sampling of Unknown Co-variances
 """
 
+# ╔═╡ f0dc526c-b221-4652-a877-58a959d97019
+function gibbs_dlm_cov(y, A, C, mcmc=3000, burn_in=300, thinning=1)
+	P, T = size(y)
+	K = size(A, 2)
+	
+	μ_0 = zeros(K)  
+	λ_0 = Matrix{Float64}(I, K, K)
+	
+	v_0 = P + 1.0 
+	S_0 = Matrix{Float64}(0.01 * I, P, P)
+
+	v_1 = K + 1.0
+	S_1 = Matrix{Float64}(0.01 * I, K, K)
+	
+	# Initial values for the parameters
+	R⁻¹ = rand(Wishart(v_0, inv(S_0)))
+	Q⁻¹ = rand(Wishart(v_1, inv(S_1)))
+
+	R, Q = inv(R⁻¹), inv(Q⁻¹)
+	
+	n_samples = Int.(mcmc/thinning)
+	# Store the samples
+	samples_X = zeros(n_samples, K, T)
+	samples_Q = zeros(n_samples, K, K)
+	samples_R = zeros(n_samples, P, P)
+	
+	# Gibbs sampler
+	for i in 1:mcmc+burn_in
+	    # Update the states
+		x = sample_x_ffbs(y, A, C, R, Q, μ_0, λ_0)
+		
+		# Update the system noise
+		Q = sample_Q_(x, A, v_1, S_1, μ_0)
+		
+	    # Update the observation noise
+		R = sample_R_(y, x, C, v_0, S_0)
+	
+	    # Store the samples
+		if i > burn_in && mod(i - burn_in, thinning) == 0
+			index = div(i - burn_in, thinning)
+		    samples_X[index, :, :] = x
+			samples_Q[index, :, :] = Q
+		    samples_R[index, :, :] = R
+		end
+	end
+
+	return samples_X, samples_Q, samples_R
+end
+
+# ╔═╡ ad6d0997-43c1-42f3-b997-765c594794b4
+begin
+	Random.seed!(99)
+	Xs_samples, Qs_samples, Rs_samples = gibbs_dlm_cov(y, A, C, 3000, 1000, 1)
+end
+
+# ╔═╡ f0551220-d7c1-4312-b6c5-e0c432889494
+begin
+	Q_chain = Chains(reshape(Qs_samples, 3000, 4))
+	R_chain = Chains(reshape(Rs_samples, 3000, 4))
+	summarystats(Q_chain), summarystats(R_chain)
+end
+
+# ╔═╡ 0b4d5ac8-5a7b-4363-9dbe-2edc517708a0
+md"""
+Q, R sample means
+"""
+
+# ╔═╡ b337a706-cbbf-4acd-8a8f-26fdbc137e8e
+begin
+	Q_m = mean(Qs_samples, dims=1)[1, :, :]
+
+	R_m = mean(Rs_samples, dims=1)[1, :, :]
+
+	Q_m, R_m
+end
+
+# ╔═╡ ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
+begin
+	xs_m = mean(Xs_samples, dims=1)[1, :, :]
+	println("MSE, MAD of MCMC X mean: ", error_metrics(x_true, xs_m))
+	println("MSE, MAD of MCMC X end: ", error_metrics(x_true, Xs_samples[end, :, :]))
+
+	X_chain = Chains(reshape(Xs_samples, 3000, 2000))
+	x_ess = ess(X_chain)
+	x_rhat = rhat(X_chain)
+	# Convert to DataFrame
+	ess_df = DataFrame(x_ess)
+	rhat_df = DataFrame(x_rhat)
+	
+	# Get the mean ESS and Rhat across all parameters
+	mean_ess = mean(skipmissing(ess_df.ess))
+	mean_rhat = mean(skipmissing(rhat_df.rhat))
+	
+	println("Mean ESS: $mean_ess")
+	println("Mean Rhat: $mean_rhat")
+end
+
+# ╔═╡ 0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
+md"""
+Compare with single-move for sampling latent states
+"""
+
+# ╔═╡ 4baa0604-712a-448f-b3ee-56543bfc0d71
+function gibbs_smx(y, A, C, mcmc=3000, burn_in=300, thinning=1)
+	P, T = size(y)
+	K = size(A, 2)
+	
+	μ_0 = zeros(K)  
+	λ_0 = Matrix{Float64}(I, K, K)
+	
+	v_0 = P + 1.0 
+	S_0 = Matrix{Float64}(0.01 * I, P, P)
+
+	v_1 = K + 1.0
+	S_1 = Matrix{Float64}(0.01 * I, K, K)
+	
+	# Initial values for the parameters
+	R⁻¹ = rand(Wishart(v_0, inv(S_0)))
+	Q⁻¹ = rand(Wishart(v_1, inv(S_1)))
+
+	R, Q = inv(R⁻¹), inv(Q⁻¹)
+	
+	n_samples = Int.(mcmc/thinning)
+	# Store the samples
+	samples_X = zeros(n_samples, K, T)
+	samples_Q = zeros(n_samples, K, K)
+	samples_R = zeros(n_samples, P, P)
+	
+	# Gibbs sampler
+	for i in 1:mcmc+burn_in
+	    # Update the states
+		x = single_move_sampler(y, A, C, Q, R, 1)[:, :, 1]
+		
+		# Update the system noise
+		Q = sample_Q_(x, A, v_1, S_1, μ_0)
+		
+	    # Update the observation noise
+		R = sample_R_(y, x, C, v_0, S_0)
+	
+	    # Store the samples
+		if i > burn_in && mod(i - burn_in, thinning) == 0
+			index = div(i - burn_in, thinning)
+		    samples_X[index, :, :] = x
+			samples_Q[index, :, :] = Q
+		    samples_R[index, :, :] = R
+		end
+	end
+	return samples_X, samples_Q, samples_R
+end
+
+# ╔═╡ de7046da-e361-41d0-b2d7-12439b571795
+let
+	Random.seed!(99)
+	Xs_samples, Qs_samples, Rs_samples = gibbs_smx(y, A, C, 3000, 1000, 1)
+
+	Q_m = mean(Qs_samples, dims=1)[1, :, :]
+	R_m = mean(Rs_samples, dims=1)[1, :, :]
+
+	xs_m = mean(Xs_samples, dims=1)[1, :, :]
+	println("MSE, MAD of MCMC X mean: ", error_metrics(x_true, xs_m))
+	println("MSE, MAD of MCMC X end: ", error_metrics(x_true, Xs_samples[end, :, :]))
+	X_chain = Chains(reshape(Xs_samples, 3000, 2000))
+	x_ess = ess(X_chain)
+	x_rhat = rhat(X_chain)
+	# Convert to DataFrame
+	ess_df = DataFrame(x_ess)
+	rhat_df = DataFrame(x_rhat)
+	
+	# Get the mean ESS and Rhat across all parameters
+	mean_ess = mean(skipmissing(ess_df.ess))
+	mean_rhat = mean(skipmissing(rhat_df.rhat))
+	
+	println("Mean ESS: $mean_ess")
+	println("Mean Rhat: $mean_rhat")
+	Q_m, R_m
+end
+
+# ╔═╡ 05828da6-bc3c-45de-b059-310159038d5d
+md"""
+similar to inference with unknown A, C, R, gibbs via single-move learning is poor compared to ffbs
+"""
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
@@ -776,6 +959,7 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MCMCChains = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
+PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -786,6 +970,7 @@ StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 DataFrames = "~1.5.0"
 Distributions = "~0.25.96"
 MCMCChains = "~6.0.3"
+PDMats = "~0.11.17"
 Plots = "~1.38.16"
 PlutoUI = "~0.7.51"
 StatsFuns = "~1.3.0"
@@ -797,7 +982,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.1"
 manifest_format = "2.0"
-project_hash = "11a85631ff3d4c8862c0e5fe9509ccacbdee7a61"
+project_hash = "950c63b705c2e8456054bba0f15fcf9c206108c8"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -2282,23 +2467,23 @@ version = "1.4.1+0"
 # ╟─6c0ecec8-afdc-4072-9dac-4658af3706d5
 # ╟─73e449fb-81d2-4a9e-a89d-38909093863b
 # ╟─e1f22c73-dee8-4507-af03-3d2d0ceb9011
-# ╠═544ac3d9-a2b8-4950-a501-40c14c84b2d8
+# ╟─544ac3d9-a2b8-4950-a501-40c14c84b2d8
 # ╟─46d87386-7c36-486f-ba59-15d71e88869c
 # ╠═e1bd9dd3-855e-4aa6-91aa-2695da07ba48
 # ╟─df41dbec-6f39-437c-9f59-8a74a7f5a8dd
 # ╟─fbf64d6a-0cc7-4150-9891-e659f43a3b39
 # ╟─cfe224e3-dbb3-42bc-ac1b-b96fea5da00d
 # ╠═fc535acb-afd6-4f2a-a9f1-15dc83e4a53c
-# ╠═e9318f52-e918-42c6-9aa9-45a39ad73ec7
+# ╟─e9318f52-e918-42c6-9aa9-45a39ad73ec7
 # ╟─bb13a886-0877-42fb-876e-38709f041d65
 # ╟─3308752f-d770-4951-9a21-73f1c3886df4
 # ╠═4b9cad0a-7ec4-4a58-bf4c-4f103371de33
-# ╠═9e73e982-a4ae-4e9b-9650-3cf7c519657c
+# ╟─9e73e982-a4ae-4e9b-9650-3cf7c519657c
 # ╟─a41bd4a5-a7be-48fe-a222-6e8b3cf98dec
 # ╠═d8c05722-a79b-4132-b1c2-982ef39af257
-# ╠═65b7e5f4-aff8-4671-9a3a-7aeebef6b83e
+# ╟─65b7e5f4-aff8-4671-9a3a-7aeebef6b83e
 # ╟─647dc0f6-8c06-40df-bb7c-d103d4b119fc
-# ╟─8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
+# ╠═8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
 # ╟─b6fa79f5-0452-49a4-8de9-d59093078b01
 # ╠═eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
 # ╟─e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
@@ -2335,11 +2520,22 @@ version = "1.4.1+0"
 # ╠═a8971bb3-cf38-4445-b66e-65ff35ca13ca
 # ╠═13007ba3-7ce2-4201-aa93-559fcbf9d12f
 # ╟─b4c11a46-438d-4653-89e7-bc2b99e84f48
+# ╠═72f82a78-828a-42f2-9b63-9950af4c7be3
 # ╠═494eed09-a6e8-488b-bea2-55b7ddb37082
 # ╠═060ae93d-12fe-47c6-abe1-ff7728bda572
 # ╟─425782f9-4764-4880-ab72-3b481a2cf55a
 # ╠═cc216d03-956c-45bb-a6ef-38bf79d6a597
 # ╠═7dfa5042-227b-43aa-a55c-30decee08413
 # ╟─68c26d99-8f54-4580-8357-5598eb1c8cdf
+# ╠═f0dc526c-b221-4652-a877-58a959d97019
+# ╠═ad6d0997-43c1-42f3-b997-765c594794b4
+# ╠═f0551220-d7c1-4312-b6c5-e0c432889494
+# ╟─0b4d5ac8-5a7b-4363-9dbe-2edc517708a0
+# ╠═b337a706-cbbf-4acd-8a8f-26fdbc137e8e
+# ╠═ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
+# ╟─0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
+# ╟─4baa0604-712a-448f-b3ee-56543bfc0d71
+# ╠═de7046da-e361-41d0-b2d7-12439b571795
+# ╠═05828da6-bc3c-45de-b059-310159038d5d
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

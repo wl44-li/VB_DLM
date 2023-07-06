@@ -440,12 +440,12 @@ end
 begin
 	α = 1.0
 	γ = 1.0
-	a = 0.001
-	b = 0.001
+	a = 0.01
+	b = 0.01
 	μ_0 = 0.0
 	σ_0 = 1.0
 	hpp = HPP_uni(a, b, α, γ, μ_0, σ_0)
-	@time exp_f = vb_dlm(y, hpp, 1500) 
+	@time exp_f = vb_dlm(y, hpp, 1000) 
 	exp_f.A, exp_f.C, 1 / exp_f.R⁻¹
 end
 

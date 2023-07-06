@@ -502,7 +502,26 @@ $$p(x_T| y_T, x_{t-1}) ∝ p(x_T| x_{T-1}) p(y_T|x_T)$$
 General case:
 
 $$p(x_i| y_i, x_{i-1}, x_{i+1}) ∝ p(x_i| x_{i-1}) p(x_{i+1}| x_i) p(y_i|x_i)$$
+
+Derivation for the general case:
+
+$$p(y_i|x_i) \sim \mathcal N(Cx_i, R)$$
+
+$$p(x_i|x_{i-1}) \sim \mathcal N(Ax_{i-1}, Q)$$
+
+$$p(x_{i+1}|x_{i}) \sim \mathcal N(Ax_i, Q)$$
+
 """
+
+# ╔═╡ c9f6fad7-518c-442b-a385-e3fa74431cb1
+function sample_x_i(y_i, x_i_minus_1, x_i_plus_1, A, C, Q, R)
+    Σ_x_i_inv = C' * inv(R) * C + inv(Q) + A' * inv(Q) * A
+	
+	Σ_x_i = inv(Σ_x_i_inv)
+    μ_x_i = Σ_x_i * (C' * inv(R) * y_i + inv(Q) * A * x_i_minus_1 + A' * inv(Q) * x_i_plus_1)
+	
+    return rand(MvNormal(μ_x_i, Symmetric(Σ_x_i)))
+end
 
 # ╔═╡ 3a8ceb49-403e-424f-bedb-49f5b01c8d7a
 function sample_x_1(y_1, x_2, A, C, Q, R)
@@ -519,14 +538,6 @@ function sample_x_T(y_T, x_T_1, A, C, Q, R)
     Σ_x_T = inv(Σ_x_T_inv)
 
     return rand(MvNormal(μ_x_T, Symmetric(Σ_x_T)))
-end
-
-# ╔═╡ c9f6fad7-518c-442b-a385-e3fa74431cb1
-function sample_x_i(y_i, x_i_minus_1, x_i_plus_1, A, C, Q, R)
-    Σ_x_i_inv = C' * inv(R) * C + inv(Q) * A + A' * inv(Q)
-    μ_x_i = inv(Σ_x_i_inv) * (C' * inv(R) * y_i + inv(Q) * A * x_i_minus_1 + A' * inv(Q) * x_i_plus_1)
-    Σ_x_i = inv(Σ_x_i_inv)
-    return rand(MvNormal(μ_x_i, Symmetric(Σ_x_i)))
 end
 
 # ╔═╡ a8971bb3-cf38-4445-b66e-65ff35ca13ca
@@ -709,7 +720,7 @@ The Gibbs step full-conditional is
 
 $$p(Φ_0| ...) \sim \mathcal Wi(v_0 + T/2, S_0 + 1/2 * S S_y)$$
 
-$$SS_y = \sum_{t=1}^T (y_t - C x_t)(y_t - C x_t)^T$$
+$$SS_y = \sum_{t=1}^T (y_t - C x_t)(y_t - C x_t)^\top$$
 """
 
 # ╔═╡ 494eed09-a6e8-488b-bea2-55b7ddb37082
@@ -742,7 +753,7 @@ The Gibbs step full-conditional is
 
 $$p(Φ_1| ...) \sim \mathcal Wi(v_1 + T/2, S_1 + 1/2 * S S_1)$$
 
-$$SS_1 = \sum_{t=1}^T (x_t - A x_t)(x_t - A x_t)^T$$
+$$SS_1 = \sum_{t=1}^T (x_t - A x_t)(x_t - A x_t)^\top$$
 """
 
 # ╔═╡ cc216d03-956c-45bb-a6ef-38bf79d6a597
@@ -2514,9 +2525,9 @@ version = "1.4.1+0"
 # ╠═36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
 # ╟─fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
 # ╟─e9f3b9e2-5689-40ce-b5b5-bc571ba35c10
+# ╠═c9f6fad7-518c-442b-a385-e3fa74431cb1
 # ╠═3a8ceb49-403e-424f-bedb-49f5b01c8d7a
 # ╠═0a609b97-7859-4053-900d-c1be5d61e68c
-# ╠═c9f6fad7-518c-442b-a385-e3fa74431cb1
 # ╠═a8971bb3-cf38-4445-b66e-65ff35ca13ca
 # ╠═13007ba3-7ce2-4201-aa93-559fcbf9d12f
 # ╟─b4c11a46-438d-4653-89e7-bc2b99e84f48
@@ -2534,8 +2545,8 @@ version = "1.4.1+0"
 # ╠═b337a706-cbbf-4acd-8a8f-26fdbc137e8e
 # ╠═ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
 # ╟─0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
-# ╟─4baa0604-712a-448f-b3ee-56543bfc0d71
+# ╠═4baa0604-712a-448f-b3ee-56543bfc0d71
 # ╠═de7046da-e361-41d0-b2d7-12439b571795
-# ╠═05828da6-bc3c-45de-b059-310159038d5d
+# ╟─05828da6-bc3c-45de-b059-310159038d5d
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

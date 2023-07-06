@@ -7,12 +7,14 @@ using InteractiveUtils
 # ╔═╡ ee858a0c-1414-11ee-3b47-2fb4b9112c53
 begin
 	using Distributions, Plots, Random
+	plotly()
 	using LinearAlgebra
 	using StatsFuns
 	using PlutoUI
 	using MCMCChains
 	using Statistics
 	using DataFrames
+	using StatsPlots
 end
 
 # ╔═╡ 72f82a78-828a-42f2-9b63-9950af4c7be3
@@ -68,9 +70,9 @@ Establish ground-truth and test data
 begin
 	A = [0.8 -0.1; 0.3 0.6]
 	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([1.0, 1.0])
-	R = Diagonal([0.2, 0.2])
-	T = 1000
+	Q = Diagonal([0.5, 0.5])
+	R = Diagonal([0.01, 0.01])
+	T = 500
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
@@ -203,12 +205,9 @@ let
 	sample_R(x_true, y, C, α, β), R
 end
 
-# ╔═╡ 647dc0f6-8c06-40df-bb7c-d103d4b119fc
-md"""
-## Sample latent X (FFBS)
-"""
-
 # ╔═╡ 8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
+# ╠═╡ disabled = true
+#=╠═╡
 function sample_x_ffbs(Ys, A, C, R, Q, μ₀, Σ₀)
     P, T = size(Ys)
     K, _ = size(A)
@@ -253,13 +252,18 @@ function sample_x_ffbs(Ys, A, C, R, Q, μ₀, Σ₀)
 	
     return Xs_sampled
 end
+  ╠═╡ =#
 
 # ╔═╡ b6fa79f5-0452-49a4-8de9-d59093078b01
+# ╠═╡ disabled = true
+#=╠═╡
 md"""
 Test FFBS with ground-truth y, A, C, R
 """
+  ╠═╡ =#
 
 # ╔═╡ eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
+#=╠═╡
 let
 	xss = zeros(2, T, 100)
 	for i in 1:100
@@ -270,6 +274,7 @@ let
 	xs_m = mean(xss, dims=3)[:, :, 1]
 	println(error_metrics(x_true, xs_m))
 end
+  ╠═╡ =#
 
 # ╔═╡ e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 md"""
@@ -281,9 +286,6 @@ md"""
 VBEM Analog with Beale Chap 5
 """
 
-# ╔═╡ 97b66cb6-c143-45d1-84fa-3db7cef42c09
-A, C, R
-
 # ╔═╡ 56cad0cb-352b-4612-b3a3-ddb34de607ad
 md"""
 Analyse Gibbs results with Chains
@@ -293,6 +295,38 @@ Analyse Gibbs results with Chains
 md"""
 Compare with single-move sampler
 """
+
+# ╔═╡ ad1c98fd-ffdf-430f-ae3e-59fa63a9433e
+# ╠═╡ disabled = true
+#=╠═╡
+let
+	Random.seed!(99)
+	#A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2, true, Matrix{Float64}(I, 2, 2), 15000, 20000, 5)
+	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2, true)
+	chn_A = Chains(reshape(A_samples, 4, 3000)');
+	chn_C = Chains(reshape(C_samples, 4, 3000)');
+	chn_R = Chains(reshape(R_samples, 4, 3000)');
+	xs_m = mean(X_samples, dims=3)[:, :, 1]
+	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
+	reshaped_samples = reshape(X_samples, 3000, 2*1000, 1)
+	xss_chains = Chains(reshaped_samples)
+	
+	ess = ess(xss_chains)
+	rhat = rhat(xss_chains)
+	# Convert to DataFrame
+	ess_df = DataFrame(ess)
+	rhat_df = DataFrame(rhat)
+	
+	# Get the mean ESS and Rhat across all parameters
+	mean_ess = mean(skipmissing(ess_df.ess))
+	mean_rhat = mean(skipmissing(rhat_df.rhat))
+	
+	println("X Mean ESS: $mean_ess")
+	println("X Mean Rhat: $mean_rhat")
+
+	describe(chn_A), describe(chn_C), describe(chn_R)
+end
+  ╠═╡ =#
 
 # ╔═╡ 79fc7c88-d31a-4753-81bc-9092576eda35
 md"""
@@ -371,6 +405,7 @@ end
 # ╔═╡ 57c87102-04bc-4414-9258-e2220f9d2e22
 let
 	σ_true = 2.0
+	println("true scale: ", σ_true)
 	Q̃ = Q ./ σ_true
 	R̃ = R ./ σ_true
 	Σ_0̃  = Σ_0 ./ σ_true
@@ -422,11 +457,16 @@ function ffbs_x(Ys, A, C, R, Q, μ_0, Σ_0)
 	a = zeros(d, T)
 	RR = zeros(d, d, T)
 	X = zeros(d, T)
-	
-    m[:, 1] = μ_0
-    P[:, :, 1] = Σ_0
 
-	# Kalman filter (Prep 4.1)
+	a[:, 1] = A * μ_0
+	P_1 = A * Σ_0 * A' + Q
+	RR[:, :, 1] = P_1
+	f_1 = C * a[:, 1]
+    S_1 = C * P_1 * C' + R
+    m[:, 1] = a[:, 1] + RR[:, :, 1] * C' * inv(S_1) * (Ys[:, 1] - f_1)
+    P[:, :, 1] = RR[:, :, 1] - RR[:, :, 1] * C' * inv(S_1) * C * RR[:, :, 1]
+		
+		# Kalman filter (Prep 4.1)
     for t in 2:T
         # Prediction
         a[:, t] = A * m[:, t-1]
@@ -454,21 +494,28 @@ function ffbs_x(Ys, A, C, R, Q, μ_0, Σ_0)
 		X[:, t] = rand(MvNormal(h_t, Symmetric(H_t)))
 	end
 
-	return X
+	# sample initial x_0
+	h_0 = μ_0 + Σ_0 * A' * inv(RR[:, :, 1])*(X[:, 1] - a[:, 1])
+	H_0 = Σ_0 - Σ_0 * A' * inv(RR[:, :, 1]) * A * Σ_0
+
+	x_0 = rand((MvNormal(h_0, Symmetric(H_0))))
+
+	return X, x_0
 end
 
 # ╔═╡ 36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
 let
 	Random.seed!(177)
 	xss = zeros(2, T, 3000)
+	x_0s = zeros(2, 3000)
 	for i in 1:3000
-		x_ffbs = ffbs_x(y, A, C, R, Matrix{Float64}(I, 2, 2), zeros(2), Matrix{Float64}(I, 2, 2))
+		x_ffbs, x_0 = ffbs_x(y, A, C, R, Matrix{Float64}(I, 2, 2), zeros(2), Matrix{Float64}(I, 2, 2))
 		xss[:, :, i] = x_ffbs
+		x_0s[:, i] = x_0
 	end
-
 	xs_m = mean(xss, dims=3)[:, :, 1]
 	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
-	reshaped_samples = reshape(xss, 3000, 2*1000, 1)
+	reshaped_samples = reshape(xss, 3000, 2*T, 1)
 	chains = Chains(reshaped_samples)
 	
 	ess = ess(chains)
@@ -483,7 +530,37 @@ let
 	
 	println("Mean ESS: $mean_ess")
 	println("Mean Rhat: $mean_rhat")
-	ess_df, rhat_df
+
+end
+
+# ╔═╡ a95ed94c-5fe2-4c31-a7a6-e45e841af528
+let
+	Random.seed!(177)
+	mcmc = 1000
+	xss = zeros(2, T, mcmc)
+	x_0s = zeros(2, mcmc)
+	for i in 1:mcmc
+		x_ffbs, x_0 = ffbs_x(y, A, C, R, Matrix{Float64}(I, 2, 2), zeros(2), Matrix{Float64}(I, 2, 2))
+		xss[:, :, i] = x_ffbs
+	end
+	
+	# Select the first 50 time steps
+	true_latent_50 = x_true[:, 1:50]
+	sampled_latent_50 = xss[:, 1:50, :]
+	
+	# Create a new plot
+	p = plot()
+	
+	# Plot the true latent states with a thick line
+	plot!(p, true_latent_50[1, :], linewidth=1.5, alpha=5, label="True x_d1", color=:blue)
+	plot!(p, true_latent_50[2, :], linewidth=1.5, alpha=5, label="True x_d2", color=:red)
+	
+	# Plot the sampled latent states with a thin line
+	for i in 1:size(sampled_latent_50, 3)
+	    plot!(p, sampled_latent_50[1, :, i], linewidth=0.1, alpha=0.1, label=false, color=:violet)
+	    plot!(p, sampled_latent_50[2, :, i], linewidth=0.1, alpha=0.1, label=false, color=:orange)
+	end
+	p
 end
 
 # ╔═╡ fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
@@ -516,7 +593,6 @@ $$p(x_{i+1}|x_{i}) \sim \mathcal N(Ax_i, Q)$$
 # ╔═╡ c9f6fad7-518c-442b-a385-e3fa74431cb1
 function sample_x_i(y_i, x_i_minus_1, x_i_plus_1, A, C, Q, R)
     Σ_x_i_inv = C' * inv(R) * C + inv(Q) + A' * inv(Q) * A
-	
 	Σ_x_i = inv(Σ_x_i_inv)
     μ_x_i = Σ_x_i * (C' * inv(R) * y_i + inv(Q) * A * x_i_minus_1 + A' * inv(Q) * x_i_plus_1)
 	
@@ -526,17 +602,16 @@ end
 # ╔═╡ 3a8ceb49-403e-424f-bedb-49f5b01c8d7a
 function sample_x_1(y_1, x_2, A, C, Q, R)
     Σ_x_1_inv = C' * inv(R) * C + A' * inv(Q) * A
-    μ_x_1 = inv(Σ_x_1_inv) * (C' * inv(R) * y_1 + A' * inv(Q) * x_2)
-    Σ_x_1 = inv(Σ_x_1_inv)
+	Σ_x_1 = inv(Σ_x_1_inv)
+    μ_x_1 = Σ_x_1 * (C' * inv(R) * y_1 + A' * inv(Q) * x_2)
     return rand(MvNormal(μ_x_1, Symmetric(Σ_x_1)))
 end
 
 # ╔═╡ 0a609b97-7859-4053-900d-c1be5d61e68c
 function sample_x_T(y_T, x_T_1, A, C, Q, R)
-    Σ_x_T_inv = C' * inv(R) * C + inv(Q) * A
-    μ_x_T = inv(Σ_x_T_inv) * (C' * inv(R) * y_T + inv(Q) * A * x_T_1)
-    Σ_x_T = inv(Σ_x_T_inv)
-
+    Σ_x_T_inv = C' * inv(R) * C + inv(Q)
+	Σ_x_T = inv(Σ_x_T_inv)
+    μ_x_T = Σ_x_T * (C' * inv(R) * y_T + inv(Q) * A * x_T_1)
     return rand(MvNormal(μ_x_T, Symmetric(Σ_x_T)))
 end
 
@@ -584,20 +659,22 @@ function gibbs_dlm(y, K, single_move=false, Q=Matrix{Float64}(I, K, K), mcmc=300
     A = A_init
     C = C_init
     R = R_init
-	μ₀, Σ₀ = zeros(K), Matrix{Float64}(I, K, K)
+	
+	μ₀, Σ₀ = vec(mean(y, dims=2)), Matrix{Float64}(I, K, K)
 	
     for iter in 1:(mcmc + burn_in)
 		Xs = missing
+		
         # Sample latent states Xs
-		if single_move
+		if single_move # not working well in Gibbs
 			Xs = single_move_sampler(y, A, C, Q, R, 1)[:, :, 1]
 		else
-        	Xs = ffbs_x(y, A, C, R, Q, μ₀, Σ₀)
+        	Xs, _ = ffbs_x(y, A, C, R, Q, μ₀, Σ₀)
 		end
 		
         # Sample model parameters A, C, and R
-        A = sample_A(Xs, μ₀, Σ₀, Q)
-        C = sample_C(Xs, y, μ₀, Σ₀, R)
+        A = sample_A(Xs, zeros(K), Σ₀, Q)
+        C = sample_C(Xs, y, zeros(P), Σ₀, R)
         R = sample_R(Xs, y, C, a, b)
         # Store samples after burn-in
         if iter > burn_in && mod(iter - burn_in, thinning) == 0
@@ -613,7 +690,7 @@ end
 
 # ╔═╡ df166b81-a6c3-490b-8cbc-4061f19b750b
 begin
-	Random.seed!(99)
+	Random.seed!(111)
 	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
 end
 
@@ -639,7 +716,7 @@ describe(chn_R)
 let
 	xs_m = mean(X_samples, dims=3)[:, :, 1]
 	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
-	reshaped_samples = reshape(X_samples, 3000, 2*1000, 1)
+	reshaped_samples = reshape(X_samples, 3000, 2*T, 1)
 	xss_chains = Chains(reshaped_samples)
 	
 	ess = ess(xss_chains)
@@ -655,35 +732,33 @@ let
 	println("X Mean ESS: $mean_ess")
 	println("X Mean Rhat: $mean_rhat")
 	ess, rhat
+
+	#plot latent samples out against x_true
 end
 
-# ╔═╡ ad1c98fd-ffdf-430f-ae3e-59fa63a9433e
+# ╔═╡ ad1eab82-0fa5-462e-ad17-8cb3b787aaf0
 let
-	Random.seed!(99)
-	#A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2, true, Matrix{Float64}(I, 2, 2), 15000, 20000, 5)
-	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2, true)
-	chn_A = Chains(reshape(A_samples, 4, 3000)');
-	chn_C = Chains(reshape(C_samples, 4, 3000)');
-	chn_R = Chains(reshape(R_samples, 4, 3000)');
-	xs_m = mean(X_samples, dims=3)[:, :, 1]
-	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
-	reshaped_samples = reshape(X_samples, 3000, 2*1000, 1)
-	xss_chains = Chains(reshaped_samples)
-	
-	ess = ess(xss_chains)
-	rhat = rhat(xss_chains)
-	# Convert to DataFrame
-	ess_df = DataFrame(ess)
-	rhat_df = DataFrame(rhat)
-	
-	# Get the mean ESS and Rhat across all parameters
-	mean_ess = mean(skipmissing(ess_df.ess))
-	mean_rhat = mean(skipmissing(rhat_df.rhat))
-	
-	println("X Mean ESS: $mean_ess")
-	println("X Mean Rhat: $mean_rhat")
+	Random.seed!(177)
+	mcmc = 1000
+	xss = single_move_sampler(y, A, C, Q, R, mcmc)
 
-	describe(chn_A), describe(chn_C), describe(chn_R)
+	# Select the first 100 time steps
+	true_latent_50 = x_true[:, 1:50]
+	sampled_latent_50 = xss[:, 1:50, :]
+	
+	# Create a new plot
+	p = plot()
+	
+	# Plot the true latent states with a thick line
+	plot!(p, true_latent_50[1, :], linewidth=1.5, alpha=5, label="True x_d1", color=:blue)
+	plot!(p, true_latent_50[2, :], linewidth=1.5, alpha=5, label="True x_d2", color=:red)
+	
+	# Plot the sampled latent states with a thin line
+	for i in 1:size(sampled_latent_50, 3)
+	    plot!(p, sampled_latent_50[1, :, i], linewidth=0.1, alpha=0.1, label=false, color=:violet)
+	    plot!(p, sampled_latent_50[2, :, i], linewidth=0.1, alpha=0.1, label=false, color=:orange)
+	end
+	p
 end
 
 # ╔═╡ 13007ba3-7ce2-4201-aa93-559fcbf9d12f
@@ -693,7 +768,7 @@ let
 	xs_m = mean(xss, dims=3)[:, :, 1]
 	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
 
-	reshaped_samples = reshape(xss, 3000, 2*1000, 1)
+	reshaped_samples = reshape(xss, 3000, 2*T, 1)
 	chains = Chains(reshaped_samples)
 
 	ess = ess(chains)
@@ -706,6 +781,8 @@ let
 	println("Mean ESS: $mean_ess")
 	println("Mean Rhat: $mean_rhat")
 	ess_df, rhat_df
+
+	# plot sampled latent states with x_true per time step
 end
 
 # ╔═╡ b4c11a46-438d-4653-89e7-bc2b99e84f48
@@ -766,14 +843,15 @@ function sample_Q_(x, A, v_1, S_1, x_0)
 
 	scale_posterior += (x[:, 1] - A * x_0) * (x[:, 1] - A * x_0)' .* 0.5
     v_p = v_1 + 0.5 * T
+	S_p = PDMat(Symmetric(inv(scale_posterior)))
 
-	Q⁻¹ = rand(Wishart(v_p, inv(scale_posterior)))
+	Q⁻¹ = rand(Wishart(v_p, S_p))
     return inv(Q⁻¹)
 end
 
 # ╔═╡ 7dfa5042-227b-43aa-a55c-30decee08413
 let
-	sample_Q_(x_true, A, 3, Matrix{Float64}(0.01 * I, 2, 2), zeros(2)), Q
+	sample_Q_(x_true, A, 3, Matrix{Float64}(0.01 * I, 2, 2), μ_0), Q
 end
 
 # ╔═╡ 68c26d99-8f54-4580-8357-5598eb1c8cdf
@@ -782,11 +860,11 @@ md"""
 """
 
 # ╔═╡ f0dc526c-b221-4652-a877-58a959d97019
-function gibbs_dlm_cov(y, A, C, mcmc=3000, burn_in=300, thinning=1)
+function gibbs_dlm_cov(y, A, C, mcmc=3000, burn_in=500, thinning=1)
 	P, T = size(y)
 	K = size(A, 2)
 	
-	μ_0 = zeros(K)  
+	μ_0 = vec(mean(y, dims=2)) 
 	λ_0 = Matrix{Float64}(I, K, K)
 	
 	v_0 = P + 1.0 
@@ -810,10 +888,10 @@ function gibbs_dlm_cov(y, A, C, mcmc=3000, burn_in=300, thinning=1)
 	# Gibbs sampler
 	for i in 1:mcmc+burn_in
 	    # Update the states
-		x = sample_x_ffbs(y, A, C, R, Q, μ_0, λ_0)
+		x, x_0 = ffbs_x(y, A, C, R, Q, μ_0, λ_0)
 		
 		# Update the system noise
-		Q = sample_Q_(x, A, v_1, S_1, μ_0)
+		Q = sample_Q_(x, A, v_1, S_1, x_0)
 		
 	    # Update the observation noise
 		R = sample_R_(y, x, C, v_0, S_0)
@@ -863,7 +941,7 @@ begin
 	println("MSE, MAD of MCMC X mean: ", error_metrics(x_true, xs_m))
 	println("MSE, MAD of MCMC X end: ", error_metrics(x_true, Xs_samples[end, :, :]))
 
-	X_chain = Chains(reshape(Xs_samples, 3000, 2000))
+	X_chain = Chains(reshape(Xs_samples, 3000, 2*T))
 	x_ess = ess(X_chain)
 	x_rhat = rhat(X_chain)
 	# Convert to DataFrame
@@ -878,13 +956,34 @@ begin
 	println("Mean Rhat: $mean_rhat")
 end
 
+# ╔═╡ 2837effd-25f2-4f49-829e-8fc191db8460
+let
+	# Select the first 50 time steps
+	true_latent_50 = x_true[:, 1:50]
+	ffbs_sampled_latent_50 = Xs_samples[:, :, 1:50]
+	
+	# Create a new plot
+	p = plot()
+	
+	# Plot the true latent states with a thick line
+	plot!(p, true_latent_50[1, :], linewidth=1.5, alpha=5, label="True x_d1", color=:blue)
+	plot!(p, true_latent_50[2, :], linewidth=1.5, alpha=5, label="True x_d2", color=:red)
+	
+	# Plot the sampled latent states with a thin line
+	for i in 1:size(ffbs_sampled_latent_50, 1)
+	    plot!(p, ffbs_sampled_latent_50[i, 1, :], linewidth=0.1, alpha=0.1, label=false, color=:violet)
+	    plot!(p, ffbs_sampled_latent_50[i, 2, :], linewidth=0.1, alpha=0.1, label=false, color=:orange)
+	end
+	p
+end
+
 # ╔═╡ 0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
 md"""
 Compare with single-move for sampling latent states
 """
 
 # ╔═╡ 4baa0604-712a-448f-b3ee-56543bfc0d71
-function gibbs_smx(y, A, C, mcmc=3000, burn_in=300, thinning=1)
+function gibbs_smx(y, A, C, mcmc=3000, burn_in=500, thinning=1)
 	P, T = size(y)
 	K = size(A, 2)
 	
@@ -934,27 +1033,10 @@ end
 # ╔═╡ de7046da-e361-41d0-b2d7-12439b571795
 let
 	Random.seed!(99)
-	Xs_samples, Qs_samples, Rs_samples = gibbs_smx(y, A, C, 3000, 1000, 1)
+	_, Qs_samples, Rs_samples = gibbs_smx(y, A, C)
 
 	Q_m = mean(Qs_samples, dims=1)[1, :, :]
 	R_m = mean(Rs_samples, dims=1)[1, :, :]
-
-	xs_m = mean(Xs_samples, dims=1)[1, :, :]
-	println("MSE, MAD of MCMC X mean: ", error_metrics(x_true, xs_m))
-	println("MSE, MAD of MCMC X end: ", error_metrics(x_true, Xs_samples[end, :, :]))
-	X_chain = Chains(reshape(Xs_samples, 3000, 2000))
-	x_ess = ess(X_chain)
-	x_rhat = rhat(X_chain)
-	# Convert to DataFrame
-	ess_df = DataFrame(x_ess)
-	rhat_df = DataFrame(x_rhat)
-	
-	# Get the mean ESS and Rhat across all parameters
-	mean_ess = mean(skipmissing(ess_df.ess))
-	mean_rhat = mean(skipmissing(rhat_df.rhat))
-	
-	println("Mean ESS: $mean_ess")
-	println("Mean Rhat: $mean_rhat")
 	Q_m, R_m
 end
 
@@ -962,6 +1044,29 @@ end
 md"""
 similar to inference with unknown A, C, R, gibbs via single-move learning is poor compared to ffbs
 """
+
+# ╔═╡ 69061e7f-8a6d-4fac-b187-4d6ff16cf777
+let
+	Random.seed!(99)
+	Xs_samples, _, _ = gibbs_smx(y, A, C, 3000, 1000, 1)
+	# Select the first 50 time steps
+	true_latent_50 = x_true[:, 1:50]
+	sm_sampled_latent_50 = Xs_samples[:, :, 1:50]
+	
+	# Create a new plot
+	p = plot()
+	
+	# Plot the true latent states with a thick line
+	plot!(p, true_latent_50[1, :], linewidth=1.5, alpha=5, label="True x_d1", color=:blue)
+	plot!(p, true_latent_50[2, :], linewidth=1.5, alpha=5, label="True x_d2", color=:red)
+	
+	# Plot the sampled latent states with a thin line
+	for i in 1:size(sm_sampled_latent_50, 1)
+	    plot!(p, sm_sampled_latent_50[i, 1, :], linewidth=0.1, alpha=0.1, label=false, color=:violet)
+	    plot!(p, sm_sampled_latent_50[i, 2, :], linewidth=0.1, alpha=0.1, label=false, color=:orange)
+	end
+	p
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -976,6 +1081,7 @@ PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
+StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 
 [compat]
 DataFrames = "~1.5.0"
@@ -985,6 +1091,7 @@ PDMats = "~0.11.17"
 Plots = "~1.38.16"
 PlutoUI = "~0.7.51"
 StatsFuns = "~1.3.0"
+StatsPlots = "~0.15.5"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -993,7 +1100,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.1"
 manifest_format = "2.0"
-project_hash = "950c63b705c2e8456054bba0f15fcf9c206108c8"
+project_hash = "224a0678ab9b9b64cdf55185eb4a6f23316f69e6"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1040,6 +1147,18 @@ version = "2.3.0"
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.1"
+
+[[deps.Arpack]]
+deps = ["Arpack_jll", "Libdl", "LinearAlgebra", "Logging"]
+git-tree-sha1 = "9b9b347613394885fd1c8c7729bfc60528faa436"
+uuid = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
+version = "0.5.4"
+
+[[deps.Arpack_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "OpenBLAS_jll", "Pkg"]
+git-tree-sha1 = "5ba6c757e8feccf03a1554dfaf3e26b3cfc7fd5e"
+uuid = "68821587-b530-5797-8361-c406ea357684"
+version = "3.5.1+1"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -1112,6 +1231,12 @@ deps = ["Compat", "LinearAlgebra", "SparseArrays"]
 git-tree-sha1 = "e30f2f4e20f7f186dc36529910beaedc60cfa644"
 uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 version = "1.16.0"
+
+[[deps.Clustering]]
+deps = ["Distances", "LinearAlgebra", "NearestNeighbors", "Printf", "Random", "SparseArrays", "Statistics", "StatsBase"]
+git-tree-sha1 = "42fe66dbc8f1d09a44aa87f18d26926d06a35f84"
+uuid = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
+version = "0.15.3"
 
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
@@ -1238,6 +1363,12 @@ deps = ["Mmap"]
 git-tree-sha1 = "9e2f36d3c96a820c678f2f1f1782582fcf685bae"
 uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 version = "1.9.1"
+
+[[deps.Distances]]
+deps = ["LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI"]
+git-tree-sha1 = "49eba9ad9f7ead780bfb7ee319f962c811c6d3b2"
+uuid = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
+version = "0.10.8"
 
 [[deps.Distributed]]
 deps = ["Random", "Serialization", "Sockets"]
@@ -1745,6 +1876,12 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 version = "2022.10.11"
 
+[[deps.MultivariateStats]]
+deps = ["Arpack", "LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI", "StatsBase"]
+git-tree-sha1 = "68bf5103e002c44adfd71fea6bd770b3f0586843"
+uuid = "6f286f6a-111f-5878-ab1e-185364afe411"
+version = "0.10.2"
+
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
 git-tree-sha1 = "0877504529a3e5c3343c6f8b4c0381e57e4387e4"
@@ -1756,9 +1893,20 @@ git-tree-sha1 = "eda490d06b9f7c00752ee81cfa451efe55521e21"
 uuid = "c020b1a1-e9b0-503a-9c33-f039bfc54a85"
 version = "1.0.0"
 
+[[deps.NearestNeighbors]]
+deps = ["Distances", "StaticArrays"]
+git-tree-sha1 = "2c3726ceb3388917602169bed973dbc97f1b51a8"
+uuid = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
+version = "0.4.13"
+
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
+
+[[deps.Observables]]
+git-tree-sha1 = "6862738f9796b3edc1c09d0890afce4eca9e7e93"
+uuid = "510215fc-4207-5dde-b226-833fc4488ee2"
+version = "0.5.4"
 
 [[deps.OffsetArrays]]
 deps = ["Adapt"]
@@ -2126,6 +2274,12 @@ version = "1.3.0"
     ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
     InverseFunctions = "3587e190-3f89-42d0-90ee-14403ec27112"
 
+[[deps.StatsPlots]]
+deps = ["AbstractFFTs", "Clustering", "DataStructures", "Distributions", "Interpolations", "KernelDensity", "LinearAlgebra", "MultivariateStats", "NaNMath", "Observables", "Plots", "RecipesBase", "RecipesPipeline", "Reexport", "StatsBase", "TableOperations", "Tables", "Widgets"]
+git-tree-sha1 = "14ef622cf28b05e38f8af1de57bc9142b03fbfe3"
+uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
+version = "0.15.5"
+
 [[deps.StringManipulation]]
 git-tree-sha1 = "46da2434b41f41ac3594ee9816ce5541c6096123"
 uuid = "892a3eda-7b42-436c-8928-eab12a02cf0e"
@@ -2144,6 +2298,12 @@ version = "5.10.1+6"
 deps = ["Dates"]
 uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 version = "1.0.3"
+
+[[deps.TableOperations]]
+deps = ["SentinelArrays", "Tables", "Test"]
+git-tree-sha1 = "e383c87cf2a1dc41fa30c093b2a19877c83e1bc1"
+uuid = "ab02a1b2-a7df-11e8-156e-fb1833f50b87"
+version = "1.2.0"
 
 [[deps.TableTraits]]
 deps = ["IteratorInterfaceExtensions"]
@@ -2247,6 +2407,12 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "4528479aa01ee1b3b4cd0e6faef0e04cf16466da"
 uuid = "2381bf8a-dfd0-557d-9999-79630e7b1b91"
 version = "1.25.0+0"
+
+[[deps.Widgets]]
+deps = ["Colors", "Dates", "Observables", "OrderedCollections"]
+git-tree-sha1 = "fcdae142c1cfc7d89de2d11e08721d0f2f86c98a"
+uuid = "cc8bc4a8-27d6-5769-a93b-9d913e69aa62"
+version = "0.6.6"
 
 [[deps.WoodburyMatrices]]
 deps = ["LinearAlgebra", "SparseArrays"]
@@ -2478,7 +2644,7 @@ version = "1.4.1+0"
 # ╟─6c0ecec8-afdc-4072-9dac-4658af3706d5
 # ╟─73e449fb-81d2-4a9e-a89d-38909093863b
 # ╟─e1f22c73-dee8-4507-af03-3d2d0ceb9011
-# ╟─544ac3d9-a2b8-4950-a501-40c14c84b2d8
+# ╠═544ac3d9-a2b8-4950-a501-40c14c84b2d8
 # ╟─46d87386-7c36-486f-ba59-15d71e88869c
 # ╠═e1bd9dd3-855e-4aa6-91aa-2695da07ba48
 # ╟─df41dbec-6f39-437c-9f59-8a74a7f5a8dd
@@ -2493,15 +2659,13 @@ version = "1.4.1+0"
 # ╟─a41bd4a5-a7be-48fe-a222-6e8b3cf98dec
 # ╠═d8c05722-a79b-4132-b1c2-982ef39af257
 # ╟─65b7e5f4-aff8-4671-9a3a-7aeebef6b83e
-# ╟─647dc0f6-8c06-40df-bb7c-d103d4b119fc
-# ╠═8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
+# ╟─8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
 # ╟─b6fa79f5-0452-49a4-8de9-d59093078b01
-# ╠═eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
+# ╟─eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
 # ╟─e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 # ╟─6a4af386-bfe0-48bb-8d40-300e02680703
 # ╠═120d3c31-bba9-476d-8a63-95cdf2457a1b
 # ╠═df166b81-a6c3-490b-8cbc-4061f19b750b
-# ╠═97b66cb6-c143-45d1-84fa-3db7cef42c09
 # ╟─56cad0cb-352b-4612-b3a3-ddb34de607ad
 # ╠═af9c5548-14f2-4771-84cf-bf93eebcd3f2
 # ╠═779e0cef-0865-4087-b3d1-563aec15a734
@@ -2509,21 +2673,23 @@ version = "1.4.1+0"
 # ╠═69efb78d-1297-46b4-a6bb-218c07c9b2af
 # ╠═9f1a120d-80ac-46e0-ae7c-949d2f571b98
 # ╠═f08a6391-24da-4d3e-8a3e-55806bb9efbb
-# ╟─39ecddfa-89a0-49ec-86f1-4794336215d0
+# ╠═39ecddfa-89a0-49ec-86f1-4794336215d0
 # ╟─2dce7f45-fe4a-4e11-b690-75517e14c068
-# ╠═ad1c98fd-ffdf-430f-ae3e-59fa63a9433e
+# ╟─ad1c98fd-ffdf-430f-ae3e-59fa63a9433e
 # ╟─79fc7c88-d31a-4753-81bc-9092576eda35
 # ╟─0a9c1721-6901-4dc1-a93d-8d8e18f7f375
 # ╟─91892a1b-b55c-4f83-91b3-dab4132b1863
 # ╟─9d2a6daf-2b06-409e-b034-6e787e64fea8
 # ╟─3e3d4c01-8a97-4ede-a341-27ab6fd07b95
-# ╠═369366a2-b4c7-44b5-8f64-d11616e99290
+# ╟─369366a2-b4c7-44b5-8f64-d11616e99290
 # ╠═57c87102-04bc-4414-9258-e2220f9d2e22
 # ╟─11700202-40fe-408b-a8b8-5c073daec12d
 # ╟─8c9357c8-8339-4889-8a91-b62e542f0407
 # ╠═a9621810-e0cb-4925-8b6a-726f78d13510
 # ╠═36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
+# ╠═a95ed94c-5fe2-4c31-a7a6-e45e841af528
 # ╟─fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
+# ╠═ad1eab82-0fa5-462e-ad17-8cb3b787aaf0
 # ╟─e9f3b9e2-5689-40ce-b5b5-bc571ba35c10
 # ╠═c9f6fad7-518c-442b-a385-e3fa74431cb1
 # ╠═3a8ceb49-403e-424f-bedb-49f5b01c8d7a
@@ -2544,9 +2710,11 @@ version = "1.4.1+0"
 # ╟─0b4d5ac8-5a7b-4363-9dbe-2edc517708a0
 # ╠═b337a706-cbbf-4acd-8a8f-26fdbc137e8e
 # ╠═ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
+# ╠═2837effd-25f2-4f49-829e-8fc191db8460
 # ╟─0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
 # ╠═4baa0604-712a-448f-b3ee-56543bfc0d71
 # ╠═de7046da-e361-41d0-b2d7-12439b571795
 # ╟─05828da6-bc3c-45de-b059-310159038d5d
+# ╠═69061e7f-8a6d-4fac-b187-4d6ff16cf777
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

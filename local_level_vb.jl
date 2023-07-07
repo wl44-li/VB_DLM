@@ -239,34 +239,36 @@ md"""
 
 # ╔═╡ 2b65eb50-0ff3-441f-9c0e-964bf10d29bc
 let
-	# A, C =1.0 , R⁻¹=5.0 (R = 0.2)
+	# A, C = 1.0 , R⁻¹ = 5.0 (R = 0.2)
 	true_exp_np = Exp_ϕ_uni(1.0, 1.0, 5.0, 1.0, 5.0, 5.0, 5.0)
 
 	fm = v_forward(y, true_exp_np, 0.0, 1.0)[1]
 
-	# f_var = v_forward(y, true_exp_np, 0.0, 1.0)[2]
-
 	println("MSE, MAD, MAPE: ", error_metrics(x_true, fm))
 end
+
+# ╔═╡ 602a021c-a473-4267-aaf3-2ed77f05ca07
+md"""
+Compare SSM package filter and smoother
+"""
 
 # ╔═╡ 2bae2d86-2a3f-446c-aa34-7582b383d2b2
 let
 	model = LocalLevel(y)
 	fit!(model)
 	fm = get_filtered_state(model)
-	# f_var = get_filtered_state_variance(model)
 	filter_err = error_metrics(x_true, fm)
 
 	sm = get_smoothed_state(model)
 	smooth_err = error_metrics(x_true, sm)
 
-	filter_err, smooth_err
+	println("Filtered MSE, MAD, MAPE: ", filter_err)
+	println("Smoother MSE, MAD, MAPE: ", smooth_err)
 end
 
 # ╔═╡ 68564ae6-2540-4a6c-aed5-0794d413e6ef
 function v_backward(y::Vector{Float64}, exp_np::Exp_ϕ_uni)
 	T = length(y)
-	
 	ηs = zeros(T)
     Ψs = zeros(T)
 
@@ -287,7 +289,6 @@ function v_backward(y::Vector{Float64}, exp_np::Exp_ϕ_uni)
 
 	# for t=1, this correspond to β(x_0), the probability of all the data given the setting of the auxiliary x_0 hidden state.
 	Ψ₁ = 1/ (1.0 + exp_np.CᵀR⁻¹C + (Ψs[1])^(-1))
-		
 	Ψ_0 = 1/ (exp_np.AᵀA - exp_np.A*Ψ₁*exp_np.A)
 	η_0 = Ψs[1]*exp_np.A*Ψ₁*(exp_np.CᵀR⁻¹*y[1] + (Ψs[1])^(-1)*ηs[1])
 	
@@ -331,8 +332,13 @@ let
 
 	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, σs, ηs, Ψs, η_0, Ψ_0, 0.0, 1.0)
 
-	error_metrics(x_true, ωs)
+	println("MSE, MAD, MAPE: ", error_metrics(x_true, ωs))
 end
+
+# ╔═╡ ce95e427-eeec-48c6-8e62-bf6f9f892b3e
+md"""
+improved over filtered estimates as expected
+"""
 
 # ╔═╡ 2969a12c-8fe1-4b76-bf0e-b7be6425eb21
 function v_pairwise_x(σs_, exp_np::Exp_ϕ_uni, Ψs)
@@ -385,6 +391,11 @@ function vb_e_uni(y::Vector{Float64}, hpp::HPP_uni, exp_np::Exp_ϕ_uni, smooth_o
 	return HSS_uni(W_A, S_A, W_C, S_C), ω_0, Υ_0
 end
 
+# ╔═╡ 05b29e3f-4493-4829-abba-5db47756b54a
+md"""
+test e-step
+"""
+
 # ╔═╡ 668197a9-91e4-461d-8552-a20a34b6eb3d
 let
 	α = 1.0
@@ -416,6 +427,11 @@ begin
 	HSS_uni(W_A_true, S_A_true, W_C_true, S_C_true)
 end
 
+# ╔═╡ fbb7a8c1-dc44-4d79-94fc-b7068a7881e1
+md"""
+Uni-variate VB
+"""
+
 # ╔═╡ c3669042-bb56-423e-a077-b0cb82ce74a3
 function vb_dlm(y::Vector{Float64}, hpp::HPP_uni, max_iter=1000)
 	T = length(y)
@@ -436,19 +452,6 @@ function vb_dlm(y::Vector{Float64}, hpp::HPP_uni, max_iter=1000)
 	return exp_np
 end
 
-# ╔═╡ 40b0773b-fc7d-4b28-9684-7e4e36ee81c9
-begin
-	α = 1.0
-	γ = 1.0
-	a = 0.01
-	b = 0.01
-	μ_0 = 0.0
-	σ_0 = 1.0
-	hpp = HPP_uni(a, b, α, γ, μ_0, σ_0)
-	@time exp_f = vb_dlm(y, hpp, 1000) 
-	exp_f.A, exp_f.C, 1 / exp_f.R⁻¹
-end
-
 # ╔═╡ fd2784db-87b3-4c2e-9d4d-7bbca8ec3aba
 md"""
 ## Ploting the parameteres, A, C, R
@@ -458,13 +461,7 @@ md"""
 function vb_ll_his(y::Vector{Float64}, hpp::HPP_uni, max_iter=1000)
 	T = length(y)
 	
-	# no randomness
-	W_A = 1.0
-	S_A = 1.0
-	W_C = 1.0
-	S_C = 1.0
-	
-	hss = HSS_uni(W_A, S_A, W_C, S_C)
+	hss = HSS_uni(1.0, 1.0, 1.0, 1.0)
 	exp_np = missing
 
 	history_A = Vector{Float64}(undef, max_iter - 50)
@@ -498,28 +495,42 @@ let
 	hpp = HPP_uni(a, b, α, γ, μ_0, σ_0)
 	exp_f, As, Cs, Rs = vb_ll_his(y, hpp, 2000) 
 
-	p1 = plot(As, title = "A over iterations", legend = false)
-	p2 = plot(Cs, title = "C over iterations", legend = false)
-	p3 = plot(Rs, title = "R over iterations", legend = false)
+	p1 = plot(As, title = "A learning", legend = false)
+	p2 = plot(Cs, title = "C learning", legend = false)
+	p3 = plot(Rs, title = "R learning", legend = false)
 
 	# A convergence is quick, but C and R are relatively slow
 	plot(p1, p2, p3, layout = (3, 1))
 end
+
+# ╔═╡ 0e7c0e3d-297d-4ccd-a71b-54a49fc40212
+md"""
+Converge around 1500 iterations
+"""
 
 # ╔═╡ 418b6277-da40-4232-ab0b-a07c1dc0d5e9
 md"""
 ## Hidden state x inference 
 """
 
-# ╔═╡ 69f8a317-7d62-4a81-9c64-7d85ee43ee07
-xs, σs = vb_e_uni(y, hpp, exp_f, true);
-
-# ╔═╡ 5b2a3a4b-0a0d-4eb6-9ea1-c794a0911b4c
-error_metrics(x_true, xs) # MSE, MAD, MAPE of VB inference
+# ╔═╡ 40b0773b-fc7d-4b28-9684-7e4e36ee81c9
+begin
+	α = 1.0
+	γ = 1.0
+	a = 0.01
+	b = 0.01
+	μ_0 = 0.0
+	σ_0 = 1.0
+	hpp = HPP_uni(a, b, α, γ, μ_0, σ_0)
+	@time exp_f = vb_dlm(y, hpp, 1500) 
+	exp_f.A, exp_f.C, 1 / exp_f.R⁻¹
+	xs, σs = vb_e_uni(y, hpp, exp_f, true)
+	println("VB uni-DLM latent x error: ", error_metrics(x_true, xs)) # MSE, MAD, MAPE of VB inference
+end
 
 # ╔═╡ 06b9d658-7d19-448d-8c02-6fabc5d4a551
 md"""
-### Compare with Kalman smoother (MSE, MAD, MAPE)
+### Compare with package Kalman smoother (MSE, MAD, MAPE)
 """
 
 # ╔═╡ 1ba53bec-658c-4e07-8728-f9799a5514e8
@@ -751,10 +762,10 @@ function gibbs_uni_dlm(y, num_iterations=2000, burn_in=200, thinning=5)
 	return samples_x, samples_a, samples_c, samples_r
 end
 
-# ╔═╡ bf512fa9-3501-47d5-8cad-30f30dd37186
+# ╔═╡ 1b1e9945-ad12-4108-a866-f02192eb064f
 begin
 	Random.seed!(888)
-	@time x_ss, a_ss, c_ss, r_ss = gibbs_uni_dlm(y, 6000, 500, 3)
+	@time x_ss, a_ss, c_ss, r_ss = gibbs_uni_dlm(y, 3000, 300, 1)
 
 	plot(a_ss)
 	plot!(c_ss)
@@ -767,7 +778,7 @@ mean(r_ss)
 # ╔═╡ 737782c3-17a7-4684-b912-8ac392422941
 begin
 	x_ss[end,: ]
-	error_metrics(x_true, x_ss[end,: ])
+	println("end chain latent x error: ", error_metrics(x_true, x_ss[end,: ]))
 end
 
 # ╔═╡ b07bcd90-d9c0-4a71-886c-756cb03b9bc1
@@ -779,7 +790,7 @@ but c estimates not very stable (sometimes negative 1?), and Gibbs tend to requi
 
 # ╔═╡ 1c0ed9fb-c56a-4aab-a765-49c394123a42
 md"""
-# TO-DO:
+# Known A, C:
 - Beale treatment v.s DLM with R treatment
 - Add Inference step for Q, fix A, C as known constants
 - Compare FFBS sampler and single-move sampler
@@ -852,26 +863,9 @@ function gibbs_ll(y, a, c, mcmc=3000, burn_in=300, thinning=1)
 	return samples_x, samples_q, samples_r
 end
 
-# ╔═╡ d57adc7b-fcd5-468b-aa50-919d884a916a
-let
-	Random.seed!(123)
-
-	# fix a = c = 1.0 for local level model
-	@time x_ss, q_ss, r_ss = gibbs_ll(y, 1.0, 1.0)
-
-	println("mean system noise (q): ", mean(q_ss))
-	println("mean observation noise (r): ", mean(r_ss))
-
-	x_m = mean(x_ss, dims=1)[1,:]
-	println("average x sample error ", error_metrics(x_true, x_ss[end,: ]))
-	println("end x sample error" , error_metrics(x_true, x_m))
-	plot(q_ss)
-	plot!(r_ss)
-end
-
 # ╔═╡ 69e31afc-7893-4099-8d48-937d8ebffa86
 md"""
-## VB Derivation for local level model above
+## VB Derivation for local level model
 
 we assume $a = c = 1.0$ is known and fixed in local level model, so the unknown model parameters are $r$ and $q$:
 
@@ -986,7 +980,7 @@ end
 
 # ╔═╡ 168d4dbd-f0dd-433b-bb4a-e3bb918fb184
 md"""
-Test m-step
+Test vb m-step
 """
 
 # ╔═╡ 2308aa4c-bb99-4546-a108-9fa88fca130b
@@ -1022,94 +1016,267 @@ $E_q[τ_r] = \alpha_r' / \beta_r'$
 $E_q[τ_q] = \alpha_q' / \beta_q'$
 
 #### Forward pass
-The forward pass computes the filtered distribution for each latent state $x_t$ given the observations up to $y_{1:t}$. The filtered distributions are computed recursively from $t=1$ to $T$, the filtered mean and filtered variance are:
-
-
-$$\mu_t^f = \mu_{t-1} + K_t (y_t - \mu_{t-1})$$
-$$\sigma_t^{f2} = (1 - K_t) \sigma_{t-1}^2$$
-
-where the Kalman gain matrix is given as: 
-
-$$K_t = \frac{\sigma_{t-1}^2}{\sigma_{t-1}^2 + 1/E_q[τ_r]}$$
+The forward pass computes the filtered distribution for each latent state $x_t$ given the observations up to $y_{1:t}$. The filtered distributions are computed recursively from $t=1$ to $T$, much akin to the forward filter in FFBS $p(x_t∣y_{1:t})$ 
 """
+
+# ╔═╡ d359f3aa-b238-420f-99d2-52f85ce9ff82
+function forward_ll(y, a, c, E_τ_r, E_τ_q, priors::Priors_ll)
+    T = length(y)
+    μ_f = zeros(T)
+    σ_f2 = zeros(T)
+	aa = zeros(T)
+	rr = zeros(T)
+	
+	aa[1] = a * priors.μ_0
+	rr[1] = a^2 * priors.σ_0 + 1/E_τ_q
+	f_1 = c * aa[1]
+	s_1 = c^2 * rr[1] + 1/E_τ_r
+	
+    μ_f[1] = aa[1] + rr[1] * c * (1/s_1) * (y[1] - f_1)
+    σ_f2[1] = rr[1] - rr[1]^2 * c^2 * (1/s_1)
+	
+    for t = 2:T
+        # Predict step
+        μ_pred = a * μ_f[t-1]
+        σ_pred2 = a^2 * σ_f2[t-1] + 1/E_τ_q
+
+        # Update step
+        K_t = σ_pred2 / (σ_pred2 + 1/E_τ_r)
+        μ_f[t] = μ_pred + K_t * (y[t] - μ_pred)
+        σ_f2[t] = (1 - K_t) * σ_pred2
+    end
+	
+    return μ_f, σ_f2
+end
+
+# ╔═╡ bca920fc-9535-4eb0-89c2-03a7334df6b6
+md"""
+test forward
+"""
+
+# ╔═╡ 416a607b-26bc-4973-8c1a-489e855a06de
+let
+	true_exp_np = Exp_ϕ_uni(1.0, 1.0, 5.0, 1.0, 5.0, 5.0, 5.0)
+
+	fm, σs, σs_ = v_forward(y, true_exp_np, 0.0, 1.0)
+
+	E_τ_r = 5.0
+	E_τ_q = 1.0
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+
+	f_ll, σs_ll = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+
+	fm, f_ll, σs, σs_ll
+end
 
 # ╔═╡ ece11b32-cc61-447b-bbcf-018829360b73
 md"""
 #### Backward pass
-The backward pass computes the smoothed distribution for each latent state $x_t$ given all the observations $y_{1:T}$. The smoothed distributions are computed recursively from $t = T ... 1$. 
+The backward pass computes the smoothed distribution for each latent state $x_t$ given all the observations $y_{1:T}$. The smoothed distributions are computed recursively from $t = T ... 1$. $p(x_t∣y_{1:T})$ 
 
 The recursion is initialized with the filtered distribution at time $T$, and it also uses the expected parameters computed in the VB-M step.
-
-The smoothed mean $\mu_t^s$ and variance $\sigma_t^{s2}$ at time $t$ are computed as follows: 
-
-$$\mu_t^s = \mu_t^f + J_{t-1} (\mu_{t+1}^s - \mu_t^f)$$
-$$\sigma_t^{s2} = \sigma_t^{f2} + J_{t-1}^2 (\sigma_{t+1}^{s2} - \sigma_t^{f2})$$
-
-where the smoothing factor $J_{t-1}$ is given by:
-
-$$J_{t-1} = \frac{\sigma_{t-1}^{f2}}{\sigma_{t-1}^{f2} + 1/E_q[τ_q]}$$
 """
+
+# ╔═╡ c29b63f3-0d32-46ad-99a4-3cae4a3f6181
+function backward_ll(μ_f, σ_f2, E_τ_q)
+    T = length(μ_f)
+    μ_s = similar(μ_f)
+    σ_s2 = similar(σ_f2)
+    σ_s2_cross = zeros(T)
+    μ_s[T] = μ_f[T]
+    σ_s2[T] = σ_f2[T]
+    for t = T-1:-1:1
+        # Compute the gain J_t
+        J_t = σ_f2[t] / (σ_f2[t] + 1/E_τ_q)
+
+        # Update the smoothed mean μ_s and variance σ_s2
+        μ_s[t] = μ_f[t] + J_t * (μ_s[t+1] - μ_f[t])
+        σ_s2[t] = σ_f2[t] + J_t^2 * (σ_s2[t+1] - σ_f2[t] - 1/E_τ_q)
+
+        # Compute the cross variance σ_s2_cross
+        σ_s2_cross[t+1] = J_t * σ_s2[t+1]
+    end
+	
+    J_0 = σ_f2[1] / (σ_f2[1] + 1/E_τ_q)
+	σ_s2_cross[1] = J_0 * σ_s2[1]
+    return μ_s, σ_s2, σ_s2_cross
+end
+
+# ╔═╡ 135c6b95-c440-45ed-bade-0327bf1e142a
+md"""
+test backward
+"""
+
+# ╔═╡ 8e98a3b4-bc92-43ad-9da3-1323e06cfce6
+let
+	true_exp_np = Exp_ϕ_uni(1.0, 1.0, 5.0, 1.0, 5.0, 5.0, 5.0)
+	μs, σs, _ =  v_forward(y, true_exp_np, 0.0, 1.0)
+	ηs, Ψs, η_0, Ψ_0 = v_backward(y, true_exp_np)
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, σs, ηs, Ψs, η_0, Ψ_0, 0.0, 1.0)
+
+	E_τ_r = 5.0
+	E_τ_q = 1.0
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	μ_f, σ_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+	
+	b_ll, σ_ll , _ = backward_ll(μ_f, σ_f2, E_τ_q)
+
+	ωs, b_ll, Υs, σ_ll
+end
 
 # ╔═╡ aa5caae7-638d-441f-a306-5442a5c8f75f
 md"""
 #### Cross-variance
 
-The term $\sigma_{t-1,t}^2$ represents the cross-variance between the latent state at time $t−1$ and the latent state at time $t$, under the variational distribution. This term can be computed from the joint marginal distribution $p(x_{t−1},x_t∣y_{1:T})$ which is a bivariate normal distribution:
+The term $\sigma_{t-1,t}^2$ represents the cross-variance between the latent state at time $t−1$ and the latent state at time $t$, under the variational distribution. This term can be computed from the joint marginal distribution $p(x_{t−1},x_t∣y_{1:T})$ 
 
-$$\sigma_{t-1,t}^2 = J_{t-1} \sigma_t^{s2}$$
 """
 
-# ╔═╡ d359f3aa-b238-420f-99d2-52f85ce9ff82
-function forward_ll(y, E_τ_r, priors::Priors_ll)
-    T = length(y)
-    μs_f = zeros(T)
-    σs_f2 = zeros(T)
-    μs_f[1] = priors.μ_0
-    σs_f2[1] = priors.σ_0
-	
-    for t in 2:T
-        K_t = σs_f2[t-1] / (σs_f2[t-1] + 1/E_τ_r)
-        μs_f[t] = μs_f[t-1] + K_t * (y[t] - μs_f[t-1])
-        σs_f2[t] = (1 - K_t) * σ_f2[t-1]
-    end
-    return μs_f, σs_f2
-end
+# ╔═╡ faed4326-5ee6-41da-9ba4-297e965c242e
+md"""
+test cross-variance
+"""
 
-# ╔═╡ c29b63f3-0d32-46ad-99a4-3cae4a3f6181
-function backward_ll(μs_f, σs_f2, E_τ_q)
-    T = length(μs_f)
-    μs_s = zeros(T)
-    σs_s2 = zeros(T)
-    σs_s2_cross = zeros(T-1)
-	
-	μs_s[T] = μs_f[T]
-	σs_s2[T] = σs_f2[T]
-	
-    for t in T-1:-1:1
-        J_t = σs_f2[t] / (σs_f2[t] + 1/E_τ_q)
-        μs_s[t] = μs_f[t] + J_t * (μs_s[t+1] - μs_f[t])
-        σs_s2[t] = σs_f2[t] + J_t^2 * (σs_s2[t+1] - σs_f2[t])
-        σs_s2_cross[t] = J_t * σs_s2[t+1]
-    end
-    return μs_s, σs_s2, σs_s2_cross
+# ╔═╡ 17136b27-9463-4e5f-a943-d78297f28be7
+let
+	true_exp_np = Exp_ϕ_uni(1.0, 1.0, 5.0, 1.0, 5.0, 5.0, 5.0)
+	μs, σs, σs_ =  v_forward(y, true_exp_np, 0.0, 1.0)
+	ηs, Ψs, η_0, Ψ_0 = v_backward(y, true_exp_np)
+	Υ_ₜ₋ₜ₊₁ = v_pairwise_x(σs_, true_exp_np, Ψs)
+
+	E_τ_r = 5.0
+	E_τ_q = 1.0
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	μ_f, σ_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+	_ , _ , css = backward_ll(μ_f, σ_f2, E_τ_q)
+
+	Υ_ₜ₋ₜ₊₁, css
 end
 
 # ╔═╡ bee6469f-13a1-4bd8-8f14-f01e8405a949
 function vb_e_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
-    # Forward pass
-    μs_f, σs_f2 = forward_ll(y, E_τ_r, priors)
+    # Forward pass (filter)
+    μs_f, σs_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, priors)
 
-    # Backward pass
+    # Backward pass (smoother)
     μs_s, σs_s2, σs_s2_cross = backward_ll(μs_f, σs_f2, E_τ_q)
 
     # Compute the sufficient statistics
     w_c = sum(σs_s2 .+ μs_s.^2)
     w_a = sum(σs_s2[1:end-1] .+ μs_s[1:end-1].^2)
     s_c = sum(y .* μs_s)
-    s_a = sum(σs_s2_cross[1:end-1] .+ μ_s[1:end-1] .* μ_s[2:end])
+    s_a = sum(σs_s2_cross[1:end-1]) + sum(μs_s[1:end-1] .* μs_s[2:end])
 
     # Return the sufficient statistics in a HSS struct
     return HSS_ll(w_c, w_a, s_c, s_a)
+end
+
+# ╔═╡ 59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
+let
+	E_τ_r = 5.0
+	E_τ_q = 1.0
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	
+	hss_e = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
+
+	w_a = sum(x_true[t-1] * x_true[t-1] for t in 2:T)
+	s_a = sum(x_true[t-1] * x_true[t] for t in 2:T)
+	w_c = sum(x_true[t] * x_true[t] for t in 1:T)
+	s_c = sum(x_true[t] * y[t] for t in 1:T)
+
+	hss_t = HSS_ll(w_c, w_a, s_c, s_a)
+
+	hss_e, hss_t
+end
+
+# ╔═╡ 7a6940ef-56b3-4cb4-bc6b-2c97625965cc
+function vb_ll(y::Vector{Float64}, hpp::Priors_ll, max_iter=100)
+	hss = HSS_ll(1.0, 1.0, 1.0, 1.0)
+	E_τ_r, E_τ_q  = missing, missing
+	
+	for i in 1:max_iter
+		E_τ_r, E_τ_q = vb_m_ll(y, hss, hpp)
+				
+		hss = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
+	end
+
+	return 1/E_τ_r, 1/E_τ_q
+end
+
+# ╔═╡ 665c55c3-d4dc-4d13-9517-d1106ea6210f
+begin
+	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	@time vb_ll(y, hpp_ll)
+end
+
+# ╔═╡ e6930d53-6652-4fea-9a01-a4c87b8058dc
+md"""
+## Preliminary results
+"""
+
+# ╔═╡ 0cce2e6d-4f19-4c50-a4b5-2835c3ed4401
+function vb_ll_plot(y::Vector{Float64}, hpp::Priors_ll, max_iter=200)
+	T = length(y)
+	hss = HSS_ll(1.0, 1.0, 1.0, 1.0)
+    history_R = Vector{Float64}(undef, max_iter)
+	history_Q = Vector{Float64}(undef, max_iter)
+	
+	E_τ_r, E_τ_q  = missing, missing
+	for i in 1:max_iter
+		E_τ_r, E_τ_q = vb_m_ll(y, hss, hpp)
+		hss = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
+
+       	history_R[i] = 1/E_τ_r
+		history_Q[i] = 1/E_τ_q
+	end
+	
+	p1 = plot(history_Q[20:end], title = "Q learning", legend = false)
+	p2 = plot(history_R[20:end], title = "R learning", legend = false)
+	plot(p1, p2, layout = (2, 1))
+	
+end
+
+# ╔═╡ 1c023156-0634-456d-a959-65880fd60c34
+let
+	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	vb_ll_plot(y, hpp_ll, 50)
+end
+
+# ╔═╡ caa2e633-e044-417c-944c-6a0458475e4f
+md"""
+VB inference of unknown r, q in local level model
+"""
+
+# ╔═╡ 3e64e18a-6446-4fcc-a282-d3d6079e975a
+let
+	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	@time r, q = vb_ll(y, hpp_ll, 50)
+
+	μs_f, σs_f2 = forward_ll(y, 1.0, 1.0, 1/r, 1/q, hpp_ll)
+    μs_s, σs_s2, _ = backward_ll(μs_f, σs_f2, 1/q)
+	
+	println("latent x error: " , error_metrics(x_true, μs_s))
+end
+
+# ╔═╡ 23301a45-fc89-416f-bcc7-4f3ba41bf04f
+md"""
+This is considerably faster than Gibbs sampling that takes ~0.05 second to converge (already fast). and latent x inference is on par with end-chain accuracy of Gibbs sampling.
+"""
+
+# ╔═╡ d57adc7b-fcd5-468b-aa50-919d884a916a
+let
+	Random.seed!(123)
+	# fix a = c = 1.0 for local level model
+	@time x_ss, q_ss, r_ss = gibbs_ll(y, 1.0, 1.0)
+
+	println("\nmean system noise (q): ", mean(q_ss))
+	println("mean observation noise (r): ", mean(r_ss))
+
+	x_m = mean(x_ss, dims=1)[1,:]
+	println("\naverage x sample error ", error_metrics(x_true, x_ss[end,: ]))
+	println("end chain x sample error" , error_metrics(x_true, x_m))
+	plot(q_ss, title = "MCMC-Gibbs", label="q samples")
+	plot!(r_ss, label="r samples")
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -3125,25 +3292,28 @@ version = "1.4.1+0"
 # ╟─3f882bc0-b27f-48c2-997e-3bfa8fda421e
 # ╟─720ce158-f0b6-4165-a742-938c83146cff
 # ╠═2b65eb50-0ff3-441f-9c0e-964bf10d29bc
-# ╠═2bae2d86-2a3f-446c-aa34-7582b383d2b2
+# ╟─602a021c-a473-4267-aaf3-2ed77f05ca07
+# ╟─2bae2d86-2a3f-446c-aa34-7582b383d2b2
 # ╠═68564ae6-2540-4a6c-aed5-0794d413e6ef
-# ╟─cc5e1e9a-9087-437a-b832-1918de6d4c48
+# ╠═cc5e1e9a-9087-437a-b832-1918de6d4c48
 # ╟─5d9cf8b5-82f4-496f-ad7d-44b83a6ef157
-# ╠═5758e9c4-4c8c-4573-80a7-8270e8b428e4
+# ╟─5758e9c4-4c8c-4573-80a7-8270e8b428e4
+# ╟─ce95e427-eeec-48c6-8e62-bf6f9f892b3e
 # ╠═2969a12c-8fe1-4b76-bf0e-b7be6425eb21
 # ╠═738519e3-c469-4def-ae9d-dbdd92563120
+# ╟─05b29e3f-4493-4829-abba-5db47756b54a
 # ╟─668197a9-91e4-461d-8552-a20a34b6eb3d
 # ╟─363fbc94-afa6-4a85-9ac5-4d253b21df69
+# ╟─fbb7a8c1-dc44-4d79-94fc-b7068a7881e1
 # ╠═c3669042-bb56-423e-a077-b0cb82ce74a3
-# ╠═40b0773b-fc7d-4b28-9684-7e4e36ee81c9
 # ╟─fd2784db-87b3-4c2e-9d4d-7bbca8ec3aba
 # ╟─0e431880-8449-44bc-8996-2c50439b0eac
-# ╟─e93f8a5f-fd02-4894-aba5-7cabb9dc76b3
+# ╠═e93f8a5f-fd02-4894-aba5-7cabb9dc76b3
+# ╟─0e7c0e3d-297d-4ccd-a71b-54a49fc40212
 # ╟─418b6277-da40-4232-ab0b-a07c1dc0d5e9
-# ╠═69f8a317-7d62-4a81-9c64-7d85ee43ee07
-# ╠═5b2a3a4b-0a0d-4eb6-9ea1-c794a0911b4c
+# ╟─40b0773b-fc7d-4b28-9684-7e4e36ee81c9
 # ╟─06b9d658-7d19-448d-8c02-6fabc5d4a551
-# ╠═1ba53bec-658c-4e07-8728-f9799a5514e8
+# ╟─1ba53bec-658c-4e07-8728-f9799a5514e8
 # ╟─5cc8a85a-2542-4b69-b79a-736b87a5a8c4
 # ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
 # ╠═4cc367d1-37a1-4712-a63e-8826b5646a1b
@@ -3151,42 +3321,57 @@ version = "1.4.1+0"
 # ╠═3e4e0ceb-974c-4bdc-8e25-21b24a25d0b8
 # ╟─80e4b5da-9d6e-46cd-9f84-59fa86c201b1
 # ╟─29489270-20ee-4835-8451-db12fe46cf4c
-# ╠═84f6d8f2-6ba5-43d6-9a06-f485975bf208
+# ╟─84f6d8f2-6ba5-43d6-9a06-f485975bf208
 # ╠═be028bb1-28a4-45f4-8c52-c919636b2ea4
 # ╟─b2efefeb-f4a4-40f6-850f-f73b30ce386c
-# ╠═29ca031c-5520-4ef5-95c1-2b0c9fa12906
+# ╟─29ca031c-5520-4ef5-95c1-2b0c9fa12906
 # ╠═a320c6e2-42f3-445f-9585-6e2ff5a43060
 # ╟─5f3d1c80-d93f-4916-82a8-21205e4d0e26
-# ╠═8e3edeee-c940-4975-99e8-bc27c3b18939
+# ╟─8e3edeee-c940-4975-99e8-bc27c3b18939
 # ╠═5985ac18-636e-4606-9978-7e1e0ce1fd09
 # ╟─392e0306-6e39-4d62-80aa-7c9f837cd0a0
 # ╟─1f0d9a8f-94b9-4e87-a837-9c350b905c72
 # ╟─aa404f69-e857-4eb6-87f1-298d62429891
 # ╠═7ea26a1d-b6be-4d47-ad30-222ec6ea1a5a
-# ╠═494373d7-3a8c-4717-bc9b-6e57267b3a58
+# ╟─494373d7-3a8c-4717-bc9b-6e57267b3a58
 # ╠═427fcde3-c719-4504-89c3-dfc0491677f9
-# ╠═bf512fa9-3501-47d5-8cad-30f30dd37186
+# ╠═1b1e9945-ad12-4108-a866-f02192eb064f
 # ╠═678b89ee-0302-4ab9-865e-564460f2d691
-# ╠═737782c3-17a7-4684-b912-8ac392422941
+# ╟─737782c3-17a7-4684-b912-8ac392422941
 # ╟─b07bcd90-d9c0-4a71-886c-756cb03b9bc1
 # ╟─1c0ed9fb-c56a-4aab-a765-49c394123a42
 # ╟─8dbf29db-cefd-4bd4-95e7-a302c7aa858a
-# ╠═1075e6dc-be4b-4594-838e-60d44100c92d
+# ╟─1075e6dc-be4b-4594-838e-60d44100c92d
 # ╠═ce1f3eed-13ab-4fa7-aafc-a97954dd818b
 # ╠═7e4fa23d-b05b-4f77-959e-29577e349333
-# ╠═d57adc7b-fcd5-468b-aa50-919d884a916a
 # ╟─69e31afc-7893-4099-8d48-937d8ebffa86
 # ╟─94caa09c-59b6-461f-b56f-178992d2bc83
 # ╟─bb4de2cf-e4b6-4788-9f8b-ff5fd2ca2570
-# ╠═981608f2-57f6-44f1-95ed-82e8cca04718
+# ╟─981608f2-57f6-44f1-95ed-82e8cca04718
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
 # ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184
-# ╠═2308aa4c-bb99-4546-a108-9fa88fca130b
+# ╟─2308aa4c-bb99-4546-a108-9fa88fca130b
 # ╟─1adc874e-e024-464a-80d5-5ded04f62f24
-# ╟─ece11b32-cc61-447b-bbcf-018829360b73
-# ╟─aa5caae7-638d-441f-a306-5442a5c8f75f
 # ╠═d359f3aa-b238-420f-99d2-52f85ce9ff82
+# ╟─bca920fc-9535-4eb0-89c2-03a7334df6b6
+# ╟─416a607b-26bc-4973-8c1a-489e855a06de
+# ╟─ece11b32-cc61-447b-bbcf-018829360b73
 # ╠═c29b63f3-0d32-46ad-99a4-3cae4a3f6181
+# ╟─135c6b95-c440-45ed-bade-0327bf1e142a
+# ╟─8e98a3b4-bc92-43ad-9da3-1323e06cfce6
+# ╟─aa5caae7-638d-441f-a306-5442a5c8f75f
+# ╟─faed4326-5ee6-41da-9ba4-297e965c242e
+# ╠═17136b27-9463-4e5f-a943-d78297f28be7
 # ╠═bee6469f-13a1-4bd8-8f14-f01e8405a949
+# ╟─59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
+# ╠═7a6940ef-56b3-4cb4-bc6b-2c97625965cc
+# ╠═665c55c3-d4dc-4d13-9517-d1106ea6210f
+# ╟─e6930d53-6652-4fea-9a01-a4c87b8058dc
+# ╠═0cce2e6d-4f19-4c50-a4b5-2835c3ed4401
+# ╟─1c023156-0634-456d-a959-65880fd60c34
+# ╟─caa2e633-e044-417c-944c-6a0458475e4f
+# ╠═3e64e18a-6446-4fcc-a282-d3d6079e975a
+# ╟─23301a45-fc89-416f-bcc7-4f3ba41bf04f
+# ╟─d57adc7b-fcd5-468b-aa50-919d884a916a
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

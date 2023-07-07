@@ -764,7 +764,7 @@ end
 # ╔═╡ 13007ba3-7ce2-4201-aa93-559fcbf9d12f
 let
 	Random.seed!(177)
-	xss = single_move_sampler(y, A, C, Q, R, 3000)
+	@time xss = single_move_sampler(y, A, C, Q, R, 3000)
 	xs_m = mean(xss, dims=3)[:, :, 1]
 	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
 
@@ -781,8 +781,6 @@ let
 	println("Mean ESS: $mean_ess")
 	println("Mean Rhat: $mean_rhat")
 	ess_df, rhat_df
-
-	# plot sampled latent states with x_true per time step
 end
 
 # ╔═╡ b4c11a46-438d-4653-89e7-bc2b99e84f48
@@ -860,7 +858,7 @@ md"""
 """
 
 # ╔═╡ f0dc526c-b221-4652-a877-58a959d97019
-function gibbs_dlm_cov(y, A, C, mcmc=3000, burn_in=500, thinning=1)
+function gibbs_dlm_cov(y, A, C, mcmc=3000, burn_in=100, thinning=1)
 	P, T = size(y)
 	K = size(A, 2)
 	
@@ -956,6 +954,11 @@ begin
 	println("Mean Rhat: $mean_rhat")
 end
 
+# ╔═╡ 282b71f4-4848-426d-b8fc-0e3656d01767
+md"""
+FFBS Sample Quality in Gibbs
+"""
+
 # ╔═╡ 2837effd-25f2-4f49-829e-8fc191db8460
 let
 	# Select the first 50 time steps
@@ -983,7 +986,7 @@ Compare with single-move for sampling latent states
 """
 
 # ╔═╡ 4baa0604-712a-448f-b3ee-56543bfc0d71
-function gibbs_smx(y, A, C, mcmc=3000, burn_in=500, thinning=1)
+function gibbs_smx(y, A, C, mcmc=3000, burn_in=100, thinning=1)
 	P, T = size(y)
 	K = size(A, 2)
 	
@@ -1010,15 +1013,15 @@ function gibbs_smx(y, A, C, mcmc=3000, burn_in=500, thinning=1)
 	
 	# Gibbs sampler
 	for i in 1:mcmc+burn_in
-	    # Update the states
-		x = single_move_sampler(y, A, C, Q, R, 1)[:, :, 1]
+
+		x = single_move_sampler(y, A, C, Q, R, burn_in+1)[:, :, end]
 		
 		# Update the system noise
 		Q = sample_Q_(x, A, v_1, S_1, μ_0)
 		
 	    # Update the observation noise
 		R = sample_R_(y, x, C, v_0, S_0)
-	
+		
 	    # Store the samples
 		if i > burn_in && mod(i - burn_in, thinning) == 0
 			index = div(i - burn_in, thinning)
@@ -1031,27 +1034,22 @@ function gibbs_smx(y, A, C, mcmc=3000, burn_in=500, thinning=1)
 end
 
 # ╔═╡ de7046da-e361-41d0-b2d7-12439b571795
-let
+begin
 	Random.seed!(99)
-	_, Qs_samples, Rs_samples = gibbs_smx(y, A, C)
-
-	Q_m = mean(Qs_samples, dims=1)[1, :, :]
-	R_m = mean(Rs_samples, dims=1)[1, :, :]
-	Q_m, R_m
+	Xs_samples_sm, Qs_samples_sm, Rs_samples_sm = gibbs_smx(y, A, C)
+	mean(Qs_samples_sm, dims=1)[1, :, :], mean(Rs_samples_sm, dims=1)[1, :, :]
 end
 
 # ╔═╡ 05828da6-bc3c-45de-b059-310159038d5d
 md"""
-similar to inference with unknown A, C, R, gibbs via single-move learning is poor compared to ffbs
+similar to inference with unknown A, C, R, gibbs via single-move learning is poor compared to FFBS? 
 """
 
 # ╔═╡ 69061e7f-8a6d-4fac-b187-4d6ff16cf777
 let
-	Random.seed!(99)
-	Xs_samples, _, _ = gibbs_smx(y, A, C, 3000, 1000, 1)
 	# Select the first 50 time steps
 	true_latent_50 = x_true[:, 1:50]
-	sm_sampled_latent_50 = Xs_samples[:, :, 1:50]
+	sm_sampled_latent_50 = Xs_samples_sm[:, :, 1:50]
 	
 	# Create a new plot
 	p = plot()
@@ -1066,6 +1064,25 @@ let
 	    plot!(p, sm_sampled_latent_50[i, 2, :], linewidth=0.1, alpha=0.1, label=false, color=:orange)
 	end
 	p
+end
+
+# ╔═╡ a9cba95e-9a9e-46c1-8f66-0a9b4ee0fcf0
+let
+	xs_m = mean(Xs_samples_sm, dims=1)[1, :, :]
+	println("MSE, MAD of MCMC X mean: ", error_metrics(x_true, xs_m))
+	println("MSE, MAD of MCMC X end: ", error_metrics(x_true, Xs_samples_sm[end, :, :]))
+
+	X_chain = Chains(reshape(Xs_samples_sm, 3000, 2*T))
+	x_ess = ess(X_chain)
+	x_rhat = rhat(X_chain)
+	ess_df = DataFrame(x_ess)
+	rhat_df = DataFrame(x_rhat)
+	
+	mean_ess = mean(skipmissing(ess_df.ess))
+	mean_rhat = mean(skipmissing(rhat_df.rhat))
+	
+	println("Mean ESS: $mean_ess")
+	println("Mean Rhat: $mean_rhat")
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2664,7 +2681,7 @@ version = "1.4.1+0"
 # ╟─eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
 # ╟─e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 # ╟─6a4af386-bfe0-48bb-8d40-300e02680703
-# ╠═120d3c31-bba9-476d-8a63-95cdf2457a1b
+# ╟─120d3c31-bba9-476d-8a63-95cdf2457a1b
 # ╠═df166b81-a6c3-490b-8cbc-4061f19b750b
 # ╟─56cad0cb-352b-4612-b3a3-ddb34de607ad
 # ╠═af9c5548-14f2-4771-84cf-bf93eebcd3f2
@@ -2682,14 +2699,14 @@ version = "1.4.1+0"
 # ╟─9d2a6daf-2b06-409e-b034-6e787e64fea8
 # ╟─3e3d4c01-8a97-4ede-a341-27ab6fd07b95
 # ╟─369366a2-b4c7-44b5-8f64-d11616e99290
-# ╠═57c87102-04bc-4414-9258-e2220f9d2e22
+# ╟─57c87102-04bc-4414-9258-e2220f9d2e22
 # ╟─11700202-40fe-408b-a8b8-5c073daec12d
 # ╟─8c9357c8-8339-4889-8a91-b62e542f0407
 # ╠═a9621810-e0cb-4925-8b6a-726f78d13510
-# ╠═36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
-# ╠═a95ed94c-5fe2-4c31-a7a6-e45e841af528
+# ╟─36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
+# ╟─a95ed94c-5fe2-4c31-a7a6-e45e841af528
 # ╟─fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
-# ╠═ad1eab82-0fa5-462e-ad17-8cb3b787aaf0
+# ╟─ad1eab82-0fa5-462e-ad17-8cb3b787aaf0
 # ╟─e9f3b9e2-5689-40ce-b5b5-bc571ba35c10
 # ╠═c9f6fad7-518c-442b-a385-e3fa74431cb1
 # ╠═3a8ceb49-403e-424f-bedb-49f5b01c8d7a
@@ -2709,12 +2726,14 @@ version = "1.4.1+0"
 # ╠═f0551220-d7c1-4312-b6c5-e0c432889494
 # ╟─0b4d5ac8-5a7b-4363-9dbe-2edc517708a0
 # ╠═b337a706-cbbf-4acd-8a8f-26fdbc137e8e
-# ╠═ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
-# ╠═2837effd-25f2-4f49-829e-8fc191db8460
+# ╟─ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
+# ╟─282b71f4-4848-426d-b8fc-0e3656d01767
+# ╟─2837effd-25f2-4f49-829e-8fc191db8460
 # ╟─0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
-# ╠═4baa0604-712a-448f-b3ee-56543bfc0d71
+# ╟─4baa0604-712a-448f-b3ee-56543bfc0d71
 # ╠═de7046da-e361-41d0-b2d7-12439b571795
 # ╟─05828da6-bc3c-45de-b059-310159038d5d
-# ╠═69061e7f-8a6d-4fac-b187-4d6ff16cf777
+# ╟─69061e7f-8a6d-4fac-b187-4d6ff16cf777
+# ╟─a9cba95e-9a9e-46c1-8f66-0a9b4ee0fcf0
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

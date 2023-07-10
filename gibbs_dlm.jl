@@ -114,11 +114,11 @@ $$p(x_{1:T}∣ A, Q)= \prod_{t=2}^T \mathcal N(x_t|A x_{t−1}, Q)$$
 
 Taking the log likelihood and keeping only terms that relate to $A$:
 
-$$\log p(x_{1:T}∣ A, Q) \propto -\frac{1}{2} \sum_{t=2}^T (x_t − Ax_{t−1})^TQ^{−1}(x_t − A x_{t−1})$$
+$$\log p(x_{1:T}∣ A, Q) \propto -\frac{1}{2} \sum_{t=2}^T (x_t − Ax_{t−1})^\top Q^{−1}(x_t − A x_{t−1})$$
 
 Given $A$ has row-wise MVN prior $\mathcal N(μ_a, Σ_a)$, we can express the log prior as:
 
-$$\log p(A) \propto-\frac{1}{2} \sum_{i=1}^K (A_i − μ_a)^T Σ_a^{-1} (A_i - μ_a)$$
+$$\log p(A) \propto-\frac{1}{2} \sum_{i=1}^K (A_i − μ_a)^\top Σ_a^{-1} (A_i - μ_a)$$
 
 Adding the log-likelihood and the log-prior, we obtain the log-posterior for sampling $A$:
 
@@ -254,28 +254,6 @@ function sample_x_ffbs(Ys, A, C, R, Q, μ₀, Σ₀)
 end
   ╠═╡ =#
 
-# ╔═╡ b6fa79f5-0452-49a4-8de9-d59093078b01
-# ╠═╡ disabled = true
-#=╠═╡
-md"""
-Test FFBS with ground-truth y, A, C, R
-"""
-  ╠═╡ =#
-
-# ╔═╡ eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
-#=╠═╡
-let
-	xss = zeros(2, T, 100)
-	for i in 1:100
-		x_ffbs = sample_x_ffbs(y, A, C, R, Q, zeros(2), Matrix{Float64}(I, 2, 2))
-		xss[:, :, i] = x_ffbs
-	end
-
-	xs_m = mean(xss, dims=3)[:, :, 1]
-	println(error_metrics(x_true, xs_m))
-end
-  ╠═╡ =#
-
 # ╔═╡ e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 md"""
 ## Gibbs sampling
@@ -289,48 +267,6 @@ VBEM Analog with Beale Chap 5
 # ╔═╡ 56cad0cb-352b-4612-b3a3-ddb34de607ad
 md"""
 Analyse Gibbs results with Chains
-"""
-
-# ╔═╡ 2dce7f45-fe4a-4e11-b690-75517e14c068
-md"""
-Compare with single-move sampler
-"""
-
-# ╔═╡ ad1c98fd-ffdf-430f-ae3e-59fa63a9433e
-# ╠═╡ disabled = true
-#=╠═╡
-let
-	Random.seed!(99)
-	#A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2, true, Matrix{Float64}(I, 2, 2), 15000, 20000, 5)
-	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2, true)
-	chn_A = Chains(reshape(A_samples, 4, 3000)');
-	chn_C = Chains(reshape(C_samples, 4, 3000)');
-	chn_R = Chains(reshape(R_samples, 4, 3000)');
-	xs_m = mean(X_samples, dims=3)[:, :, 1]
-	println("MSE, MAD of MCMC mean: ", error_metrics(x_true, xs_m))
-	reshaped_samples = reshape(X_samples, 3000, 2*1000, 1)
-	xss_chains = Chains(reshaped_samples)
-	
-	ess = ess(xss_chains)
-	rhat = rhat(xss_chains)
-	# Convert to DataFrame
-	ess_df = DataFrame(ess)
-	rhat_df = DataFrame(rhat)
-	
-	# Get the mean ESS and Rhat across all parameters
-	mean_ess = mean(skipmissing(ess_df.ess))
-	mean_rhat = mean(skipmissing(rhat_df.rhat))
-	
-	println("X Mean ESS: $mean_ess")
-	println("X Mean Rhat: $mean_rhat")
-
-	describe(chn_A), describe(chn_C), describe(chn_R)
-end
-  ╠═╡ =#
-
-# ╔═╡ 79fc7c88-d31a-4753-81bc-9092576eda35
-md"""
-DEBUG? single-move X sampler gave very poor learning in the Gibbs routine
 """
 
 # ╔═╡ 0a9c1721-6901-4dc1-a93d-8d8e18f7f375
@@ -639,9 +575,8 @@ function single_move_sampler(Ys, A, C, Q, R, mcmc=2000)
 end
 
 # ╔═╡ 120d3c31-bba9-476d-8a63-95cdf2457a1b
-function gibbs_dlm(y, K, single_move=false, Q=Matrix{Float64}(I, K, K), mcmc=3000, burn_in=1000, thinning=1)
+function gibbs_dlm(y, K, single_move=false, Q=Matrix{Float64}(I, K, K), mcmc=3000, burn_in=1500, thinning=1)
 	P, T = size(y)
-
 	n_samples = Int.(mcmc/thinning)
     A_samples = zeros(K, K, n_samples)
     C_samples = zeros(P, K, n_samples)
@@ -651,7 +586,6 @@ function gibbs_dlm(y, K, single_move=false, Q=Matrix{Float64}(I, K, K), mcmc=300
     # Initialize A, C, and R, using fixed prior 
     A_init = rand(MvNormal(zeros(K), Matrix{Float64}(I, K, K)), K)'
     C_init = rand(MvNormal(zeros(K), Matrix{Float64}(I, K, K)), P)'
-
 	a = 0.1
 	b = 0.1
 	ρ = rand(Gamma(a, b), 2)
@@ -659,12 +593,10 @@ function gibbs_dlm(y, K, single_move=false, Q=Matrix{Float64}(I, K, K), mcmc=300
     A = A_init
     C = C_init
     R = R_init
-	
 	μ₀, Σ₀ = vec(mean(y, dims=2)), Matrix{Float64}(I, K, K)
 	
     for iter in 1:(mcmc + burn_in)
 		Xs = missing
-		
         # Sample latent states Xs
 		if single_move # not working well in Gibbs
 			Xs = single_move_sampler(y, A, C, Q, R, 1)[:, :, 1]
@@ -690,7 +622,7 @@ end
 
 # ╔═╡ df166b81-a6c3-490b-8cbc-4061f19b750b
 begin
-	Random.seed!(111)
+	Random.seed!(998)
 	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
 end
 
@@ -854,7 +786,7 @@ end
 
 # ╔═╡ 68c26d99-8f54-4580-8357-5598eb1c8cdf
 md"""
-## Gibbs sampling of Unknown Co-variances
+## Gibbs sampling
 """
 
 # ╔═╡ f0dc526c-b221-4652-a877-58a959d97019
@@ -1084,6 +1016,183 @@ let
 	println("Mean ESS: $mean_ess")
 	println("Mean Rhat: $mean_rhat")
 end
+
+# ╔═╡ 6bea5f44-2abd-47b9-9db5-c5f70dd12c4f
+md"""
+# VBEM for general Q, R
+"""
+
+# ╔═╡ 37e0d499-bda5-4a5e-8b81-9b3f9384c2fb
+md"""
+Akin to the uni-variate case, we assume state transition $A$ and observation $C$ are fixed, and we want to infer the unknown matrices $Q$ and $R$
+
+Full joint probability:
+
+$$p(R, Q, x_{0:T}, y_{1:T}) = p(R) p(Q) p(x_0) \prod_{t=1}^{T} p(x_t | x_{t-1}, Q) \prod_{t=1}^{T} p(y_t | x_t, R)$$
+
+$\begin{align}
+\log p(y_{1:T}) &= \log \int p(R, Q, x_{0:T}, y_{1:T}) \ dR \ dQ \ dx_{0:T} \\
+&\geq \int \ dR \ dQ \ dx_{0:T} \  q(R, Q, x_{0:T}) \log \frac{p(R, Q, x_{0:T}, y_{1:T})}{q(R, Q, x_{0:T})} \\
+&= \mathcal F
+\end{align}$
+
+$$q(R, Q, x_{0:T}) = q(R) \ q(Q) \ q(x_{0:T})$$
+
+"""
+
+# ╔═╡ 456f0f6f-1c39-4a50-be3a-0db68d61a95f
+md"""
+## Prior specification
+
+The prior for the precision matrices $R^{-1} = Λ_R$ and $Q^{-1} = Λ_Q$ can be expressed as follows:
+
+
+$Λ_R \sim \mathcal{W}(W_R, \nu_R)$
+$Λ_Q \sim \mathcal{W}(W_Q, \nu_Q)$
+
+where $\mathcal{W}(W, \nu)$ denotes a Wishart distribution with scale matrix $W$ and degrees of freedom $\nu$. 
+
+
+Log full joint:
+
+$\ln p(Λ_Q, Λ_R, x_{0:T}, y_{1:T}) = \ln p(y_{1:T}|x_{0:T}, Λ_R) + \ln p(x_{0:T}| Λ_Q) + \ln p(Λ_R) + \ln p(Λ_Q)$
+
+"""
+
+# ╔═╡ 89fb5821-17c5-46be-8e3c-94439d295220
+md"""
+## VB-M 
+
+$\ln q(Λ_Q, Λ_R) = E_q[\ln p(Λ_Q, Λ_R, x_{0:T}, y_{1:T})] + const$
+
+
+### Update emission precision $Λ_R$
+$\ln q(Λ_R) =  \langle \ln p(x_{0:T}, y_{1:T}, Λ_Q, Λ_R) \rangle_{\hat q(\mathbf{x}, Λ_Q)} + c$
+
+We need only the terms that involve $Λ_R$ from the log full joint:
+
+$\begin{align}
+\ln q(Λ_R) &= \langle \ln p(Λ_R) + \ln p(y_{1:T}|x_{1:T}, Λ_R) \rangle_{\hat q(\mathbf{x}, Λ_Q)} + c \\
+
+&= \ln p(Λ_R) + \langle \sum_{t=1}^T \ln  p(y_t|x_t, Λ_R) \rangle_{\hat q(\mathbf{x})} + c \\
+
+&= \frac{\nu_R - d - 1}{2} \ln|\Lambda_R| -\frac{1}{2} \text{tr}(W_R^{-1} \Lambda_R) \\
+
+&+ \frac{T}{2} \ln|\Lambda_R| -\frac{1}{2} \langle \sum_{t=1}^T (y_t - C x_t)^\top \Lambda_R (y_t - C x_t) \rangle_{\hat q(\mathbf{x})} 
+
+\end{align}$ 
+
+The variational posterior is therefore Wishart distributed:
+
+$\ln q(Λ_R) = \ln \mathcal{W}(Λ_R; W_{Rn}, \nu_{Rn})$
+
+$$W_{Rn}^{-1} = W_R^{-1} + \langle \sum_{t=1}^T (y_t - C x_t)(y_t - C x_t)^\top\rangle_{\hat q(\mathbf{x})}$$
+
+$$\nu_{Rn} = \nu_R + T$$
+"""
+
+# ╔═╡ c9d18a43-5984-45f5-b558-368368212355
+md"""
+### Update emission precision $Λ_Q$
+$\ln q(Λ_Q) =  \langle \ln p(x_{0:T}, y_{1:T}, Λ_Q, Λ_R) \rangle_{\hat q(\mathbf{x}, Λ_R)} + c$
+
+We need only the terms that involve $Λ_Q$ from the log full joint:
+
+$\begin{align}
+\ln q(Λ_Q) &= \langle \ln p(Λ_Q) + \ln p(x_{0:T}| Λ_Q) \rangle_{\hat q(\mathbf{x}, Λ_R)} + c \\
+&=  \ln p(Λ_Q) + \sum_{t=1}^{T} \langle \ln p(x_t| x_{t-1}, Λ_Q) \rangle_{\hat q(\mathbf{x})} + c \\
+&= \frac{\nu_Q - d - 1}{2} \ln|\Lambda_Q| -\frac{1}{2} \text{tr}(W_Q^{-1} \Lambda_Q) \\
+&+ \frac{T-1}{2} \ln |\Lambda_Q| - \langle \frac{1}{2} \sum_{t=1}^{T} (x_t - A x_{t-1})^\top \Lambda_Q (x_t - A x_{t-1}) \rangle_{\hat q(\mathbf{x})} + c
+\end{align}$
+
+The variational posterior is therefore also Wishart distributed:
+
+$\ln q(Λ_Q) = \ln \mathcal{W}(Λ_Q; W_{Qn}, \nu_{Qn})$
+
+$$W_{Qn}^{-1} = W_Q^{-1} + \langle \sum_{t=1}^{T} (x_t - A x_{t-1})(x_t - A x_{t-1})^\top\rangle_{\hat q(\mathbf{x})}$$
+$$\nu_{Qn} = \nu_Q + T$$
+
+"""
+
+# ╔═╡ 99aab1db-2156-4bd4-9b54-3bb0d4a1620b
+md"""
+Hidden State Sufficient Statistics (HSS)
+Calculated in E-step and used in M-step
+
+$W_A = \sum_{t=1}^T \langle x_{t-1} x_{t-1}^T \rangle = \sum_{t=1}^T Υ_{t-1,t-1} + ω_{t-1} ω_{t-1}^T$
+
+$S_A = \sum_{t=1}^T \langle x_{t-1} x_t^T \rangle = \sum_{t=1}^T Υ_{t-1,t} + ω_{t-1} ω_t^T$
+
+$W_C = \sum_{t=1}^T \langle x_t x_t^T \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_t^T$
+
+$S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
+
+$W_Y = \sum_{t=1}^T \ y_t \ y_t^T$
+
+In $q(Λ_R)$ update:
+
+$$E_q[\sum_{t=1}^{T} (y_t - Cx_t)(y_t - Cx_t)^\top] = W_Y - S_C C^\top - C S_C^\top + C W_C C^\top$$
+
+
+In $q(Λ_Q)$ update:
+
+$$E_q[\sum_{t=1}^{T} (x_t - Ax_{t-1})(x_t - Ax_{t-1})^\top] = W_C - S_A A^\top - A S_A^\top + A W_A A^\top$$
+"""
+
+# ╔═╡ 95ab5440-82dd-4fc4-be08-b1a851caf9ca
+begin
+	struct HSS
+	    W_C::Array{Float64, 2}
+	    W_A::Array{Float64, 2}
+	    S_C::Array{Float64, 2}
+	    S_A::Array{Float64, 2}
+	end
+	
+	struct Prior
+	    ν_R::Float64
+	    W_R::Array{Float64, 2}
+	    ν_Q::Float64
+	    W_Q::Array{Float64, 2}
+	    μ_0::Array{Float64, 1}
+	    Λ_0::Array{Float64, 2}
+	end
+end
+
+# ╔═╡ 0f2e6c3a-04c4-4f6b-8ccd-ed18c41e2bc4
+function vb_m_step(y::Array{Float64, 2}, hss::HSS, prior::Prior, A::Array{Float64, 2}, C::Array{Float64, 2})
+    _, T = size(y)
+    
+    # Compute the new parameters for the variational posterior of Λ_R
+    ν_Rn = prior.ν_R + T
+    W_Rn_inv = inv(prior.W_R) + y*y' + hss.W_C - hss.S_C * C' - C * hss.S_C' + C * hss.W_C * C'
+    W_Rn = inv(W_Rn_inv)
+    
+    # Compute the new parameters for the variational posterior of Λ_Q
+    ν_Qn = prior.ν_Q + T
+    W_Qn_inv = inv(prior.W_Q) + hss.W_A - hss.S_A * A' - A * hss.S_A' + A * hss.W_A * A'
+    W_Qn = inv(W_Qn_inv)
+
+	# Return expectations for E-step
+    return ν_Rn * W_Rn, ν_Qn * W_Qn
+end
+
+# ╔═╡ f35c8af8-00b0-45ad-8910-04f656cecfa3
+md"""
+Test M-step update with true latent states
+"""
+
+# ╔═╡ c096bbab-4009-4995-8f45-dc7ffab7ccfa
+md"""
+## VB E
+
+$\ln q(x_{0:T}) = E_q[\ln p(Λ_Q, Λ_R, x_{0:T}, y_{1:T})] + const$
+
+This requires the expectations of M-step posterior:
+
+$$E[Λ_R] = \nu_{Rn}W_{Rn}$$
+$$E[Λ_Q] = \nu_{Qn}W_{Qn}$$
+
+"""
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -2663,7 +2772,7 @@ version = "1.4.1+0"
 # ╟─e1f22c73-dee8-4507-af03-3d2d0ceb9011
 # ╠═544ac3d9-a2b8-4950-a501-40c14c84b2d8
 # ╟─46d87386-7c36-486f-ba59-15d71e88869c
-# ╠═e1bd9dd3-855e-4aa6-91aa-2695da07ba48
+# ╟─e1bd9dd3-855e-4aa6-91aa-2695da07ba48
 # ╟─df41dbec-6f39-437c-9f59-8a74a7f5a8dd
 # ╟─fbf64d6a-0cc7-4150-9891-e659f43a3b39
 # ╟─cfe224e3-dbb3-42bc-ac1b-b96fea5da00d
@@ -2677,23 +2786,18 @@ version = "1.4.1+0"
 # ╠═d8c05722-a79b-4132-b1c2-982ef39af257
 # ╟─65b7e5f4-aff8-4671-9a3a-7aeebef6b83e
 # ╟─8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
-# ╟─b6fa79f5-0452-49a4-8de9-d59093078b01
-# ╟─eb4b1c07-9076-4fa2-a851-ea8d4922dbd2
 # ╟─e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 # ╟─6a4af386-bfe0-48bb-8d40-300e02680703
-# ╟─120d3c31-bba9-476d-8a63-95cdf2457a1b
+# ╠═120d3c31-bba9-476d-8a63-95cdf2457a1b
 # ╠═df166b81-a6c3-490b-8cbc-4061f19b750b
 # ╟─56cad0cb-352b-4612-b3a3-ddb34de607ad
-# ╠═af9c5548-14f2-4771-84cf-bf93eebcd3f2
-# ╠═779e0cef-0865-4087-b3d1-563aec15a734
-# ╠═611e868a-e808-4a1f-8dd3-2d7ef64e2984
-# ╠═69efb78d-1297-46b4-a6bb-218c07c9b2af
-# ╠═9f1a120d-80ac-46e0-ae7c-949d2f571b98
-# ╠═f08a6391-24da-4d3e-8a3e-55806bb9efbb
-# ╠═39ecddfa-89a0-49ec-86f1-4794336215d0
-# ╟─2dce7f45-fe4a-4e11-b690-75517e14c068
-# ╟─ad1c98fd-ffdf-430f-ae3e-59fa63a9433e
-# ╟─79fc7c88-d31a-4753-81bc-9092576eda35
+# ╟─af9c5548-14f2-4771-84cf-bf93eebcd3f2
+# ╟─779e0cef-0865-4087-b3d1-563aec15a734
+# ╟─611e868a-e808-4a1f-8dd3-2d7ef64e2984
+# ╟─69efb78d-1297-46b4-a6bb-218c07c9b2af
+# ╟─9f1a120d-80ac-46e0-ae7c-949d2f571b98
+# ╟─f08a6391-24da-4d3e-8a3e-55806bb9efbb
+# ╟─39ecddfa-89a0-49ec-86f1-4794336215d0
 # ╟─0a9c1721-6901-4dc1-a93d-8d8e18f7f375
 # ╟─91892a1b-b55c-4f83-91b3-dab4132b1863
 # ╟─9d2a6daf-2b06-409e-b034-6e787e64fea8
@@ -2712,20 +2816,20 @@ version = "1.4.1+0"
 # ╠═3a8ceb49-403e-424f-bedb-49f5b01c8d7a
 # ╠═0a609b97-7859-4053-900d-c1be5d61e68c
 # ╠═a8971bb3-cf38-4445-b66e-65ff35ca13ca
-# ╠═13007ba3-7ce2-4201-aa93-559fcbf9d12f
+# ╟─13007ba3-7ce2-4201-aa93-559fcbf9d12f
 # ╟─b4c11a46-438d-4653-89e7-bc2b99e84f48
 # ╠═72f82a78-828a-42f2-9b63-9950af4c7be3
 # ╠═494eed09-a6e8-488b-bea2-55b7ddb37082
-# ╠═060ae93d-12fe-47c6-abe1-ff7728bda572
+# ╟─060ae93d-12fe-47c6-abe1-ff7728bda572
 # ╟─425782f9-4764-4880-ab72-3b481a2cf55a
 # ╠═cc216d03-956c-45bb-a6ef-38bf79d6a597
-# ╠═7dfa5042-227b-43aa-a55c-30decee08413
+# ╟─7dfa5042-227b-43aa-a55c-30decee08413
 # ╟─68c26d99-8f54-4580-8357-5598eb1c8cdf
 # ╠═f0dc526c-b221-4652-a877-58a959d97019
 # ╠═ad6d0997-43c1-42f3-b997-765c594794b4
-# ╠═f0551220-d7c1-4312-b6c5-e0c432889494
+# ╟─f0551220-d7c1-4312-b6c5-e0c432889494
 # ╟─0b4d5ac8-5a7b-4363-9dbe-2edc517708a0
-# ╠═b337a706-cbbf-4acd-8a8f-26fdbc137e8e
+# ╟─b337a706-cbbf-4acd-8a8f-26fdbc137e8e
 # ╟─ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
 # ╟─282b71f4-4848-426d-b8fc-0e3656d01767
 # ╟─2837effd-25f2-4f49-829e-8fc191db8460
@@ -2735,5 +2839,15 @@ version = "1.4.1+0"
 # ╟─05828da6-bc3c-45de-b059-310159038d5d
 # ╟─69061e7f-8a6d-4fac-b187-4d6ff16cf777
 # ╟─a9cba95e-9a9e-46c1-8f66-0a9b4ee0fcf0
+# ╟─6bea5f44-2abd-47b9-9db5-c5f70dd12c4f
+# ╟─37e0d499-bda5-4a5e-8b81-9b3f9384c2fb
+# ╟─456f0f6f-1c39-4a50-be3a-0db68d61a95f
+# ╟─89fb5821-17c5-46be-8e3c-94439d295220
+# ╟─c9d18a43-5984-45f5-b558-368368212355
+# ╟─99aab1db-2156-4bd4-9b54-3bb0d4a1620b
+# ╠═95ab5440-82dd-4fc4-be08-b1a851caf9ca
+# ╠═0f2e6c3a-04c4-4f6b-8ccd-ed18c41e2bc4
+# ╟─f35c8af8-00b0-45ad-8910-04f656cecfa3
+# ╟─c096bbab-4009-4995-8f45-dc7ffab7ccfa
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

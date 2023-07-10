@@ -337,7 +337,7 @@ end
 
 # ╔═╡ ce95e427-eeec-48c6-8e62-bf6f9f892b3e
 md"""
-improved over filtered estimates as expected
+Smoother shows improved latent state inference over filtered estimates as expected
 """
 
 # ╔═╡ 2969a12c-8fe1-4b76-bf0e-b7be6425eb21
@@ -393,7 +393,7 @@ end
 
 # ╔═╡ 05b29e3f-4493-4829-abba-5db47756b54a
 md"""
-test e-step
+Test e-step
 """
 
 # ╔═╡ 668197a9-91e4-461d-8552-a20a34b6eb3d
@@ -454,7 +454,7 @@ end
 
 # ╔═╡ fd2784db-87b3-4c2e-9d4d-7bbca8ec3aba
 md"""
-## Ploting the parameteres, A, C, R
+## Ploting parameter learning, A, C, R
 """
 
 # ╔═╡ 0e431880-8449-44bc-8996-2c50439b0eac
@@ -525,7 +525,7 @@ begin
 	@time exp_f = vb_dlm(y, hpp, 1500) 
 	exp_f.A, exp_f.C, 1 / exp_f.R⁻¹
 	xs, σs = vb_e_uni(y, hpp, exp_f, true)
-	println("VB uni-DLM latent x error: ", error_metrics(x_true, xs)) # MSE, MAD, MAPE of VB inference
+	println("\nVB uni-DLM latent x error: ", error_metrics(x_true, xs)) # MSE, MAD, MAPE of VB inference
 end
 
 # ╔═╡ 06b9d658-7d19-448d-8c02-6fabc5d4a551
@@ -539,6 +539,7 @@ let
 	fit!(model)
 	sm = get_smoothed_state(model)
 	smooth_err = error_metrics(x_true, sm)
+	println("SSM Smoother error: ", smooth_err)
 end
 
 # ╔═╡ 5cc8a85a-2542-4b69-b79a-736b87a5a8c4
@@ -600,7 +601,7 @@ md"""
 md"""
 ### Sample state transition $a$
 
-Given prior, $p(a) \sim \mathcal N(0, 1)$, by conjugacy, The mean and variance of this Gaussian can be computed using standard results for the Normal distribution.
+Given prior, $p(a) \sim \mathcal N(0, 1)$, by conjugacy, The mean and variance of this Normal can be computed using standard results for the Normal distribution.
 
 $p(a | y_{1:T}, x_{1:T}, c, r) = p(a | x_{1:T}) \propto p(a)p(x_{1:T}|a) \sim \mathcal{N}\left(\frac{\sum_{t=2}^{T} x_t x_{t-1}}{\sum_{t=2}^{T} x_{t-1}^2}, \frac{1}{\sum_{t=2}^{T} x_{t-1}^2}\right)$
 """
@@ -650,9 +651,7 @@ function sample_r(xs, ys, c, α_r, β_r)
 	T = length(ys)
     α_post = α_r + T / 2
     β_post = β_r + sum((ys - c * xs).^2) / 2
-	
 	λ_r = rand(Gamma(α_post, 1 / β_post))
-	
 	return 1/λ_r # inverse precision is variance
 end
 
@@ -668,9 +667,7 @@ md"""
 
 # ╔═╡ 1f0d9a8f-94b9-4e87-a837-9c350b905c72
 md"""
-The full conditional distribution of $x_t$ given all other variables is proportional to the product of the likelihood of $x_t$ given its Markov blanket in the graphical model, which includes $x_{t−1}, x_{t+1}$, and $y_t$, and the priors of $x_t$
 
-$p(x_t∣x_{t−1}, x_{t+1}, y_t, a, c, r)$ 
 """
 
 # ╔═╡ aa404f69-e857-4eb6-87f1-298d62429891
@@ -686,7 +683,7 @@ function sample_x_ffbs(y, A, C, Q, R, μ_0, σ_0)
     μs[1] = μ_0
     σs[1] = σ_0
 	
-    for t in 2:T
+    for t in 2:T #forward
         μ_pred = A * μs[t-1]
         σ_pred = A * σs[t-1] * A + Q
         K = σ_pred * C * (1/ (C^2 * σ_pred + R))
@@ -698,19 +695,18 @@ function sample_x_ffbs(y, A, C, Q, R, μ_0, σ_0)
 	x = Vector{Float64}(undef, T)
     x[T] = rand(Normal(μs[T], sqrt(σs[T])))
 
-    for t in (T-1):-1:1
+    for t in (T-1):-1:1 #backward
         μ_cond = μs[t] + σs[t] * A * (1/ (A * σs[t] * A + Q)) * (x[t+1] - A * μs[t])
         σ_cond = σs[t] - σs[t] * A * (1/ (A * σs[t] * A + Q)) * A * σs[t]
         x[t] = rand(Normal(μ_cond, sqrt(σ_cond)))
     end
-
     return x
 end
 
 # ╔═╡ 494373d7-3a8c-4717-bc9b-6e57267b3a58
 let
 	xs_ffbs = sample_x_ffbs(y, 1.0, 1.0, 1.0, 0.2, 0, 1.0)
-	error_metrics(x_true, xs_ffbs)
+	println("FFBS latent x error: ", error_metrics(x_true, xs_ffbs))
 end
 
 # ╔═╡ 427fcde3-c719-4504-89c3-dfc0491677f9
@@ -718,7 +714,6 @@ function gibbs_uni_dlm(y, num_iterations=2000, burn_in=200, thinning=5)
 	T = length(y)
 	μ_0 = 0.0  # Prior mean for the states
 	λ_0 = 1.0  # Prior precision for the states
-	
 	α = 0.01  # Shape parameter for Inverse-Gamma prior
 	β = 0.01  # Scale parameter for Inverse-Gamma prior
 	
@@ -758,7 +753,6 @@ function gibbs_uni_dlm(y, num_iterations=2000, burn_in=200, thinning=5)
 		    samples_r[index] = r
 		end
 	end
-
 	return samples_x, samples_a, samples_c, samples_r
 end
 
@@ -766,26 +760,22 @@ end
 begin
 	Random.seed!(888)
 	@time x_ss, a_ss, c_ss, r_ss = gibbs_uni_dlm(y, 3000, 300, 1)
-
-	plot(a_ss)
-	plot!(c_ss)
-	plot!(r_ss)
+	plot(a_ss, label="a")
+	plot!(c_ss, label="c")
+	plot!(r_ss, label="r")
 end
 
 # ╔═╡ 678b89ee-0302-4ab9-865e-564460f2d691
 mean(r_ss)
 
 # ╔═╡ 737782c3-17a7-4684-b912-8ac392422941
-begin
-	x_ss[end,: ]
-	println("end chain latent x error: ", error_metrics(x_true, x_ss[end,: ]))
-end
+println("end chain latent x error: ", error_metrics(x_true, x_ss[end, : ]))
 
 # ╔═╡ b07bcd90-d9c0-4a71-886c-756cb03b9bc1
 md"""
-Manual Gibbs derivation is faster than NUTS by Turing,
+Manual Gibbs sampling procedure is faster than NUTS sampler used by Turing,
 
-but c estimates not very stable (sometimes negative 1?), and Gibbs tend to require more samples 
+but c estimates not very stable (sometimes negative 1?), and Gibbs tend to require more samples to converge.
 """
 
 # ╔═╡ 1c0ed9fb-c56a-4aab-a765-49c394123a42
@@ -884,7 +874,7 @@ $\begin{align}
 $\mathcal{F}(q) = E_q[\log p(r, q, x_{0:T}, y_{1:T})] - E_q[\log q(r, q, x_{0:T})]$
 
 
-To make the variational inference tractable, we often assume that the variational distribution factorizes over the model parameters and the latent states, 
+To make the variational inference tractable, we can assume that the variational distribution factorizes over the model parameters and the latent states, 
 
 $$q(r, q, x_{0:T}) = q(r) \ q(q) \ q(x_{0:T})$$
 """
@@ -914,7 +904,7 @@ $\beta_r' = \beta + 0.5 \sum_{t=1}^{T} E_q[(y_t - x_t)^2]$
 $\alpha_q' = \alpha + (T-1)/2$
 $\beta_q' = \beta + 0.5 \sum_{t=2}^{T} E_q[(x_t - x_{t-1})^2]$
 
-Here, $E_q[\cdot]$ denotes the expectation with respect to the variational distribution $q(x_{0:T})$, and the expectations are computed using the current parameters of the variational distribution from the E-step --- latent state sufficient statistics (hss)
+Here, $E_q[\cdot]$ denotes the expectation with respect to the variational distribution $q(x_{0:T})$, and the expectations are computed using the current parameters of the variational distribution from the E-step --- latent state sufficient statistics (HSS)
 
 $\begin{align}
 E_q[(y_t - x_t)^2] &= E_q[y_t^2 - 2y_tx_t + x_t^2] \\
@@ -998,7 +988,8 @@ let
 	# should recover values of A, C, R close to ground truth
 	exp_np = vb_m_ll(y, hss, hpp)
 
-	1 ./ exp_np # r = 0.2, q = 1.0
+	println("r ", (1 ./ exp_np)[1]) # r = 0.2, q = 1.0
+	println("q ", (1 ./ exp_np)[2])
 end
 
 # ╔═╡ 1adc874e-e024-464a-80d5-5ded04f62f24
@@ -1010,13 +1001,13 @@ $\ln q(x_{0:T}) =  \langle \ln p(r, q, x_{0:T}, y_{1:T}) \rangle_{\hat q(r, q)} 
 
 In the VB-E step, we compute the variational distribution $q(x_{0:T})$ for the latent states. This is done using the forward-backward algorithm, which is a dynamic programming algorithm 
 
-We need expected parameters computed from vb-m step: 
+We need the following expected parameters computed from vb-m step: 
 
 $E_q[τ_r] = \alpha_r' / \beta_r'$
 $E_q[τ_q] = \alpha_q' / \beta_q'$
 
 #### Forward pass
-The forward pass computes the filtered distribution for each latent state $x_t$ given the observations up to $y_{1:t}$. The filtered distributions are computed recursively from $t=1$ to $T$, much akin to the forward filter in FFBS $p(x_t∣y_{1:t})$ 
+The forward pass computes the filtered distribution for each latent state $x_t$ given the observations up to $y_{1:t}$. The filtered distributions are computed recursively from $t=1$ to $T$, much akin to the forward filter in FFBS, $p(x_t∣y_{1:t})$ 
 """
 
 # ╔═╡ d359f3aa-b238-420f-99d2-52f85ce9ff82
@@ -3308,7 +3299,7 @@ version = "1.4.1+0"
 # ╠═c3669042-bb56-423e-a077-b0cb82ce74a3
 # ╟─fd2784db-87b3-4c2e-9d4d-7bbca8ec3aba
 # ╟─0e431880-8449-44bc-8996-2c50439b0eac
-# ╠═e93f8a5f-fd02-4894-aba5-7cabb9dc76b3
+# ╟─e93f8a5f-fd02-4894-aba5-7cabb9dc76b3
 # ╟─0e7c0e3d-297d-4ccd-a71b-54a49fc40212
 # ╟─418b6277-da40-4232-ab0b-a07c1dc0d5e9
 # ╟─40b0773b-fc7d-4b28-9684-7e4e36ee81c9
@@ -3317,22 +3308,22 @@ version = "1.4.1+0"
 # ╟─5cc8a85a-2542-4b69-b79a-736b87a5a8c4
 # ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
 # ╠═4cc367d1-37a1-4712-a63e-8826b5646a1b
-# ╟─da1598b0-9920-427a-89cd-3af37b67380e
+# ╠═da1598b0-9920-427a-89cd-3af37b67380e
 # ╠═3e4e0ceb-974c-4bdc-8e25-21b24a25d0b8
 # ╟─80e4b5da-9d6e-46cd-9f84-59fa86c201b1
 # ╟─29489270-20ee-4835-8451-db12fe46cf4c
-# ╟─84f6d8f2-6ba5-43d6-9a06-f485975bf208
+# ╠═84f6d8f2-6ba5-43d6-9a06-f485975bf208
 # ╠═be028bb1-28a4-45f4-8c52-c919636b2ea4
 # ╟─b2efefeb-f4a4-40f6-850f-f73b30ce386c
-# ╟─29ca031c-5520-4ef5-95c1-2b0c9fa12906
+# ╠═29ca031c-5520-4ef5-95c1-2b0c9fa12906
 # ╠═a320c6e2-42f3-445f-9585-6e2ff5a43060
 # ╟─5f3d1c80-d93f-4916-82a8-21205e4d0e26
-# ╟─8e3edeee-c940-4975-99e8-bc27c3b18939
+# ╠═8e3edeee-c940-4975-99e8-bc27c3b18939
 # ╠═5985ac18-636e-4606-9978-7e1e0ce1fd09
 # ╟─392e0306-6e39-4d62-80aa-7c9f837cd0a0
 # ╟─1f0d9a8f-94b9-4e87-a837-9c350b905c72
 # ╟─aa404f69-e857-4eb6-87f1-298d62429891
-# ╠═7ea26a1d-b6be-4d47-ad30-222ec6ea1a5a
+# ╟─7ea26a1d-b6be-4d47-ad30-222ec6ea1a5a
 # ╟─494373d7-3a8c-4717-bc9b-6e57267b3a58
 # ╠═427fcde3-c719-4504-89c3-dfc0491677f9
 # ╠═1b1e9945-ad12-4108-a866-f02192eb064f
@@ -3341,7 +3332,7 @@ version = "1.4.1+0"
 # ╟─b07bcd90-d9c0-4a71-886c-756cb03b9bc1
 # ╟─1c0ed9fb-c56a-4aab-a765-49c394123a42
 # ╟─8dbf29db-cefd-4bd4-95e7-a302c7aa858a
-# ╟─1075e6dc-be4b-4594-838e-60d44100c92d
+# ╠═1075e6dc-be4b-4594-838e-60d44100c92d
 # ╠═ce1f3eed-13ab-4fa7-aafc-a97954dd818b
 # ╠═7e4fa23d-b05b-4f77-959e-29577e349333
 # ╟─69e31afc-7893-4099-8d48-937d8ebffa86

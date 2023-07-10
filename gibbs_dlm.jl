@@ -1119,15 +1119,15 @@ md"""
 Hidden State Sufficient Statistics (HSS)
 Calculated in E-step and used in M-step
 
-$W_A = \sum_{t=1}^T \langle x_{t-1} x_{t-1}^T \rangle = \sum_{t=1}^T Υ_{t-1,t-1} + ω_{t-1} ω_{t-1}^T$
+$W_A = \sum_{t=1}^T \langle x_{t-1} x_{t-1}^\top \rangle = \sum_{t=1}^T Υ_{t-1,t-1} + ω_{t-1} ω_{t-1}^\top$
 
-$S_A = \sum_{t=1}^T \langle x_{t-1} x_t^T \rangle = \sum_{t=1}^T Υ_{t-1,t} + ω_{t-1} ω_t^T$
+$S_A = \sum_{t=1}^T \langle x_{t-1} x_t^\top \rangle = \sum_{t=1}^T Υ_{t-1,t} + ω_{t-1} ω_t^\top$
 
-$W_C = \sum_{t=1}^T \langle x_t x_t^T \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_t^T$
+$W_C = \sum_{t=1}^T \langle x_t x_t^\top \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_t^\top$
 
-$S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
+$S_C = \sum_{t=1}^T \langle x_t \rangle y_t^\top = \sum_{t=1}^T ω_ty_t^\top$
 
-$W_Y = \sum_{t=1}^T \ y_t \ y_t^T$
+$W_Y = \sum_{t=1}^T \ y_t \ y_t^\top$
 
 In $q(Λ_R)$ update:
 
@@ -1164,22 +1164,79 @@ function vb_m_step(y::Array{Float64, 2}, hss::HSS, prior::Prior, A::Array{Float6
     
     # Compute the new parameters for the variational posterior of Λ_R
     ν_Rn = prior.ν_R + T
-    W_Rn_inv = inv(prior.W_R) + y*y' + hss.W_C - hss.S_C * C' - C * hss.S_C' + C * hss.W_C * C'
-    W_Rn = inv(W_Rn_inv)
+	W_Rn_inv = inv(prior.W_R) + y*y' - hss.S_C * C' - C * hss.S_C' + C * hss.W_C * C'
     
     # Compute the new parameters for the variational posterior of Λ_Q
     ν_Qn = prior.ν_Q + T
-    W_Qn_inv = inv(prior.W_Q) + hss.W_A - hss.S_A * A' - A * hss.S_A' + A * hss.W_A * A'
-    W_Qn = inv(W_Qn_inv)
+	W_Qn_inv = inv(prior.W_Q) + hss.W_C - hss.S_A * A' - A * hss.S_A' + A * hss.W_A * A'
 
-	# Return expectations for E-step
-    return ν_Rn * W_Rn, ν_Qn * W_Qn
+	# Return expectations for E-step, Eq[R], E_q[Q], co-variance matrices
+	return W_Rn_inv ./ ν_Rn, W_Qn_inv ./ ν_Qn 
+	#return ν_Rn .* inv(W_Rn_inv), ν_Qn .* inv(W_Qn_inv) # precision matrices
 end
 
 # ╔═╡ f35c8af8-00b0-45ad-8910-04f656cecfa3
 md"""
-Test M-step update with true latent states
+Test M-step update with true latent states, A, C assumed fixed
+
+- A, C as identity matrices $I$, local level multi-dimension
+
+- A, C general matrices
 """
+
+# ╔═╡ aaf8f3a7-9549-4d02-ba99-e223fda5252a
+let
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([0.5, 0.5])
+	R = Diagonal([0.01, 0.01])
+	T = 1000
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	
+	W_Q = Matrix{Float64}(I, K, K)
+	W_R = Matrix{Float64}(I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	hss = HSS(W_C, W_A, S_C, S_A)
+
+	E_q_R, E_q_Q = vb_m_step(y, hss, prior, A, C), R, Q
+end
+
+# ╔═╡ a6470873-26b3-4981-80eb-12a59bd3695d
+let
+	A = [0.8 -0.05; 0.1 0.75]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([0.5, 0.5])
+	R = Diagonal([0.01, 0.01])
+	T = 1000
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	
+	W_Q = Matrix{Float64}(I, K, K)
+	W_R = Matrix{Float64}(I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	hss = HSS(W_C, W_A, S_C, S_A)
+
+	vb_m_step(y, hss, prior, A, C), R, Q
+end
 
 # ╔═╡ c096bbab-4009-4995-8f45-dc7ffab7ccfa
 md"""
@@ -1192,7 +1249,46 @@ This requires the expectations of M-step posterior:
 $$E[Λ_R] = \nu_{Rn}W_{Rn}$$
 $$E[Λ_Q] = \nu_{Qn}W_{Qn}$$
 
+Similar to uni-variate local level model, we use the forward-backward algorithm for $ω_t$, $Υ_{t, t}$
 """
+
+# ╔═╡ 63bc1239-1a6a-4f3b-9d2c-9b904aec573c
+md"""
+### Forward
+"""
+
+# ╔═╡ 2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
+function forward_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R::Array{Float64, 2}, E_Q::Array{Float64, 2}, prior::Prior)
+    P, T = size(y)
+    K = size(A, 1)
+    
+    # Unpack the prior parameters
+    μ_0, Λ_0 = prior.μ_0, prior.Λ_0
+    
+    # Initialize the filtered means and covariances
+    μ_f = zeros(K, T)
+    Σ_f = zeros(K, K, T)
+    
+    # Set the initial filtered mean and covariance to their prior values
+    μ_f[:, 1] = μ_0
+    Σ_f[:, :, 1] = Λ_0
+    
+    # Forward pass (kalman filter)
+    for t = 2:T
+        # Predicted state mean and covariance
+        μ_p = A * μ_f[:, t-1]
+        Σ_p = A * Σ_f[:, :, t-1] * A' + E_Q
+
+        # Kalman gain
+        K_t = Σ_p * C' / (C * Σ_p * C' + E_R)
+
+        # Filtered state mean and covariance
+        μ_f[:, t] = μ_p + K_t * (y[:, t] - C * μ_p)
+        Σ_f[:, :, t] = (I - K_t * C) * Σ_p
+    end
+    
+    return μ_f, Σ_f
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -2770,9 +2866,9 @@ version = "1.4.1+0"
 # ╟─6c0ecec8-afdc-4072-9dac-4658af3706d5
 # ╟─73e449fb-81d2-4a9e-a89d-38909093863b
 # ╟─e1f22c73-dee8-4507-af03-3d2d0ceb9011
-# ╠═544ac3d9-a2b8-4950-a501-40c14c84b2d8
+# ╟─544ac3d9-a2b8-4950-a501-40c14c84b2d8
 # ╟─46d87386-7c36-486f-ba59-15d71e88869c
-# ╟─e1bd9dd3-855e-4aa6-91aa-2695da07ba48
+# ╠═e1bd9dd3-855e-4aa6-91aa-2695da07ba48
 # ╟─df41dbec-6f39-437c-9f59-8a74a7f5a8dd
 # ╟─fbf64d6a-0cc7-4150-9891-e659f43a3b39
 # ╟─cfe224e3-dbb3-42bc-ac1b-b96fea5da00d
@@ -2848,6 +2944,10 @@ version = "1.4.1+0"
 # ╠═95ab5440-82dd-4fc4-be08-b1a851caf9ca
 # ╠═0f2e6c3a-04c4-4f6b-8ccd-ed18c41e2bc4
 # ╟─f35c8af8-00b0-45ad-8910-04f656cecfa3
+# ╟─aaf8f3a7-9549-4d02-ba99-e223fda5252a
+# ╟─a6470873-26b3-4981-80eb-12a59bd3695d
 # ╟─c096bbab-4009-4995-8f45-dc7ffab7ccfa
+# ╟─63bc1239-1a6a-4f3b-9d2c-9b904aec573c
+# ╠═2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

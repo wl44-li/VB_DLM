@@ -553,45 +553,6 @@ md"""
 ## Using NUTS() from Turing.jl
 """
 
-# ╔═╡ da1598b0-9920-427a-89cd-3af37b67380e
-# ╠═╡ disabled = true
-#=╠═╡
-begin
-	@model function DLM_Turing(y)
-	    T = length(y)
-	    
-	    # Priors
-	    a ~ Normal(0, 1.0)
-	    c ~ Normal(0, 1.0)
-	    r ~ InverseGamma(0.1, 0.1)
-	    
-	    x = Vector(undef, T)
-
-		# Auxiliary initial latent
-	    x[1] ~ Normal(0, 1.0)
-	    y[1] ~ Normal(c * x[1], sqrt(r))
-		
-	    for t in 2:T
-	        # State transition, q = 1.0 (fixed)
-	        x[t] ~ Normal(a * x[t-1], 1.0)
-	        
-	        # Observation model
-	        y[t] ~ Normal(c * x[t], sqrt(r))
-	    end
-	end
-
-	Random.seed!(888)
-	model = DLM_Turing(y)
-	chain = sample(model, NUTS(), 1000)
-	chain = chain[100:end]
-end;
-  ╠═╡ =#
-
-# ╔═╡ 3e4e0ceb-974c-4bdc-8e25-21b24a25d0b8
-#=╠═╡
-describe(chain)
-  ╠═╡ =#
-
 # ╔═╡ 80e4b5da-9d6e-46cd-9f84-59fa86c201b1
 md"""
 ## Gibbs sampling uni-variate DLM

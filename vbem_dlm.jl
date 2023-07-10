@@ -85,7 +85,7 @@ Let $p(x_0 | μ_0, Σ_0) \sim \mathcal N(x_0 | μ_0, Σ_0)$ be an auxiliary hidd
 
 $\begin{align}
 p(x_1 |μ_0, Σ_0, \mathbf{θ}) &= \int dx_0 \ p(x_0 | μ_0, Σ_0) p(x_1|x_0,\mathbf{θ})\\
-&= \mathcal N(x_1|Aμ_0, A^TΣ_0A + Q)
+&= \mathcal N(x_1|Aμ_0, A^\topΣ_0A + Q)
 \end{align}$
 
 where $Σ_0$ is a multiple of the identity matrix.
@@ -143,13 +143,13 @@ $q(C|\mathbf{ρ}) = \prod_{s=1}^D \mathcal N(c_s|Λ_C^{-1} S_{C, s}, \ ρ_s^{-1}
 
 where $Λ_C = diag(\mathbf{γ}) + W_C$, $S_{C,s}$ is the sth column of matrix $S_C$,
 
-$G = \sum_{t=1}^T y_t y_t^T - S_C^T Λ_C^{-1} S_C$
+$G = \sum_{t=1}^T y_t y_t^\top - S_C^\top Λ_C^{-1} S_C$
 
 After integrating out the precision vector $\mathbf{ρ}$, full marginal of C should be Student-t distributed.
 
 ### Natural parameterisation
 
-$ϕ(\mathbf{θ}) = ϕ(A, C, R) = \{A, \ A^TA, \ C, \ R^{-1},  C^TR^{-1}C, \ R^{-1}C \}$
+$ϕ(\mathbf{θ}) = ϕ(A, C, R) = \{A, \ A^\top A, \ C, \ R^{-1},  C^\top R^{-1}C, \ R^{-1}C \}$
 
 The VBM Step computes the expected natural parameter: $\langle ϕ(\mathbf{θ}) \rangle_{q_θ(θ)}$
 """
@@ -272,9 +272,9 @@ md"""
 $\begin{align}
 α_t(x_t) &= \frac{1}{ζ_t^{'}} \int dx_{t-1} \ \mathcal N(x_{t-1}|μ_{t-1}, Σ_{t-1}) \ \langle p(x_t| x_{t-1}) p(y_t|x_t) \rangle_{q_θ(θ)} \\
 &= \frac{1}{ζ_t^{'}} \int dx_{t-1} \ \mathcal N(x_{t-1}|μ_{t-1}, Σ_{t-1}) \\
-&* \exp \frac{-1}{2} (\langle (x_t - Ax_{t-1})^T I (x_t - Ax_{t-1}) + (y_t - Cx_t)^T R^{-1} (y_t - Cx_t) + K \ln|2π| + \ln|2π R| \rangle_{q_θ(θ)}) \\
+&* \exp \frac{-1}{2} (\langle (x_t - Ax_{t-1})^\top I (x_t - Ax_{t-1}) + (y_t - Cx_t)^\top R^{-1} (y_t - Cx_t) + K \ln|2π| + \ln|2π R| \rangle_{q_θ(θ)}) \\
 &= \frac{1}{ζ_t^{'}} \int dx_{t-1} \ \mathcal N(x_{t-1}|μ_{t-1}, Σ_{t-1}) \\
-&* \exp \frac{-1}{2} \{ x_{t-1}^T \langle A^TA \rangle_{q_θ(θ)} x_{t-1} - 2x_{t-1}^T \langle A \rangle_{q_θ(θ)} x_t + x_t^T \langle C^TR^{-1}C \rangle_{q_θ(θ)} x_t - 2x_t^T\langle C^TR^{-1}\rangle_{q_θ(θ)} y_t + const. \}\\
+&* \exp \frac{-1}{2} \{ x_{t-1}^\top \langle A^\top A \rangle_{q_θ(θ)} x_{t-1} - 2x_{t-1}^\top \langle A \rangle_{q_θ(θ)} x_t + x_t^\top \langle C^\top R^{-1}C \rangle_{q_θ(θ)} x_t - 2x_t^\top \langle C^\top R^{-1}\rangle_{q_θ(θ)} y_t + const. \}\\
 &= \mathcal N(x_t|μ_t, Σ_t)
 \end{align}$
 
@@ -282,14 +282,14 @@ where $\langle \cdot \rangle_{q_θ(θ)}$, expectation under the variational post
 
 Recognizing quadratic terms of $x_t$ and $x_{t-1}$ in the exponent. Analog to point-parameter derviation above, parameter expectations $\langle \cdot \rangle_{q_θ(θ)}$ from VBM step now take the place of fixed $A,C,R$, yielding:
 
-$\mathbf{Σ^*} = (Σ_{t-1}^{-1} + \langle A^TA \rangle)^{-1}$
-$m^* = Σ^* (Σ_{t-1}^{-1}μ_{t-1} + \langle A \rangle^Tx_t)$
+$\mathbf{Σ^*} = (Σ_{t-1}^{-1} + \langle A^\top A \rangle)^{-1}$
+$m^* = Σ^* (Σ_{t-1}^{-1}μ_{t-1} + \langle A \rangle^\top x_t)$
 
 and filtered mean and co-variance as:
 
-$Σ_t = (I + \langle C^T R^{-1} C \rangle - \langle A \rangle \mathbf{Σ^*} \langle A \rangle^T)^{-1}$
+$Σ_t = (I + \langle C^\top R^{-1} C \rangle - \langle A \rangle \mathbf{Σ^*} \langle A \rangle^\top)^{-1}$
 
-$μ_t = Σ_t (\langle C^TR^{-1} \rangle y_t + \langle A \rangle \mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1})$
+$μ_t = Σ_t (\langle C^\top R^{-1} \rangle y_t + \langle A \rangle \mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1})$
 
 where $t = \{1, ... T\}$
 """
@@ -341,7 +341,7 @@ md"""
 
 $ζ_t(y_t) = \mathcal N(y_t|f_t, Q_t)$
 
-$Q_t = (\langle R^{-1} \rangle - \langle R^{-1} C \rangle Σ_t \langle R^{-1} C \rangle^T)^{-1}$
+$Q_t = (\langle R^{-1} \rangle - \langle R^{-1} C \rangle Σ_t \langle R^{-1} C \rangle^\top)^{-1}$
 
 $f_t = Q_t \langle R^{-1} C \rangle Σ_t \langle A \rangle \mathbf{Σ^*} Σ_{t-1}^{-1} μ_{t-1}$
 """
@@ -355,11 +355,11 @@ md"""
 Similarly, we use expectation of natural parameter under variational distribution (VBM outputs) to replace the fixed point $A,C,R$ in Point-parameter implementation.
 
 
-$\mathbf{Ψ_t^*} = (I + \langle C^TR^{-1}C \rangle + Ψ_t^{-1})^{-1}$
+$\mathbf{Ψ_t^*} = (I + \langle C^\top R^{-1}C \rangle + Ψ_t^{-1})^{-1}$
 
-$Ψ_{t-1} = (\langle A^TA \rangle - \langle A \rangle^T\mathbf{Ψ_t^*} \langle A \rangle)^{-1}$
+$Ψ_{t-1} = (\langle A^\top A \rangle - \langle A \rangle^\top \mathbf{Ψ_t^*} \langle A \rangle)^{-1}$
 
-$η_{t-1} = Ψ_{t-1} \langle A \rangle^T \mathbf{Ψ_t^*}(\langle C^TR^{-1} \rangle y_t + Ψ_t^{-1}η_t)$
+$η_{t-1} = Ψ_{t-1} \langle A \rangle^\top \mathbf{Ψ_t^*}(\langle C^\top R^{-1} \rangle y_t + Ψ_t^{-1}η_t)$
 
 where, $t = \{T, ..., 1\}$
 """
@@ -424,7 +424,7 @@ p(x_t, x_{t+1}|y_{1:T}) &\propto p(x_t|y_{1:t}) \ p(x_{t+1}|x_t)\ p(y_{t+1}|x_{t
 &= \mathcal N(\begin{bmatrix} x_t \\ x_{t+1} \end{bmatrix}|\begin{bmatrix} ω_t \\ ω_{t+1} \end{bmatrix}, \begin{bmatrix} Υ_{t,t} \ \ Υ_{t,t+1} \\ Υ_{t,t+1}^T \ \ Υ_{t+1,t+1}\end{bmatrix})\\
 \end{align}$
 
-where $Υ_{t,t+1} = \mathbf{Σ^*} \langle A \rangle^T (I + \langle C^T R^{-1} C \rangle + Ψ_{t+1}^{-1} - \langle A \rangle \mathbf{Σ^*} \langle A \rangle^T)^{-1}$
+where $Υ_{t,t+1} = \mathbf{Σ^*} \langle A \rangle^\top (I + \langle C^\top R^{-1} C \rangle + Ψ_{t+1}^{-1} - \langle A \rangle \mathbf{Σ^*} \langle A \rangle^\top)^{-1}$
 """
 
 # ╔═╡ 96ff4afb-fe7f-471a-b15e-26676c600090
@@ -483,13 +483,13 @@ end
 md"""
 ### Expected sufficient statistics $W_A, S_A, W_C, S_C$
 
-$W_A = \sum_{t=1}^T \langle x_{t-1} x_{t-1}^T \rangle = \sum_{t=1}^T Υ_{t-1,t-1} + ω_{t-1} ω_{t-1}^T$
+$W_A = \sum_{t=1}^T \langle x_{t-1} x_{t-1}^\top \rangle = \sum_{t=1}^T Υ_{t-1,t-1} + ω_{t-1} ω_{t-1}^\top$
 
-$S_A = \sum_{t=1}^T \langle x_{t-1} x_t^T \rangle = \sum_{t=1}^T Υ_{t-1,t} + ω_{t-1} ω_t^T$
+$S_A = \sum_{t=1}^T \langle x_{t-1} x_t^\top \rangle = \sum_{t=1}^T Υ_{t-1,t} + ω_{t-1} ω_t^\top$
 
-$W_C = \sum_{t=1}^T \langle x_t x_t^T \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_t^T$
+$W_C = \sum_{t=1}^T \langle x_t x_t^\top \rangle = \sum_{t=1}^T Υ_{t,t} + ω_t ω_t^\top$
 
-$S_C = \sum_{t=1}^T \langle x_t \rangle y_t^T = \sum_{t=1}^T ω_ty_t^T$
+$S_C = \sum_{t=1}^T \langle x_t \rangle y_t^\top = \sum_{t=1}^T ω_ty_t^\top$
 """
 
 # ╔═╡ 52a70be4-fb8c-40d8-9c7a-226649ada6e3
@@ -497,11 +497,11 @@ md"""
 **Debug notes**: if all hidden states are treated as observed, i.e. parse true x from data generation
 
 
-$\langle x_t x_t^T \rangle = \int x_t x_t^T q(x_t) \ dx_t$
+$\langle x_t x_t^\top \rangle = \int x_t x_t^\top q(x_t) \ dx_t$
 
 if $x_t$ is observed, $q(x_t)$ can be viewed as direct measure (delta function), hence 
 
-$\langle x_t x_t^T \rangle = x_t x_t^T$
+$\langle x_t x_t^\top \rangle = x_t x_t^\top$
 """
 
 # ╔═╡ a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
@@ -524,9 +524,9 @@ Our prior specification involves a few hyper-parameters $\mathbf{α}, \mathbf{γ
 
 Straight after the VBM Step, the following can be updated:
 
-$α_j^{-1} = \frac{1}{K}\{K Σ_A + Σ_AS_AS_A^TΣ_A\}_{j, j}$
+$α_j^{-1} = \frac{1}{K}\{K Σ_A + Σ_AS_AS_A^\top Σ_A\}_{j, j}$
 
-$γ_j^{-1} = \frac{1}{D}\{D Σ_C + Σ_C S_C \ diag(\mathbf{\bar{ρ}}) S_C^T Σ_C \}_{j, j}$
+$γ_j^{-1} = \frac{1}{D}\{D Σ_C + Σ_C S_C \ diag(\mathbf{\bar{ρ}}) S_C^\top Σ_C \}_{j, j}$
 
 $Σ_0 = Υ_{0, 0}$
 
@@ -666,7 +666,7 @@ The first two KL terms are relatively straightforward, to compute the Kullback-L
 
 $KL(J) = \int dJ \ q(J) \ \frac{q(J)}{p(J)}$
 
-$KL(A) = - \frac{1}{2}  \{ \ln |(Σ_A Σ_0^{-1})| + tr( I - (Σ_A + (μ_A - μ_0)(μ_A - μ_0)^T)Σ_0^{-1}) \}$
+$KL(A) = - \frac{1}{2}  \{ \ln |(Σ_A Σ_0^{-1})| + tr( I - (Σ_A + (μ_A - μ_0)(μ_A - μ_0)^\top)Σ_0^{-1}) \}$
 
 $KL(ρ_s) = a_s \ln b_s - a_0 \ln (b_0) - \ln \frac{Γ(a_s)}{Γ(a_0)} + (a_s - a_0) (ψ(a_s) - \ln b_s) - a_s (1 - \frac{b_0}{b_s})$
 
@@ -685,14 +685,14 @@ $q(c_s|ρ_s) = \mathcal N(μ_c, ρ_s^{-1}Σ_C)$
 where $μ_0 = \mathbf{0}$, and $μ_c = Σ_C S_{C, (s)}$
 
 So, $ρ_s$ will cancel out in the first logdet term, the trace term is: 
-$tr( I - (ρ_s^{-1}Σ_C + (μ_C - μ_0)(μ_C - μ_0)^T)ρ_s \ diag(γ)) \}$
+$tr( I - (ρ_s^{-1}Σ_C + (μ_C - μ_0)(μ_C - μ_0)^\top)ρ_s \ diag(γ)) \}$
 which can be simplified below:
 
 $\begin{align}
 \langle KL (q(C | ρ) \ || \ p(C | ρ))\rangle_{q(ρ)} &= \int dρ \ q(ρ) \int dC \ q(C|ρ) \ln \frac{q(C|ρ)}{p(C|ρ)} \\
 &= - \frac{1}{2}  \{ \ln |(Σ_C \ diag(γ)| \\
-&+ \langle tr( I - (Σ_C  \ diag(γ) + (μ_C - μ_0)(μ_C - μ_0)^T)ρ_s diag(γ)) \} \rangle \\
-&= - \frac{1}{2} \{ \ln |(Σ_C \ diag(γ)| + tr( I - (Σ_C  \ diag(γ) + (μ_C - μ_0)(μ_C - μ_0)^T)\langle ρ_s \rangle diag(γ)) \}
+&+ \langle tr( I - (Σ_C  \ diag(γ) + (μ_C - μ_0)(μ_C - μ_0)^\top)ρ_s diag(γ)) \} \rangle \\
+&= - \frac{1}{2} \{ \ln |(Σ_C \ diag(γ)| + tr( I - (Σ_C  \ diag(γ) + (μ_C - μ_0)(μ_C - μ_0)^\top)\langle ρ_s \rangle diag(γ)) \}
 \end{align}$
 
 
@@ -732,8 +732,8 @@ $\ln Z' = \sum_{t=1}^T \ln ζ'_t(y_t)$
 
 $\begin{align}
 \ln ζ'_t(y_t) = - \frac{1}{2} & \{ \langle \ln |2πR| \rangle - \ln|Σ_{t-1}^{-1}Σ_{t-1}^* Σ_t| \\
-&+ μ_{t-1}^TΣ_{t-1}^{-1}μ_{t-1} - μ_t^TΣ_t^{-1}μ_t \\
-&+ y_t^T \langle R^{-1} \rangle y_t - (Σ_{t-1}^{-1}μ_{t-1})^TΣ_{t-1}^*Σ_{t-1}^{-1}μ_{t-1} \}
+&+ μ_{t-1}^\top Σ_{t-1}^{-1}μ_{t-1} - μ_t^\top Σ_t^{-1}μ_t \\
+&+ y_t^\top \langle R^{-1} \rangle y_t - (Σ_{t-1}^{-1}μ_{t-1})^\top Σ_{t-1}^*Σ_{t-1}^{-1}μ_{t-1} \}
 \end{align}$
 
 We know $\langle R^{-1} \rangle = diag(ρ̄)$, hence,  
@@ -1068,14 +1068,14 @@ $\begin{align}
 
 Complete the square of qudratic terms involving $x_{t-1}$ form a Normal distribution $\mathcal N(x_{t-1}|m^*, Σ^*)$
 
-$\mathbf{Σ^*} = (Σ_{t-1}^{-1} + A^TA)^{-1}$
-$m^* = Σ^* (Σ_{t-1}^{-1}μ_{t-1} + A^T x_t)$
+$\mathbf{Σ^*} = (Σ_{t-1}^{-1} + A^\top A)^{-1}$
+$m^* = Σ^* (Σ_{t-1}^{-1}μ_{t-1} + A^\top x_t)$
 
 Filtered mean $μ_t$ and co-variance $Σ_t$ are computed by marginalising $x_{t-1}$, using the expression $\mathbf{Σ^*}$:
 
-$Σ_t = (I + C^T R^{-1} C - A\mathbf{Σ^*}A^T)^{-1}$
+$Σ_t = (I + C^\top R^{-1} C - A\mathbf{Σ^*}A^\top)^{-1}$
 
-$μ_t = Σ_t (C^TR^{-1}y_t + A\mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1})$
+$μ_t = Σ_t (C^\top R^{-1}y_t + A\mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1})$
 
 The denominator of the normalising constant $ζ_t(y_t)$ is also a Normal distribution, and we have (using DLM with R notations):
 
@@ -1083,7 +1083,7 @@ $p(y_{1:T}) = p(y_1) \prod_{t=2}^T p(y_t|y_{1:t-1}) = \prod_{t=1}^T ζ_t(y_t)$
 
 $ζ_t(y_t) \sim \mathcal N(y_t|f_t, Q_t)$
 
-$Q_t = (R^{-1} - R^{-1}CΣ_tC^TR^{-1})^{-1}$ 
+$Q_t = (R^{-1} - R^{-1}CΣ_tC^\top R^{-1})^{-1}$ 
 
 $f_t = Q_tR^{-1}CΣ_tA\mathbf{Σ^*}Σ_{t-1}^{-1}μ_{t-1}$
 
@@ -1339,11 +1339,11 @@ Ending condition: $β_T(x_T) = 1$, $Ψ_T^{-1} = \mathbf{0}$
 
 cf. Beale 5.110-5.112
 
-$\mathbf{Ψ_t^*} = (I + C^TR^{-1}C + Ψ_t^{-1})^{-1}$
+$\mathbf{Ψ_t^*} = (I + C^\top R^{-1}C + Ψ_t^{-1})^{-1}$
 
-$Ψ_{t-1} = (A^TA - A^T\mathbf{Ψ_t^*}A)^{-1}$
+$Ψ_{t-1} = (A^\top A - A^\top \mathbf{Ψ_t^*}A)^{-1}$
 
-$η_{t-1} = Ψ_{t-1}A^T\mathbf{Ψ_t^*}(C^TR^{-1}y_t + Ψ_t^{-1}η_t)$
+$η_{t-1} = Ψ_{t-1}A^\top \mathbf{Ψ_t^*}(C^\top R^{-1}y_t + Ψ_t^{-1}η_t)$
 
 """
 
@@ -2849,7 +2849,7 @@ version = "1.4.1+0"
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
 # ╟─6550261c-a3b8-40bc-a4ac-c43ae33215ca
 # ╟─c422d3e3-27ae-4543-9315-3342bb257d19
-# ╟─73917530-67d0-480f-a776-619ef13394dd
+# ╠═73917530-67d0-480f-a776-619ef13394dd
 # ╠═e199689c-a79d-4824-af81-0b819fbc2a52
 # ╠═23af67ea-b57d-4cf7-81af-8b2a746f84fe
 # ╠═b180f4ec-af24-4f06-a642-b080c8fcdcce

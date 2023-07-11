@@ -68,10 +68,10 @@ Establish ground-truth and test data
 
 # ╔═╡ e1bd9dd3-855e-4aa6-91aa-2695da07ba48
 begin
-	A = [0.8 -0.1; 0.3 0.6]
+	A = [0.8 -0.1; 0.2 0.9]
 	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([0.5, 0.5])
-	R = Diagonal([0.01, 0.01])
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.1, 0.1])
 	T = 500
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
@@ -273,10 +273,10 @@ Analyse Gibbs results with Chains
 md"""
 # TO-DO:
 
-- Single-move sampler of X v.s. FFBS of DLM latent states X
-- Manually derive sampling for unknown Q (`DLM with R`) with **known** A, C
-- Understand the difference between Beale and Petris `DLM with R`, and possible implications for time series inference 
-- design tests/experiments to verify
+- Single-move sampler of X v.s. FFBS for latent state $x$ inference
+- Gibbs sampling for infering unknown $Q$ and $R$ with **known** A, C - cf `DLM with R`
+- VBEM for infering unknown $Q$ and $R$ with **known** A, C - cf `Beale 2003 Thesis`
+- Design tests/experiments to verify and compare both approaches
 """
 
 # ╔═╡ 91892a1b-b55c-4f83-91b3-dab4132b1863
@@ -317,7 +317,6 @@ function kf_ng_σ(Ys, A, C, Q̃, R̃, μ_0, Σ_0, α_0, β_0)
 	
     # Kalman filter (Prep 4.1)
     for t in 2:T
-		
         # Prediction
         a_t = A * m[:, t-1]
         P_t = A * P[:, :, t-1] * A' + Q̃
@@ -340,16 +339,26 @@ end
 
 # ╔═╡ 57c87102-04bc-4414-9258-e2220f9d2e22
 let
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.1, 0.1])
+	T = 500
+	Random.seed!(33)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	
 	σ_true = 2.0
 	println("true scale: ", σ_true)
 	Q̃ = Q ./ σ_true
 	R̃ = R ./ σ_true
 	Σ_0̃  = Σ_0 ./ σ_true
 	
-	 _, _, α_t, β_t = kf_ng_σ(y, A, C, Q̃, R̃, μ_0, Σ_0̃ , 0.01, 0.01)
-
+	 _, _, α_t, β_t = kf_ng_σ(y, A, C, Q̃, R̃, μ_0, Σ_0̃ , 0.1, 0.1)
 	println("unknown_scale_mean: ", β_t / (α_t - 1))
-	println("unknown_scale_variance: ", β_t^2 / ((α_t - 1)^2 * (α_t - 2)))
+	println("unknown_scale_variance: ", β_t^2 / ((α_t - 1)^2 * (α_t - 2)))	
 end
 
 # ╔═╡ 11700202-40fe-408b-a8b8-5c073daec12d
@@ -622,7 +631,7 @@ end
 
 # ╔═╡ df166b81-a6c3-490b-8cbc-4061f19b750b
 begin
-	Random.seed!(998)
+	Random.seed!(199)
 	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
 end
 
@@ -840,7 +849,7 @@ end
 
 # ╔═╡ ad6d0997-43c1-42f3-b997-765c594794b4
 begin
-	Random.seed!(99)
+	Random.seed!(123)
 	Xs_samples, Qs_samples, Rs_samples = gibbs_dlm_cov(y, A, C, 3000, 1000, 1)
 end
 
@@ -1246,8 +1255,12 @@ $\ln q(x_{0:T}) = E_q[\ln p(Λ_Q, Λ_R, x_{0:T}, y_{1:T})] + const$
 
 This requires the expectations of M-step posterior:
 
-$$E[Λ_R] = \nu_{Rn}W_{Rn}$$
-$$E[Λ_Q] = \nu_{Qn}W_{Qn}$$
+$$E_q[Λ_R] = \nu_{Rn}W_{Rn}$$
+$$E_q[R] = W_{Rn}^{-1} / \nu_{Rn}$$
+
+
+$$E_q[Λ_Q] = \nu_{Qn}W_{Qn}$$
+$$E_q[Q] = W_{Qn}^{-1} / \nu_{Qn}$$
 
 Similar to uni-variate local level model, we use the forward-backward algorithm for $ω_t$, $Υ_{t, t}$
 """
@@ -1270,8 +1283,15 @@ function forward_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 
     Σ_f = zeros(K, K, T)
     
     # Set the initial filtered mean and covariance to their prior values
-    μ_f[:, 1] = μ_0
-    Σ_f[:, :, 1] = Λ_0
+	As = zeros(K, T)
+	Rs = zeros(K, K, T)
+	As[:, 1] = A * μ_0
+	Rs[:, :, 1] = A * inv(Λ_0) * A' + E_Q
+	
+	f_1 = C * As[:, 1]
+	S_1 = C * Rs[:, :, 1] * C' + E_R
+    μ_f[:, 1] = As[:, 1] + Rs[:, :, 1]*C'* inv(S_1) * (y[:, 1] - f_1)
+    Σ_f[:, :, 1] = Rs[:, :, 1] - Rs[:, :, 1]*C'*inv(S_1)*C*Rs[:, :, 1]
     
     # Forward pass (kalman filter)
     for t = 2:T
@@ -1288,6 +1308,421 @@ function forward_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 
     end
     
     return μ_f, Σ_f
+end
+
+# ╔═╡ 1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
+begin
+	struct Exp_ϕ
+		A
+		AᵀA
+		C
+		R⁻¹
+		CᵀR⁻¹C
+		R⁻¹C
+		CᵀR⁻¹
+		log_ρ
+	end
+	
+	
+	# hyper-prior parameters
+	struct HPP
+	    α::Vector{Float64} # precision vector for transition A
+	    γ::Vector{Float64}  # precision vector for emission C
+	    a::Float64 # gamma rate of ρ
+	    b::Float64 # gamma inverse scale of ρ
+	    μ_0::Vector{Float64} # auxiliary hidden state mean
+	    Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
+	end
+	
+	function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
+	    D, T = size(ys)
+	    K = size(exp_np.A, 1)
+	
+	    μs = zeros(K, T)
+	    Σs = zeros(K, K, T)
+		Σs_ = zeros(K, K, T)
+		
+		Qs = zeros(D, D, T)
+		fs = zeros(D, T)
+	
+		# Extract μ_0 and Σ_0 from the HPP struct
+	    μ_0 = hpp.μ_0
+	    Σ_0 = hpp.Σ_0
+	
+		# initialise for t = 1
+		Σ₀_ = inv(inv(Σ_0) + exp_np.AᵀA)
+		Σs_[:, :, 1] = Σ₀_
+		
+	    Σs[:, :, 1] = inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σ₀_*exp_np.A')
+	    μs[:, 1] = Σs[:, :, 1]*(exp_np.CᵀR⁻¹*ys[:, 1] + exp_np.A*Σ₀_*inv(Σ_0)μ_0)
+	
+		Qs[:, :, 1] = inv(exp_np.R⁻¹ - exp_np.R⁻¹C*Σs[:, :, 1]*exp_np.R⁻¹C')
+		fs[:, 1] = Qs[:, :, 1]*exp_np.R⁻¹C*Σs[:, :, 1]*exp_np.A*Σ₀_*inv(Σ_0)*μ_0
+			
+		# iterate over T
+		for t in 2:T
+			Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + exp_np.AᵀA)
+			Σs_[:, :, t] = Σₜ₋₁_
+			
+			Σs[:, :, t] = inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σₜ₋₁_*exp_np.A')
+	    	μs[:, t] = Σs[:, :, t]*(exp_np.CᵀR⁻¹*ys[:, t] + exp_np.A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
+	
+			Qs[:, :, t] = inv(exp_np.R⁻¹ - exp_np.R⁻¹C*Σs[:, :, t]*exp_np.R⁻¹C')
+			fs[:, t] = Qs[:, :, t]*exp_np.R⁻¹C*Σs[:, :, t]*exp_np.A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1]
+		end
+	
+		return μs, Σs, Σs_, fs, Qs
+	end
+
+	function v_backward(ys::Matrix{Float64}, exp_np::Exp_ϕ)
+	    D, T = size(ys)
+	    K = size(exp_np.A, 1)
+	
+		ηs = zeros(K, T)
+	    Ψs = zeros(K, K, T)
+	
+	    # Initialize the filter, t=T, β(x_T-1)
+		Ψs[:, :, T] = zeros(K, K)
+	    ηs[:, T] = ones(K)
+		
+		Ψₜ = inv(I + exp_np.CᵀR⁻¹C)
+		Ψs[:, :, T-1] = inv(exp_np.AᵀA - exp_np.A'*Ψₜ*exp_np.A)
+		ηs[:, T-1] = Ψs[:, :, T-1]*exp_np.A'*Ψₜ*exp_np.CᵀR⁻¹*ys[:, T]
+		
+		for t in T-2:-1:1
+			Ψₜ₊₁ = inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, t+1]))
+			
+			Ψs[:, :, t] = inv(exp_np.AᵀA - exp_np.A'*Ψₜ₊₁*exp_np.A)
+			ηs[:, t] = Ψs[:, :, t]*exp_np.A'*Ψₜ₊₁*(exp_np.CᵀR⁻¹*ys[:, t+1] + inv(Ψs[:, :, t+1])ηs[:, t+1])
+		end
+	
+		# for t = 1, this correspond to β(x_0), the probability of all the data given the setting of the auxiliary x_0 hidden state.
+		Ψ₁ = inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, 1]))
+			
+		Ψ_0 = inv(exp_np.AᵀA - exp_np.A'*Ψ₁*exp_np.A)
+		η_0 = Ψs[:, :, 1]*exp_np.A'*Ψ₁*(exp_np.CᵀR⁻¹*ys[:, 1] + inv(Ψs[:, :, 1])ηs[:, 1])
+		
+		return ηs, Ψs, η_0, Ψ_0
+	end
+
+	function parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
+		K, T = size(μs)
+		Υs = zeros(K, K, T)
+		ωs = zeros(K, T)
+	
+		# ending condition t = T
+		Υs[:, :, T] = Σs[:, :, T]
+		ωs[:, T] = μs[:, T]
+		
+		for t in 1:(T-1)
+			Υs[:, :, t] = inv(inv(Σs[:, :, t]) + inv(Ψs[:, :, t]))
+			ωs[:, t] = Υs[:, :, t]*(inv(Σs[:, :, t])μs[:, t] + inv(Ψs[:, :, t])ηs[:, t])
+		end
+	
+		# t = 0
+		Υ_0 = inv(inv(Σ_0) + inv(Ψ_0))
+		ω_0 = Υ_0*(inv(Σ_0)μ_0 + inv(Ψ_0)η_0)
+		
+		return ωs, Υs, ω_0, Υ_0
+	end
+	
+	function v_pairwise_x(Σs_, exp_np::Exp_ϕ, Ψs)
+		T = size(Σs_, 3)
+	    K = size(exp_np.A, 1)
+	
+		# cross-covariance is then computed for all time steps t = 0, ..., T−1
+		Υ_ₜ₋ₜ₊₁ = zeros(K, K, T)
+		
+		for t in 1:T-2
+			Υ_ₜ₋ₜ₊₁[:, :, t+1] = Σs_[:, :, t+1]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, t+1]) - exp_np.A*Σs_[:, :, t+1]*exp_np.A')
+		end
+	
+		# t=0, the cross-covariance between the zeroth and first hidden states.
+		Υ_ₜ₋ₜ₊₁[:, :, 1] = Σs_[:, :, 1]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C + inv(Ψs[:, :, 1]) - exp_np.A*Σs_[:, :, 1]*exp_np.A')
+	
+		# t=T-1, Ψs[T] = 0 special case
+		Υ_ₜ₋ₜ₊₁[:, :, T] = Σs_[:, :, T]*exp_np.A'*inv(I + exp_np.CᵀR⁻¹C - exp_np.A*Σs_[:, :, T]*exp_np.A')
+		
+		return Υ_ₜ₋ₜ₊₁
+	end
+end;
+
+# ╔═╡ 3100b411-e2de-4a43-be80-bcfcb42cef40
+md"""
+Test forward
+"""
+
+# ╔═╡ ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
+let
+	A = [0.8 -0.1; 0.3 0.6]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.01, 0.01])
+	T = 500
+	
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+
+	# use fixed A, C, R from ground truth for the exp_np::Exp_ϕ
+	e_A = A
+	e_AᵀA = A'A
+	e_C = C
+	e_R⁻¹ = inv(R)
+	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
+	e_R⁻¹C = e_R⁻¹*e_C
+	e_CᵀR⁻¹ = e_C'*e_R⁻¹
+	e_log_ρ = log.(1 ./ diag(R))
+	
+	exp_np = Exp_ϕ(e_A, e_AᵀA, e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹, e_log_ρ)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	prior = Prior(3.0, Matrix{Float64}(I, K, K), 3.0, Matrix{Float64}(I, K, K), zeros(K), Matrix{Float64}(I, K, K))
+    
+	mean_f, cov_f = forward_(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+
+	m_f, c_f, _ , _, _ = v_forward(y, exp_np, hpp)
+
+	mean_f, m_f, cov_f, c_f
+end
+
+# ╔═╡ 1edc58de-db69-4dbd-bcc5-c72a07e841be
+md"""
+### Backward
+"""
+
+# ╔═╡ 9ca2a2bf-27a9-461b-ae74-1c28ac883168
+function backward_(μ_f::Array{Float64, 2}, Σ_f::Array{Float64, 3}, A::Array{Float64, 2}, E_Q::Array{Float64, 2})
+    K, T = size(μ_f)
+    
+    # Initialize the smoothed means, covariances, and cross-covariances
+    μ_s = zeros(K, T)
+    Σ_s = zeros(K, K, T)
+    Σ_s_cross = zeros(K, K, T)
+    
+    # Set the final smoothed mean and covariance to their filtered values
+    μ_s[:, T] = μ_f[:, T]
+    Σ_s[:, :, T] = Σ_f[:, :, T]
+    
+    # Backward pass
+    for t = T-1:-1:1
+        # Compute the gain J_t
+        J_t = Σ_f[:, :, t] * A' / (A * Σ_f[:, :, t] * A' + E_Q)
+
+        # Update the smoothed mean μ_s and covariance Σ_s
+        μ_s[:, t] = μ_f[:, t] + J_t * (μ_s[:, t+1] - A * μ_f[:, t])
+        Σ_s[:, :, t] = Σ_f[:, :, t] + J_t * (Σ_s[:, :, t+1] - A * Σ_f[:, :, t] * A' - E_Q) * J_t'
+
+        # Compute the cross covariance Σ_s_cross
+        #Σ_s_cross[:, :, t+1] = inv(inv(Σ_f[:, :, t]) + A'*A) * A' * Σ_s[:, :, t+1]
+		Σ_s_cross[:, :, t+1] = J_t * Σ_s[:, :, t+1]
+    end
+	
+	Σ_s_cross[:, :, 1] = inv(I + A'*A) * A' * Σ_s[:, :, 1]
+	#J_1 = I * A' / (A * I * A' + E_Q)
+	#Σ_s_cross[:, :, 1] = J_1 * Σ_s[:, :, 1]
+    return μ_s, Σ_s, Σ_s_cross
+end
+
+# ╔═╡ 098bc646-7300-4ac6-88af-08a599ba774a
+md"""
+Test backward, cross-covariance
+""" 
+
+# ╔═╡ 11796ca9-30e2-4ba7-b8dc-9a0eda90e14e
+let
+	A = [0.8 -0.1; 0.3 0.6]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.01, 0.01])
+	T = 500
+	
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+	e_A = A
+	e_AᵀA = A'A
+	e_C = C
+	e_R⁻¹ = inv(R)
+	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
+	e_R⁻¹C = e_R⁻¹*e_C
+	e_CᵀR⁻¹ = e_C'*e_R⁻¹
+	e_log_ρ = log.(1 ./ diag(R))
+	exp_np = Exp_ϕ(e_A, e_AᵀA, e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹, e_log_ρ)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+
+	prior = Prior(3.0, Matrix{Float64}(I, K, K), 3.0, Matrix{Float64}(I, K, K), zeros(K), Matrix{Float64}(I, K, K))
+    
+	μ_f, Σ_f = forward_(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+	μ_s, Σ_s, Σ_ss = backward_(μ_f, Σ_f, A, [1.0 0.0; 0.0 1.0])
+
+	
+	μs, Σs, Σs_, fs, Qs = v_forward(y, exp_np, hpp)
+	ηs, Ψs, η_0, Ψ_0 = v_backward(y, exp_np)
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
+	Σ_cross = v_pairwise_x(Σs_, exp_np::Exp_ϕ, Ψs)
+	μ_s, ωs, Σ_s, Υs, Σ_ss, Σ_cross
+end
+
+# ╔═╡ e68dbe27-95ea-4710-9999-d2c4de0db914
+function vb_e_step(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R::Array{Float64, 2}, E_Q::Array{Float64, 2}, prior::Prior)
+    # Run the forward pass
+    μ_f, Σ_f = forward_(y, A, C, E_R, E_Q, prior)
+
+    # Run the backward pass
+    μ_s, Σ_s, Σ_s_cross = backward_(μ_f, Σ_f, A, E_Q)
+
+    # Compute the hidden state sufficient statistics
+    W_C = sum(Σ_s, dims=3)[:, :, 1] + μ_s * μ_s'
+    W_A = sum(Σ_s[:, :, 1:end-1], dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 1:end-1]'
+    S_C = y * μ_s'
+    S_A = sum(Σ_s_cross, dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 2:end]'
+    W_Y = y * y'
+
+	# Return the hidden state sufficient statistics
+    return HSS(W_C, W_A, S_C, S_A)
+end
+
+# ╔═╡ 488d1200-1ddf-4f06-9643-2eecb2072263
+md"""
+Test E-step
+"""
+
+# ╔═╡ 0591883c-49af-4201-b2f1-49f208506ece
+let
+	K = size(A, 1)
+	prior = Prior(3.0, Matrix{Float64}(I, K, K), 3.0, Matrix{Float64}(I, K, K), zeros(K), Matrix{Float64}(I, K, K))
+
+	hss_e = vb_e_step(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	hss_t = HSS(W_C, W_A, S_C, S_A)
+	hss_t,hss_e
+end
+
+# ╔═╡ 0dfa4d60-577a-4631-bd24-c05aee2969d0
+function vbem_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::Prior, max_iter=100)
+	
+	hss = HSS(ones(size(A)), ones(size(A)), ones(size(C)), ones(size(A)))
+	E_R, E_Q  = missing, missing
+	
+	for i in 1:max_iter
+		E_R, E_Q = vb_m_step(y, hss, prior, A, C)
+				
+		hss = vb_e_step(y, A, C, E_R, E_Q, prior)
+	end
+
+	return E_R, E_Q
+end
+
+# ╔═╡ 3dca0e01-2def-48cc-83a7-a5209cbd0f64
+md"""
+Test VBEM for general Q, R inference
+"""
+
+# ╔═╡ 5e10db40-5c2e-41c3-a431-e0a4c81d2718
+function vbem_his_plot(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::Prior, max_iter=100)
+    P, T = size(y)
+    K, _ = size(A)
+
+    W_C = zeros(K, K)
+    W_A = zeros(K, K)
+    S_C = zeros(P, K)
+    S_A = zeros(K, K)
+    hss = HSS(W_C, W_A, S_C, S_A)
+	E_R, E_Q  = missing, missing
+	
+    # Initialize the history of E_R and E_Q
+    E_R_history = zeros(P, P, max_iter)
+    E_Q_history = zeros(K, K, max_iter)
+
+    # Repeat until convergence
+    for iter in 1:max_iter
+		E_R, E_Q = vb_m_step(y, hss, prior, A, C)
+				
+		hss = vb_e_step(y, A, C, E_R, E_Q, prior)
+
+        # Store the history of E_R and E_Q
+        E_R_history[:, :, iter] = E_R
+        E_Q_history[:, :, iter] = E_Q
+    end
+
+	p1 = plot(title = "Learning of E_R")
+    for i in 1:P
+        plot!(10:max_iter, [E_R_history[i, i, t] for t in 10:max_iter], label = "E_R[$i, $i]")
+    end
+
+    p2 = plot(title = "Learning of E_Q")
+    for i in 1:K
+        plot!(10:max_iter, [E_Q_history[i, i, t] for t in 10:max_iter], label = "E_Q[$i, $i]")
+    end
+	
+	plot(p1, p2, layout = (1, 2))
+end
+
+# ╔═╡ e1676b43-b8f0-409f-a6c3-7f6c8852f7ae
+md"""
+A, C is identity matrix
+"""
+
+# ╔═╡ ffd75de1-b9fd-4883-810d-1d4f79775f0d
+let
+	# A, C identity matrix (cf. local level model)
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.2, 0.2])
+	T = 500
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, _ = size(y)
+	K = size(A, 1)
+	W_Q = Matrix{Float64}(I, K, K)
+	W_R = Matrix{Float64}(I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	vbem_his_plot(y, A, C, prior)
+end
+
+# ╔═╡ ed1bb8da-2e20-41da-a936-fec9962e1c83
+md"""
+initial setup
+"""
+
+# ╔═╡ 8443d615-15a4-4bc3-b40d-c103db279d70
+A, C, Q, R
+
+# ╔═╡ 4190732e-a3d8-4623-9e47-46b6385335a9
+let
+	D, _ = size(y)
+	K = size(A, 1)
+	W_Q = Matrix{Float64}(100 * I, K, K)
+	W_R = Matrix{Float64}(100 * I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	vbem_his_plot(y, A, C, prior, 50)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2873,7 +3308,7 @@ version = "1.4.1+0"
 # ╟─fbf64d6a-0cc7-4150-9891-e659f43a3b39
 # ╟─cfe224e3-dbb3-42bc-ac1b-b96fea5da00d
 # ╠═fc535acb-afd6-4f2a-a9f1-15dc83e4a53c
-# ╟─e9318f52-e918-42c6-9aa9-45a39ad73ec7
+# ╠═e9318f52-e918-42c6-9aa9-45a39ad73ec7
 # ╟─bb13a886-0877-42fb-876e-38709f041d65
 # ╟─3308752f-d770-4951-9a21-73f1c3886df4
 # ╠═4b9cad0a-7ec4-4a58-bf4c-4f103371de33
@@ -2907,12 +3342,12 @@ version = "1.4.1+0"
 # ╟─a95ed94c-5fe2-4c31-a7a6-e45e841af528
 # ╟─fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
 # ╟─ad1eab82-0fa5-462e-ad17-8cb3b787aaf0
+# ╟─13007ba3-7ce2-4201-aa93-559fcbf9d12f
 # ╟─e9f3b9e2-5689-40ce-b5b5-bc571ba35c10
 # ╠═c9f6fad7-518c-442b-a385-e3fa74431cb1
 # ╠═3a8ceb49-403e-424f-bedb-49f5b01c8d7a
 # ╠═0a609b97-7859-4053-900d-c1be5d61e68c
 # ╠═a8971bb3-cf38-4445-b66e-65ff35ca13ca
-# ╟─13007ba3-7ce2-4201-aa93-559fcbf9d12f
 # ╟─b4c11a46-438d-4653-89e7-bc2b99e84f48
 # ╠═72f82a78-828a-42f2-9b63-9950af4c7be3
 # ╠═494eed09-a6e8-488b-bea2-55b7ddb37082
@@ -2941,13 +3376,31 @@ version = "1.4.1+0"
 # ╟─89fb5821-17c5-46be-8e3c-94439d295220
 # ╟─c9d18a43-5984-45f5-b558-368368212355
 # ╟─99aab1db-2156-4bd4-9b54-3bb0d4a1620b
-# ╠═95ab5440-82dd-4fc4-be08-b1a851caf9ca
+# ╟─95ab5440-82dd-4fc4-be08-b1a851caf9ca
 # ╠═0f2e6c3a-04c4-4f6b-8ccd-ed18c41e2bc4
 # ╟─f35c8af8-00b0-45ad-8910-04f656cecfa3
-# ╟─aaf8f3a7-9549-4d02-ba99-e223fda5252a
-# ╟─a6470873-26b3-4981-80eb-12a59bd3695d
+# ╠═aaf8f3a7-9549-4d02-ba99-e223fda5252a
+# ╠═a6470873-26b3-4981-80eb-12a59bd3695d
 # ╟─c096bbab-4009-4995-8f45-dc7ffab7ccfa
 # ╟─63bc1239-1a6a-4f3b-9d2c-9b904aec573c
 # ╠═2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
+# ╟─1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
+# ╟─3100b411-e2de-4a43-be80-bcfcb42cef40
+# ╟─ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
+# ╟─1edc58de-db69-4dbd-bcc5-c72a07e841be
+# ╠═9ca2a2bf-27a9-461b-ae74-1c28ac883168
+# ╟─098bc646-7300-4ac6-88af-08a599ba774a
+# ╟─11796ca9-30e2-4ba7-b8dc-9a0eda90e14e
+# ╠═e68dbe27-95ea-4710-9999-d2c4de0db914
+# ╟─488d1200-1ddf-4f06-9643-2eecb2072263
+# ╟─0591883c-49af-4201-b2f1-49f208506ece
+# ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
+# ╟─3dca0e01-2def-48cc-83a7-a5209cbd0f64
+# ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
+# ╟─e1676b43-b8f0-409f-a6c3-7f6c8852f7ae
+# ╠═ffd75de1-b9fd-4883-810d-1d4f79775f0d
+# ╟─ed1bb8da-2e20-41da-a936-fec9962e1c83
+# ╠═8443d615-15a4-4bc3-b40d-c103db279d70
+# ╠═4190732e-a3d8-4623-9e47-46b6385335a9
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

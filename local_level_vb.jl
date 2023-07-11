@@ -544,13 +544,7 @@ end
 
 # ╔═╡ 5cc8a85a-2542-4b69-b79a-736b87a5a8c4
 md"""
-
-# MCMC DLM
-"""
-
-# ╔═╡ d2efd2a0-f494-4486-8ed3-ffd944b8473f
-md"""
-## Using NUTS() from Turing.jl
+# MCMC 
 """
 
 # ╔═╡ 80e4b5da-9d6e-46cd-9f84-59fa86c201b1
@@ -744,7 +738,6 @@ md"""
 # Known A, C:
 - Beale treatment v.s DLM with R treatment
 - Add Inference step for Q, fix A, C as known constants
-- Compare FFBS sampler and single-move sampler
 """
 
 # ╔═╡ 8dbf29db-cefd-4bd4-95e7-a302c7aa858a
@@ -931,7 +924,7 @@ end
 
 # ╔═╡ 168d4dbd-f0dd-433b-bb4a-e3bb918fb184
 md"""
-Test vb m-step
+Test vb m-step, given x_true
 """
 
 # ╔═╡ 2308aa4c-bb99-4546-a108-9fa88fca130b
@@ -1049,7 +1042,8 @@ function backward_ll(μ_f, σ_f2, E_τ_q)
         σ_s2_cross[t+1] = J_t * σ_s2[t+1]
     end
 	
-    J_0 = σ_f2[1] / (σ_f2[1] + 1/E_τ_q)
+    #J_0 = σ_f2[1] / (σ_f2[1] + 1/E_τ_q)
+	J_0 = 1.0 / (1.0 + 1/E_τ_q)
 	σ_s2_cross[1] = J_0 * σ_s2[1]
     return μ_s, σ_s2, σ_s2_cross
 end
@@ -1230,6 +1224,45 @@ let
 	plot(q_ss, title = "MCMC-Gibbs", label="q samples")
 	plot!(r_ss, label="r samples")
 end
+
+# ╔═╡ d2efd2a0-f494-4486-8ed3-ffd944b8473f
+md"""
+# Extras: Using NUTS() from Turing.jl
+"""
+
+# ╔═╡ 4c3c2931-e4a8-43d1-b3fa-8bb3b82fb975
+begin
+	@model function DLM_Turing(y, a, c)
+	    T = length(y)
+	    
+	    # Priors
+	    r ~ InverseGamma(0.1, 0.1)
+	    q ~ InverseGamma(0.1, 0.1)
+		
+	    x = Vector(undef, T)
+		# Auxiliary initial latent
+	    x[1] ~ Normal(0, 1.0)
+	    y[1] ~ Normal(c * x[1], sqrt(r))
+		
+	    for t in 2:T
+	        # State transition
+	        x[t] ~ Normal(a * x[t-1], sqrt(q))
+	        
+	        # Observation model
+	        y[t] ~ Normal(c * x[t], sqrt(r))
+	    end
+	end
+	Random.seed!(888)
+	model = DLM_Turing(y, 1.0, 1.0)
+	chain = sample(model, NUTS(), 3000)
+	chain = chain[100:end]
+end;
+
+# ╔═╡ 2ad03b07-68ad-4da8-a5d3-7692502c0e00
+describe(chain)
+
+# ╔═╡ 99ee3530-62ba-4577-83f4-748122a654cb
+summarystats(chain)
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -3267,20 +3300,16 @@ version = "1.4.1+0"
 # ╟─06b9d658-7d19-448d-8c02-6fabc5d4a551
 # ╟─1ba53bec-658c-4e07-8728-f9799a5514e8
 # ╟─5cc8a85a-2542-4b69-b79a-736b87a5a8c4
-# ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
-# ╠═4cc367d1-37a1-4712-a63e-8826b5646a1b
-# ╠═da1598b0-9920-427a-89cd-3af37b67380e
-# ╠═3e4e0ceb-974c-4bdc-8e25-21b24a25d0b8
 # ╟─80e4b5da-9d6e-46cd-9f84-59fa86c201b1
 # ╟─29489270-20ee-4835-8451-db12fe46cf4c
 # ╠═84f6d8f2-6ba5-43d6-9a06-f485975bf208
 # ╠═be028bb1-28a4-45f4-8c52-c919636b2ea4
 # ╟─b2efefeb-f4a4-40f6-850f-f73b30ce386c
 # ╠═29ca031c-5520-4ef5-95c1-2b0c9fa12906
-# ╠═a320c6e2-42f3-445f-9585-6e2ff5a43060
+# ╟─a320c6e2-42f3-445f-9585-6e2ff5a43060
 # ╟─5f3d1c80-d93f-4916-82a8-21205e4d0e26
 # ╠═8e3edeee-c940-4975-99e8-bc27c3b18939
-# ╠═5985ac18-636e-4606-9978-7e1e0ce1fd09
+# ╟─5985ac18-636e-4606-9978-7e1e0ce1fd09
 # ╟─392e0306-6e39-4d62-80aa-7c9f837cd0a0
 # ╟─1f0d9a8f-94b9-4e87-a837-9c350b905c72
 # ╟─aa404f69-e857-4eb6-87f1-298d62429891
@@ -3294,7 +3323,7 @@ version = "1.4.1+0"
 # ╟─1c0ed9fb-c56a-4aab-a765-49c394123a42
 # ╟─8dbf29db-cefd-4bd4-95e7-a302c7aa858a
 # ╠═1075e6dc-be4b-4594-838e-60d44100c92d
-# ╠═ce1f3eed-13ab-4fa7-aafc-a97954dd818b
+# ╟─ce1f3eed-13ab-4fa7-aafc-a97954dd818b
 # ╠═7e4fa23d-b05b-4f77-959e-29577e349333
 # ╟─69e31afc-7893-4099-8d48-937d8ebffa86
 # ╟─94caa09c-59b6-461f-b56f-178992d2bc83
@@ -3313,7 +3342,7 @@ version = "1.4.1+0"
 # ╟─8e98a3b4-bc92-43ad-9da3-1323e06cfce6
 # ╟─aa5caae7-638d-441f-a306-5442a5c8f75f
 # ╟─faed4326-5ee6-41da-9ba4-297e965c242e
-# ╠═17136b27-9463-4e5f-a943-d78297f28be7
+# ╟─17136b27-9463-4e5f-a943-d78297f28be7
 # ╠═bee6469f-13a1-4bd8-8f14-f01e8405a949
 # ╟─59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
 # ╠═7a6940ef-56b3-4cb4-bc6b-2c97625965cc
@@ -3325,5 +3354,10 @@ version = "1.4.1+0"
 # ╠═3e64e18a-6446-4fcc-a282-d3d6079e975a
 # ╟─23301a45-fc89-416f-bcc7-4f3ba41bf04f
 # ╟─d57adc7b-fcd5-468b-aa50-919d884a916a
+# ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
+# ╠═4cc367d1-37a1-4712-a63e-8826b5646a1b
+# ╠═4c3c2931-e4a8-43d1-b3fa-8bb3b82fb975
+# ╠═2ad03b07-68ad-4da8-a5d3-7692502c0e00
+# ╠═99ee3530-62ba-4577-83f4-748122a654cb
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -1185,7 +1185,7 @@ end
 # ╔═╡ 1c023156-0634-456d-a959-65880fd60c34
 let
 	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
-	vb_ll_plot(y, hpp_ll, 50)
+	vb_ll_plot(y, hpp_ll)
 end
 
 # ╔═╡ caa2e633-e044-417c-944c-6a0458475e4f
@@ -1201,7 +1201,7 @@ let
 	μs_f, σs_f2 = forward_ll(y, 1.0, 1.0, 1/r, 1/q, hpp_ll)
     μs_s, σs_s2, _ = backward_ll(μs_f, σs_f2, 1/q)
 	
-	println("latent x error: " , error_metrics(x_true, μs_s))
+	println("\nlatent x error: " , error_metrics(x_true, μs_s))
 end
 
 # ╔═╡ 23301a45-fc89-416f-bcc7-4f3ba41bf04f
@@ -1225,6 +1225,25 @@ let
 	plot!(r_ss, label="r samples")
 end
 
+# ╔═╡ 492c0922-e5f0-435b-9372-27e79570d679
+let
+	x_ss, q_ss, r_ss = gibbs_ll(y, 1.0, 1.0)
+	# Select the first 50 time steps
+	true_latent_50 = x_true[1:50]
+	sm_sampled_latent_50 = x_ss[:, 1:50]
+	
+	# Create a new plot
+	p = plot()
+	# Plot the true latent states with a thick line
+	plot!(p, true_latent_50, linewidth=1.5, alpha=2, label="True x", color=:blue)
+	
+	# Plot the sampled latent states with a thin line
+	for i in 1:size(sm_sampled_latent_50, 1)
+	    plot!(p, sm_sampled_latent_50[i, :], linewidth=0.1, alpha=0.1, label=false, color=:violet)
+	end
+	p
+end
+
 # ╔═╡ d2efd2a0-f494-4486-8ed3-ffd944b8473f
 md"""
 # Extras: Using NUTS() from Turing.jl
@@ -1240,7 +1259,6 @@ begin
 	    q ~ InverseGamma(0.1, 0.1)
 		
 	    x = Vector(undef, T)
-		# Auxiliary initial latent
 	    x[1] ~ Normal(0, 1.0)
 	    y[1] ~ Normal(c * x[1], sqrt(r))
 		
@@ -1261,8 +1279,21 @@ end;
 # ╔═╡ 2ad03b07-68ad-4da8-a5d3-7692502c0e00
 describe(chain)
 
-# ╔═╡ 99ee3530-62ba-4577-83f4-748122a654cb
-summarystats(chain)
+# ╔═╡ 5f9f903b-a72c-4b60-9934-4bd2ced30a2c
+md"""
+Plot learning of $r, q$
+"""
+
+# ╔═╡ 54c537af-06c3-4e12-87b8-33d3f1efa77b
+begin
+	r_samples = chain[:r]
+	q_samples = chain[:q]
+	
+	# Plot the trace of r and q
+	p1 = plot(r_samples, title = "Trace for r", legend = false)
+	p2 = plot(q_samples, title = "Trace for q", legend = false)
+	plot(p1, p2, layout = (2, 1))
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -3331,7 +3362,7 @@ version = "1.4.1+0"
 # ╟─981608f2-57f6-44f1-95ed-82e8cca04718
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
 # ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184
-# ╟─2308aa4c-bb99-4546-a108-9fa88fca130b
+# ╠═2308aa4c-bb99-4546-a108-9fa88fca130b
 # ╟─1adc874e-e024-464a-80d5-5ded04f62f24
 # ╠═d359f3aa-b238-420f-99d2-52f85ce9ff82
 # ╟─bca920fc-9535-4eb0-89c2-03a7334df6b6
@@ -3344,20 +3375,22 @@ version = "1.4.1+0"
 # ╟─faed4326-5ee6-41da-9ba4-297e965c242e
 # ╟─17136b27-9463-4e5f-a943-d78297f28be7
 # ╠═bee6469f-13a1-4bd8-8f14-f01e8405a949
-# ╟─59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
+# ╠═59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
 # ╠═7a6940ef-56b3-4cb4-bc6b-2c97625965cc
 # ╠═665c55c3-d4dc-4d13-9517-d1106ea6210f
 # ╟─e6930d53-6652-4fea-9a01-a4c87b8058dc
 # ╠═0cce2e6d-4f19-4c50-a4b5-2835c3ed4401
-# ╟─1c023156-0634-456d-a959-65880fd60c34
+# ╠═1c023156-0634-456d-a959-65880fd60c34
 # ╟─caa2e633-e044-417c-944c-6a0458475e4f
 # ╠═3e64e18a-6446-4fcc-a282-d3d6079e975a
 # ╟─23301a45-fc89-416f-bcc7-4f3ba41bf04f
-# ╟─d57adc7b-fcd5-468b-aa50-919d884a916a
+# ╠═d57adc7b-fcd5-468b-aa50-919d884a916a
+# ╟─492c0922-e5f0-435b-9372-27e79570d679
 # ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
-# ╠═4cc367d1-37a1-4712-a63e-8826b5646a1b
+# ╟─4cc367d1-37a1-4712-a63e-8826b5646a1b
 # ╠═4c3c2931-e4a8-43d1-b3fa-8bb3b82fb975
 # ╠═2ad03b07-68ad-4da8-a5d3-7692502c0e00
-# ╠═99ee3530-62ba-4577-83f4-748122a654cb
+# ╟─5f9f903b-a72c-4b60-9934-4bd2ced30a2c
+# ╠═54c537af-06c3-4e12-87b8-33d3f1efa77b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

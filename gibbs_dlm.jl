@@ -205,55 +205,6 @@ let
 	sample_R(x_true, y, C, α, β), R
 end
 
-# ╔═╡ 8ebe9fd2-5ad6-41cd-ba5c-dc55ad231a83
-# ╠═╡ disabled = true
-#=╠═╡
-function sample_x_ffbs(Ys, A, C, R, Q, μ₀, Σ₀)
-    P, T = size(Ys)
-    K, _ = size(A)
-    Xs_sampled = zeros(K, T)
-	
-    # Forward filtering
-    μs = zeros(K, T)
-    Σs = zeros(K, K, T)
-
-	Σ₀_ = inv(inv(Σ₀) + A'A)
-	Σs[:, :, 1] = inv(I + C'inv(R)C - A*Σ₀_*A')
-	μs[:, 1] = Σs[:, :, 1]*(C'inv(R)Ys[:, 1] + A*Σ₀_*inv(Σ₀)μ₀)
-    
-	for t in 2:T
-		Σₜ₋₁_ = inv(inv(Σs[:, :, t-1]) + A'A)
-        Σs[:, :, t] = inv(I + C'inv(R)C - A*Σₜ₋₁_*A')
-		μs[:, t] = Σs[:, :, t]*(C'inv(R)Ys[:, t] + A*Σₜ₋₁_*inv(Σs[:, :, t-1])μs[:, t-1])
-    end
-	
-    # Backward sampling
-	try
-		Xs_sampled[:, T] = rand(MvNormal(μs[:, T], Σs[:, :, T]))
-	catch e
-		if isa(e, PosDefException)
-			Xs_sampled[:, T] = rand(MvNormal(μs[:, T], Symmetric(Σs[:, :, T])))
-		end
-	end
-    
-	for t in (T-1):-1:1
- 		μ_p = μs[:, t] + Σs[:, :, t] * A' * inv(A * Σs[:, :, t] * A' + Q) * (Xs_sampled[:, t+1] - A * μs[:, t])
-		
-        P_p = Σs[:, :, t] - Σs[:, :, t] * A' * inv(A * Σs[:, :, t] * A' + Q) * A * Σs[:, :, t]
-		
-		try
-            Xs_sampled[:, t] = rand(MvNormal(μ_p, P_p))
-        catch e
-            if isa(e, PosDefException)
-                Xs_sampled[:, t] = rand(MvNormal(μ_p, Symmetric(P_p)))
-			end
-		end
-    end
-	
-    return Xs_sampled
-end
-  ╠═╡ =#
-
 # ╔═╡ e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 md"""
 ## Gibbs sampling
@@ -1709,7 +1660,7 @@ end
 
 # ╔═╡ ed1bb8da-2e20-41da-a936-fec9962e1c83
 md"""
-initial setup
+Learning given initial setup
 """
 
 # ╔═╡ 8443d615-15a4-4bc3-b40d-c103db279d70
@@ -3365,10 +3316,10 @@ version = "1.4.1+0"
 # ╟─282b71f4-4848-426d-b8fc-0e3656d01767
 # ╟─2837effd-25f2-4f49-829e-8fc191db8460
 # ╟─0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
-# ╟─4baa0604-712a-448f-b3ee-56543bfc0d71
+# ╠═4baa0604-712a-448f-b3ee-56543bfc0d71
 # ╠═de7046da-e361-41d0-b2d7-12439b571795
 # ╟─05828da6-bc3c-45de-b059-310159038d5d
-# ╟─69061e7f-8a6d-4fac-b187-4d6ff16cf777
+# ╠═69061e7f-8a6d-4fac-b187-4d6ff16cf777
 # ╟─a9cba95e-9a9e-46c1-8f66-0a9b4ee0fcf0
 # ╟─6bea5f44-2abd-47b9-9db5-c5f70dd12c4f
 # ╟─37e0d499-bda5-4a5e-8b81-9b3f9384c2fb
@@ -3379,16 +3330,16 @@ version = "1.4.1+0"
 # ╟─95ab5440-82dd-4fc4-be08-b1a851caf9ca
 # ╠═0f2e6c3a-04c4-4f6b-8ccd-ed18c41e2bc4
 # ╟─f35c8af8-00b0-45ad-8910-04f656cecfa3
-# ╠═aaf8f3a7-9549-4d02-ba99-e223fda5252a
-# ╠═a6470873-26b3-4981-80eb-12a59bd3695d
+# ╟─aaf8f3a7-9549-4d02-ba99-e223fda5252a
+# ╟─a6470873-26b3-4981-80eb-12a59bd3695d
 # ╟─c096bbab-4009-4995-8f45-dc7ffab7ccfa
 # ╟─63bc1239-1a6a-4f3b-9d2c-9b904aec573c
-# ╠═2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
+# ╟─2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
 # ╟─1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
 # ╟─3100b411-e2de-4a43-be80-bcfcb42cef40
 # ╟─ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
 # ╟─1edc58de-db69-4dbd-bcc5-c72a07e841be
-# ╠═9ca2a2bf-27a9-461b-ae74-1c28ac883168
+# ╟─9ca2a2bf-27a9-461b-ae74-1c28ac883168
 # ╟─098bc646-7300-4ac6-88af-08a599ba774a
 # ╟─11796ca9-30e2-4ba7-b8dc-9a0eda90e14e
 # ╠═e68dbe27-95ea-4710-9999-d2c4de0db914

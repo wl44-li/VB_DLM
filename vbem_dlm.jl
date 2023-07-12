@@ -221,12 +221,27 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	μ_A = [Σ_A * S_A[:, j] for j in 1:K]
 	μ_C = [Σ_C * S_C[:, s] for s in 1:D]
 	
-	G = sum(ys[:, t] * ys[:, t]' for t in 1:T) - S_C' * Σ_C * S_C
+	G = ys * ys' - S_C' * Σ_C * S_C
 	a_ = a + 0.5 * T
 	a_s = a_ * ones(D)
     b_s = [b + 0.5 * G[i, i] for i in 1:D]
-
-	q_ρ = Gamma.(a_s, 1 ./ b_s)
+	
+	q_ρ = missing
+	
+	try
+	    q_ρ = Gamma.(a_s, 1 ./ b_s)
+	catch err
+	    if isa(err, DomainError)
+	        println("DomainError occurred: check that a_s and b_s are positive values")
+			println(a_s)
+			println(b_s)
+			#b_s = max.(b_s, eps())
+			b_s = abs.(b_s)
+			q_ρ = Gamma.(a_s, 1 ./ b_s)
+	    else
+	        rethrow(err)  # If it's not a DomainError, rethrow the exception
+	    end
+	end
 	ρ̄ = mean.(q_ρ)
 	
 	# Exp_ϕ 
@@ -649,6 +664,19 @@ Case **probabilistic PCA**, To reduce a DLM to PPCA, we should set:
 With these settings, the DLM essentially becomes a model where the observed variables are linear functions of the hidden states (with some Gaussian noise), and the hidden states are independently drawn from a Gaussian distribution. This is the setting of PPCA.
 """
 
+# ╔═╡ 80c165d8-6392-4f76-950a-dc46be06bcc9
+md"""
+Given $p$ dimensional observerable, $k$ principle axes related by $C$ $(p \times k)$ the loading matrix
+
+if $p>k$, latent variable $x$ will offer a 'parsimonious' explaination of the dependencies between the observations $y$
+
+"""
+
+# ╔═╡ 2914e760-7a5b-469a-b21a-14b4c393a27e
+md"""
+occasional gamma error in m-step line 27. choice of gamma prior (a=b=100?)
+"""
+
 # ╔═╡ c422d3e3-27ae-4543-9315-3342bb257d19
 md"""
 # Convergence Check
@@ -806,15 +834,6 @@ end
 function vb_dlm(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=100, r_seed=99, debug=false)
 	D, T = size(ys)
 	K = length(hpp.α)
-
-	"""
-	# random initialisation
-	Random.seed!(r_seed)
-	W_A = rand(K, K) + K*I
-	S_A = rand(K, K) + K*I
-	W_C = rand(K, K) + K*I
-	S_C = rand(K, D) + D*I
-	"""
 	
 	# no random initialistion
 	W_A = Matrix{Float64}(T*I, K, K)
@@ -865,7 +884,7 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=700, 
 		S_C = Matrix{Float64}(T*I, K, D)
 	else
 		if D > K # factor model 
-			S_C = Matrix{Float64}(max_iter*I, K, D)
+			S_C = Matrix{Float64}(T*I, K, D)
 		else
 			# K > D, signal processing 
 			S_C = Matrix{Float64}(I, K, D)
@@ -1269,6 +1288,9 @@ begin
 	y_d3k2, x_d3k2 = gen_data(A, C_d3k2, Diagonal([1.0, 1.0]), R_d3, μ_0, Σ_0, T)
 end
 
+# ╔═╡ 075b9c39-93fc-47b9-87b8-d3ffab37149c
+C_d3k2 # case p=3, k=2
+
 # ╔═╡ 93541f59-06f3-48f0-a95b-5bd0b9b8e60a
 A, C_d3k2, R_d3
 
@@ -1293,7 +1315,6 @@ let
 	W_C = sum(x_d3k2[:, t] * x_d3k2[:, t]' for t in 1:T)
 	S_C = sum(x_d3k2[:, t] * y_d3k2[:, t]' for t in 1:T)
 	hss = HSS(W_A, S_A, W_C, S_C)
-	S_C
 end
 
 # ╔═╡ 7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
@@ -1412,7 +1433,7 @@ begin
 	α = ones(K)
 	γ = ones(K)
 	a = 0.001
-	b = 0.001
+	b = 100
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	exp_f = vb_dlm(y, hpp)
@@ -1440,6 +1461,24 @@ end
 let
 	p2 = plot(1:20, y[2, 1:20], label="True y[2]", linewidth=2)
 	plot!(1:20, ys[2, 2:21], label="Filtered y[2]", linewidth=2, linestyle=:dash)
+end
+
+# ╔═╡ e444f18c-9370-43ae-8c52-fc9673b4e78d
+let
+	Random.seed!(111)
+	y_pca, xs_pca = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+	
+	exp_f = vb_dlm(y_pca, hpp, true, 270)
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 5c32b97e-8e6a-499d-b07b-52257f1dc0e3
+let
+	Random.seed!(123)
+	y_pca, xs_pca = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+	
+	exp_f = vb_dlm_c(y_pca, hpp, true, 500, 1e-5)
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
 # ╔═╡ cdcbb9be-014c-44b2-a126-9445a151994e
@@ -2835,8 +2874,8 @@ version = "1.4.1+0"
 # ╟─f871da95-6710-4c0f-a3a1-890dd59a41a1
 # ╟─17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
 # ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
-# ╠═e0b4574c-8b75-45b7-98f8-8b9b6efd8c56
-# ╠═e6afe143-652b-4ca6-812d-8a67415a84aa
+# ╟─e0b4574c-8b75-45b7-98f8-8b9b6efd8c56
+# ╟─e6afe143-652b-4ca6-812d-8a67415a84aa
 # ╟─cdcbb9be-014c-44b2-a126-9445a151994e
 # ╟─7b185270-58d5-4406-8768-103d798fa326
 # ╠═adbf92e5-8a86-4acf-8f50-d82e122a5f5f
@@ -2847,7 +2886,11 @@ version = "1.4.1+0"
 # ╟─be042373-ed3e-4e2e-b714-b4f9e5964b57
 # ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
-# ╟─6550261c-a3b8-40bc-a4ac-c43ae33215ca
+# ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
+# ╟─80c165d8-6392-4f76-950a-dc46be06bcc9
+# ╠═075b9c39-93fc-47b9-87b8-d3ffab37149c
+# ╠═2914e760-7a5b-469a-b21a-14b4c393a27e
+# ╠═e444f18c-9370-43ae-8c52-fc9673b4e78d
 # ╟─c422d3e3-27ae-4543-9315-3342bb257d19
 # ╟─73917530-67d0-480f-a776-619ef13394dd
 # ╠═e199689c-a79d-4824-af81-0b819fbc2a52
@@ -2861,7 +2904,8 @@ version = "1.4.1+0"
 # ╟─67ba0061-7809-4391-9410-1aaae787e636
 # ╠═806f343e-2ef7-48c6-964a-f29c0ad63256
 # ╟─a4526a71-2e74-479e-892d-b5bc04ceebf8
-# ╟─621f9118-172b-4e5e-8c17-259ff43d70d4
+# ╠═621f9118-172b-4e5e-8c17-259ff43d70d4
+# ╠═5c32b97e-8e6a-499d-b07b-52257f1dc0e3
 # ╟─55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 # ╟─076c7125-cc41-46d2-8c3b-f091efdc8ace
 # ╟─3a97cd42-7f14-4068-b711-a6759042269c
@@ -2905,12 +2949,12 @@ version = "1.4.1+0"
 # ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
-# ╠═59bcc9bf-276c-47e1-b6a9-86f90571c0fb
-# ╠═7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
-# ╠═e02d0dd5-6bab-4548-8bbe-d9b1759688c5
+# ╟─59bcc9bf-276c-47e1-b6a9-86f90571c0fb
+# ╟─7c20c3ab-b0ae-48fc-b2f0-9cde30559bf5
+# ╟─e02d0dd5-6bab-4548-8bbe-d9b1759688c5
 # ╟─c417e618-41c2-454c-9b27-470988215d48
 # ╟─8950aa50-22b2-4299-83b2-b9abfd1d5303
 # ╟─30502079-9684-4144-8bcd-a70f2cb5928a
-# ╠═ca825009-564e-43e0-9014-cce87c46533b
+# ╟─ca825009-564e-43e0-9014-cce87c46533b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

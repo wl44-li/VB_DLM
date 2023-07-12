@@ -879,8 +879,14 @@ This motivates E-step to compute the following HSS:
 $w_c = \sum_{t=1}^{T} E_q[x_t^2] = \sum_{t=1}^{T} (\sigma_t^2 + \mu_t^2)$
 $w_a = \sum_{t=1}^{T} E_q[x_{t-1}^2] = \sum_{t=1}^{T} (\sigma_{t-1}^2 + \mu_{t-1}^2)$
 $s_c = \sum_{t=1}^{T} y_t E_q[x_t] = \sum_{t=1}^{T} \mu_t y_t$
-$s_a = \sum_{t=1}^{T} E_q[x_{t-1} x_t] = \sum_{t=1}^{T} \sigma_{t-1, t}^2 + \mu_{t-1}\mu_t$
+$s_a = \sum_{t=1}^{T} E_q[x_{t-1} x_t] = \sum_{t=1}^{T} \sigma_{t-1, t} + \mu_{t-1}\mu_t$
 
+"""
+
+# ╔═╡ 501172ab-203d-4faa-a3b0-3e4fa0c79d10
+md"""
+TO-DO:
+verify cross-variance, cross-moment by hand
 """
 
 # ╔═╡ 981608f2-57f6-44f1-95ed-82e8cca04718
@@ -3359,6 +3365,7 @@ version = "1.4.1+0"
 # ╟─69e31afc-7893-4099-8d48-937d8ebffa86
 # ╟─94caa09c-59b6-461f-b56f-178992d2bc83
 # ╟─bb4de2cf-e4b6-4788-9f8b-ff5fd2ca2570
+# ╟─501172ab-203d-4faa-a3b0-3e4fa0c79d10
 # ╟─981608f2-57f6-44f1-95ed-82e8cca04718
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
 # ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184

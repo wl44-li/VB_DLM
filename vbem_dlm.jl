@@ -13,6 +13,9 @@ begin
 	using PlutoUI
 end
 
+# ╔═╡ 9a143b76-4c69-4c84-8499-dc59a15bb2d7
+using MultivariateStats
+
 # ╔═╡ bfe253c8-3ab4-4629-9a6b-423a64d8fe32
 TableOfContents()
 
@@ -673,9 +676,34 @@ if $p>k$, latent variable $x$ will offer a 'parsimonious' explaination of the de
 
 """
 
-# ╔═╡ 2914e760-7a5b-469a-b21a-14b4c393a27e
+# ╔═╡ cfebbda5-825c-495d-895a-e07b07b9566f
 md"""
-Change: Occasional gamma error in m-step line 27. 
+Ground truth loading matrix
+"""
+
+# ╔═╡ 6226131c-4025-4077-887e-a4ba6f1ea580
+md"""
+### Compare with existing PCA package
+"""
+
+# ╔═╡ 9038f307-0245-48df-8c4d-feb77d0eeb10
+md"""
+Standard PCA
+"""
+
+# ╔═╡ e193436c-7d77-46a3-9d6b-61e57c7cbbeb
+md"""
+PPCA: MLE
+"""
+
+# ╔═╡ 56ffa631-8abd-40bb-9c97-4dfdd7b6e0dc
+md"""
+PPCA: EM
+"""
+
+# ╔═╡ c5ee2c37-ea5f-4013-8930-758c10770ef4
+md"""
+PPCA: Bayes
 """
 
 # ╔═╡ c422d3e3-27ae-4543-9315-3342bb257d19
@@ -937,18 +965,47 @@ end
 md"""
 ### PPCA 
 
-**To-Do: Further testing**
+**To-Do: Further testing** i.e. higher dimensions, and remove inference on $A$ in the VB procedure, we know it will be a zero matrix.
 """
 
 # ╔═╡ 67ba0061-7809-4391-9410-1aaae787e636
 md"""
-Ground-truth A, C, R
+Ground-truth C, R
 """
 
 # ╔═╡ a4526a71-2e74-479e-892d-b5bc04ceebf8
 md"""
-Inferred A, C, R
+Inferred C, R
 """
+
+# ╔═╡ c4a4ad20-45ea-4ae8-a49d-b1e467b3e260
+md"""
+Higher dimension $D = 3, K = 2$ PPCA
+"""
+
+# ╔═╡ f8cecb99-6a6e-4ba1-aa56-30d40807cfef
+md"""
+Compare with MLE PPCA
+"""
+
+# ╔═╡ 3377e631-3738-4218-86ef-01e7a935631c
+md"""
+Compare with package EM PPCA
+"""
+
+# ╔═╡ 9010c12e-ac9e-4426-a6ac-763904adb87f
+md"""
+Compare with package Bayes PPCA
+""" 
+
+# ╔═╡ 51e3c1bd-acfb-4f24-9152-8d32a2777fc4
+#TO-DO: higher dimension tests
+
+# ╔═╡ 2c344be0-2cfd-4267-b6f2-c2970c7e66b7
+
+
+# ╔═╡ 68faadec-a427-4a05-b1fd-9b754b8fa0d5
+
 
 # ╔═╡ 55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 md"""
@@ -1244,7 +1301,7 @@ end
 A, C, R
 
 # ╔═╡ 806f343e-2ef7-48c6-964a-f29c0ad63256
-zeros(2, 2), C, R
+C, R
 
 # ╔═╡ 076c7125-cc41-46d2-8c3b-f091efdc8ace
 A, C, R
@@ -1292,6 +1349,42 @@ end
 
 # ╔═╡ 075b9c39-93fc-47b9-87b8-d3ffab37149c
 C_d3k2 # case p=3, k=2
+
+# ╔═╡ 5ae22e9c-5303-43eb-9c17-674ac540ba40
+let
+	Random.seed!(111)
+	y_pca, x_tr = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+
+	M = fit(PCA, y_pca; maxoutdim=2)
+	loadings(M), tresidualvar(M)
+end
+
+# ╔═╡ e237140b-5cfc-4d04-a228-a925f90b24a2
+let
+	Random.seed!(111)
+	y_pca, x_tr = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+
+	M = fit(PPCA, y_pca; maxoutdim=2)
+	loadings(M), M
+end
+
+# ╔═╡ 00cb5236-3a89-4d8c-ac48-f55af8e6722a
+let
+	Random.seed!(111)
+	y_pca, x_tr = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+
+	M = fit(PPCA, y_pca; method=(:em), maxoutdim=2)
+	loadings(M), M
+end
+
+# ╔═╡ 5fd414dc-cabd-46a7-aee2-293112daf957
+let
+	Random.seed!(111)
+	y_pca, x_tr = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+
+	M = fit(PPCA, y_pca; method=(:bayes), maxoutdim=2)
+	loadings(M), M
+end
 
 # ╔═╡ c039b519-e045-4ade-bfdb-b0f5ae4fa0d3
 C_d3k2
@@ -1465,8 +1558,8 @@ let
 	b = 100
 
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
-	exp_f = vb_dlm(y_pca, hpp, true)
-	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+	exp_f = vb_dlm_c(y_pca, hpp, true, 300, 1e-4)
+	exp_f.C, inv(exp_f.R⁻¹)
 end
 
 # ╔═╡ cdcbb9be-014c-44b2-a126-9445a151994e
@@ -1550,17 +1643,52 @@ let
 
 	α = ones(K) .* 100
 	γ = ones(K) .* 100
-	a = 0.1
-	b = 0.1
+	a = 0.01
+	b = 0.01
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 	
-	exp_f = vb_dlm_c(y_pca, hpp, true, 200, 1e-4)
+	exp_f = vb_dlm_c(y_pca, hpp, true, 500, 5e-5)
 
 	x_s, σ_s, y_s, Q_s = vb_e(y_pca, exp_f, hpp, true)
 
 	println("\nVB (x) PPCA (MSE, MAD, MAPE): ", error_metrics(xs_pca, x_s))
 	println("\nVB (y) PPCA (MSE, MAD, MAPE): ", error_metrics(y_pca[:, 1:end-1], y_s[:, 2:end]))
 	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ c31c46e3-6466-4563-b30a-39a050cb691d
+let
+	Random.seed!(111)
+	y_pca, x_tr = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+
+	M = fit(PPCA, y_pca; maxoutdim=2)
+	x_s = predict(M, y_pca)
+	println("MLE PPCA latent x error (MSE, MAD, MAPE): ", error_metrics(x_tr, x_s))
+	loadings(M), M
+end
+
+# ╔═╡ 08a0ae3e-80c0-4f68-b782-034417bc0262
+let
+	Random.seed!(111)
+	y_pca, x_tr = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+
+	M = fit(PPCA, y_pca; method=(:em), maxoutdim=2)
+	x_s = predict(M, y_pca)
+	println("EM PPCA latent x error (MSE, MAD, MAPE): ", error_metrics(x_tr, x_s))
+	loadings(M), M
+end
+
+# ╔═╡ 7feba1b9-aa82-46e8-877c-f9891ead3b15
+let
+	Random.seed!(111)
+	y_pca, x_tr = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+
+	M = fit(PPCA, y_pca; method=(:bayes), maxoutdim=2)
+
+	x_s = predict(M, y_pca)
+	println("Bayes PPCA latent x error (MSE, MAD, MAPE): ", error_metrics(x_tr, x_s))
+	
+	loadings(M), M
 end
 
 # ╔═╡ 3a97cd42-7f14-4068-b711-a6759042269c
@@ -1739,6 +1867,7 @@ PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+MultivariateStats = "6f286f6a-111f-5878-ab1e-185364afe411"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -1747,6 +1876,7 @@ StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 
 [compat]
 Distributions = "~0.25.87"
+MultivariateStats = "~0.10.2"
 Plots = "~1.38.9"
 PlutoUI = "~0.7.50"
 SpecialFunctions = "~2.2.0"
@@ -1759,7 +1889,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.1"
 manifest_format = "2.0"
-project_hash = "d5999de436990a28cca4f7280892b159fec7b049"
+project_hash = "a0f57b238b2a9ca79677c7bbed187e459ce714cb"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -1770,6 +1900,18 @@ version = "1.1.4"
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.1"
+
+[[deps.Arpack]]
+deps = ["Arpack_jll", "Libdl", "LinearAlgebra", "Logging"]
+git-tree-sha1 = "9b9b347613394885fd1c8c7729bfc60528faa436"
+uuid = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
+version = "0.5.4"
+
+[[deps.Arpack_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "OpenBLAS_jll", "Pkg"]
+git-tree-sha1 = "5ba6c757e8feccf03a1554dfaf3e26b3cfc7fd5e"
+uuid = "68821587-b530-5797-8361-c406ea357684"
+version = "3.5.1+1"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -2254,6 +2396,12 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 [[deps.MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 version = "2022.10.11"
+
+[[deps.MultivariateStats]]
+deps = ["Arpack", "LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI", "StatsBase"]
+git-tree-sha1 = "68bf5103e002c44adfd71fea6bd770b3f0586843"
+uuid = "6f286f6a-111f-5878-ab1e-185364afe411"
+version = "0.10.2"
 
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
@@ -2887,27 +3035,47 @@ version = "1.4.1+0"
 # ╟─be042373-ed3e-4e2e-b714-b4f9e5964b57
 # ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
-# ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
+# ╟─6550261c-a3b8-40bc-a4ac-c43ae33215ca
 # ╟─80c165d8-6392-4f76-950a-dc46be06bcc9
-# ╠═075b9c39-93fc-47b9-87b8-d3ffab37149c
-# ╟─2914e760-7a5b-469a-b21a-14b4c393a27e
 # ╠═e444f18c-9370-43ae-8c52-fc9673b4e78d
+# ╟─cfebbda5-825c-495d-895a-e07b07b9566f
+# ╠═075b9c39-93fc-47b9-87b8-d3ffab37149c
+# ╟─6226131c-4025-4077-887e-a4ba6f1ea580
+# ╠═9a143b76-4c69-4c84-8499-dc59a15bb2d7
+# ╟─9038f307-0245-48df-8c4d-feb77d0eeb10
+# ╟─5ae22e9c-5303-43eb-9c17-674ac540ba40
+# ╟─e193436c-7d77-46a3-9d6b-61e57c7cbbeb
+# ╟─e237140b-5cfc-4d04-a228-a925f90b24a2
+# ╟─56ffa631-8abd-40bb-9c97-4dfdd7b6e0dc
+# ╟─00cb5236-3a89-4d8c-ac48-f55af8e6722a
+# ╟─c5ee2c37-ea5f-4013-8930-758c10770ef4
+# ╟─5fd414dc-cabd-46a7-aee2-293112daf957
 # ╟─c422d3e3-27ae-4543-9315-3342bb257d19
 # ╟─73917530-67d0-480f-a776-619ef13394dd
-# ╠═e199689c-a79d-4824-af81-0b819fbc2a52
-# ╠═23af67ea-b57d-4cf7-81af-8b2a746f84fe
-# ╠═b180f4ec-af24-4f06-a642-b080c8fcdcce
+# ╟─e199689c-a79d-4824-af81-0b819fbc2a52
+# ╟─23af67ea-b57d-4cf7-81af-8b2a746f84fe
+# ╟─b180f4ec-af24-4f06-a642-b080c8fcdcce
 # ╟─b7a7fe42-24b9-4aff-82c7-5964acf25bce
-# ╠═78184b54-60ca-4457-bec3-092848a43f1c
+# ╟─78184b54-60ca-4457-bec3-092848a43f1c
 # ╟─c15e18ba-543b-4a98-9d5c-41dbc02ca879
 # ╠═72e5080a-089e-4869-a0e5-e13ee1d7a83d
 # ╟─51aa8176-fb01-4510-a193-87487d501fd0
 # ╟─67ba0061-7809-4391-9410-1aaae787e636
-# ╠═806f343e-2ef7-48c6-964a-f29c0ad63256
+# ╟─806f343e-2ef7-48c6-964a-f29c0ad63256
 # ╟─a4526a71-2e74-479e-892d-b5bc04ceebf8
 # ╟─621f9118-172b-4e5e-8c17-259ff43d70d4
-# ╟─5c32b97e-8e6a-499d-b07b-52257f1dc0e3
+# ╟─c4a4ad20-45ea-4ae8-a49d-b1e467b3e260
+# ╠═5c32b97e-8e6a-499d-b07b-52257f1dc0e3
 # ╠═c039b519-e045-4ade-bfdb-b0f5ae4fa0d3
+# ╟─f8cecb99-6a6e-4ba1-aa56-30d40807cfef
+# ╠═c31c46e3-6466-4563-b30a-39a050cb691d
+# ╟─3377e631-3738-4218-86ef-01e7a935631c
+# ╠═08a0ae3e-80c0-4f68-b782-034417bc0262
+# ╟─9010c12e-ac9e-4426-a6ac-763904adb87f
+# ╠═7feba1b9-aa82-46e8-877c-f9891ead3b15
+# ╠═51e3c1bd-acfb-4f24-9152-8d32a2777fc4
+# ╠═2c344be0-2cfd-4267-b6f2-c2970c7e66b7
+# ╠═68faadec-a427-4a05-b1fd-9b754b8fa0d5
 # ╟─55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 # ╠═076c7125-cc41-46d2-8c3b-f091efdc8ace
 # ╟─3a97cd42-7f14-4068-b711-a6759042269c

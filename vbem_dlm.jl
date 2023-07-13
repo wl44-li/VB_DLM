@@ -233,10 +233,11 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	catch err
 	    if isa(err, DomainError)
 	        println("DomainError occurred: check that a_s and b_s are positive values")
-			println(a_s)
-			println(b_s)
-			#b_s = max.(b_s, eps())
+			println("a_s: ", a_s)
+			println("b_s: ", b_s)
 			b_s = abs.(b_s)
+			println("Temporal fix: ", b_s)
+			println("Consider adjusting hyperparameters α, γ, a, b")
 			q_ρ = Gamma.(a_s, 1 ./ b_s)
 	    else
 	        rethrow(err)  # If it's not a DomainError, rethrow the exception
@@ -674,7 +675,7 @@ if $p>k$, latent variable $x$ will offer a 'parsimonious' explaination of the de
 
 # ╔═╡ 2914e760-7a5b-469a-b21a-14b4c393a27e
 md"""
-occasional gamma error in m-step line 27. choice of gamma prior (a=b=100?)
+Change: Occasional gamma error in m-step line 27. 
 """
 
 # ╔═╡ c422d3e3-27ae-4543-9315-3342bb257d19
@@ -872,7 +873,7 @@ md"""
 """
 
 # ╔═╡ 72e5080a-089e-4869-a0e5-e13ee1d7a83d
-function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=700, tol=5e-3)
+function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000, tol=5e-3)
 	D, T = size(ys)
 	K = length(hpp.α)
 	
@@ -1275,7 +1276,7 @@ end
 begin
 	C_d3 = [1.0 0.0 0.0; 0.0 0.9 0.1; 0.0 0.1 0.9]
 	R_d3 = Diagonal([0.3, 0.5, 0.1])
-	Random.seed!(99)
+	Random.seed!(111)
 	y_d3, x_d3 = gen_data(A_3, C_d3, Q, R_d3, μ_i, Σ_i, T) #K=3, D=3
 end
 
@@ -1285,28 +1286,18 @@ A_3, C_d3, R_d3
 # ╔═╡ 6c27071e-a984-4450-92d4-4058baa92d1b
 begin
 	C_d3k2 = [1.0 0.0; 0.2 0.8; 0.9 0.1] #K=2, D=3
+	Random.seed!(133)
 	y_d3k2, x_d3k2 = gen_data(A, C_d3k2, Diagonal([1.0, 1.0]), R_d3, μ_0, Σ_0, T)
 end
 
 # ╔═╡ 075b9c39-93fc-47b9-87b8-d3ffab37149c
 C_d3k2 # case p=3, k=2
 
+# ╔═╡ c039b519-e045-4ade-bfdb-b0f5ae4fa0d3
+C_d3k2
+
 # ╔═╡ 93541f59-06f3-48f0-a95b-5bd0b9b8e60a
 A, C_d3k2, R_d3
-
-# ╔═╡ ff03366d-ae33-4b3e-bc46-2cd039d21c61
-begin
-	using MultivariateStats
-	
-	# Assume y is a D x T matrix
-	model = fit(PCA, y_d3k2; maxoutdim=2)
-	
-	# The principal components are stored in the 'p' field of the model
-	pcs = model.proj[:, 1:2]
-	
-	# Transpose to match our S_C shape (K x D)
-	S_C_init = pcs'
-end
 
 # ╔═╡ 0b4973f6-b30c-47b6-82ad-7763cd09ad43
 let
@@ -1432,7 +1423,7 @@ begin
 	D = size(y, 1)
 	α = ones(K)
 	γ = ones(K)
-	a = 0.001
+	a = 100
 	b = 100
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
@@ -1468,16 +1459,13 @@ let
 	Random.seed!(111)
 	y_pca, xs_pca = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
 	
-	exp_f = vb_dlm(y_pca, hpp, true, 270)
-	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
-end
+	α = ones(K)
+	γ = ones(K) 
+	a = 100
+	b = 100
 
-# ╔═╡ 5c32b97e-8e6a-499d-b07b-52257f1dc0e3
-let
-	Random.seed!(123)
-	y_pca, xs_pca = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
-	
-	exp_f = vb_dlm_c(y_pca, hpp, true, 500, 1e-5)
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	exp_f = vb_dlm(y_pca, hpp, true)
 	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
@@ -1510,7 +1498,14 @@ println("Kalman Filtered (y) MSE, MAD, MAPE: ", error_metrics(y[:, 1:end-1], y_h
 # ╔═╡ 6550261c-a3b8-40bc-a4ac-c43ae33215ca
 let
 	Random.seed!(99)
-	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 2000)
+	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 1000)
+	
+	α = ones(K)
+	γ = ones(K) 
+	a = 1
+	b = 1
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	
 	exp_f = vb_dlm(y_pca, hpp, true)
 	xs, σs, y_s, Qs = vb_e(y_pca, exp_f, hpp, true)
 	
@@ -1526,10 +1521,16 @@ let
 end
 
 # ╔═╡ 621f9118-172b-4e5e-8c17-259ff43d70d4
-begin
+let
 	Random.seed!(99)
-	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 2000)
-	exp_ppca = vb_dlm_c(y_pca, hpp, true)
+	y_pca, xs_pca = gen_data(zeros(2, 2), C, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, 1000)
+	α = ones(K) .* 10
+	γ = ones(K) .* 10
+	a = 0.1
+	b = 0.1
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	
+	exp_ppca = vb_dlm_c(y_pca, hpp, true, 100, 1e-3)
 	x_s, σ_s, y_s, Q_s = vb_e(y_pca, exp_ppca, hpp, true)
 	
 	println("\nVB (x) PPCA (MSE, MAD, MAPE): ", error_metrics(xs_pca, x_s))
@@ -1542,14 +1543,34 @@ begin
 	exp_ppca.A, exp_ppca.C, inv(exp_ppca.R⁻¹)
 end
 
+# ╔═╡ 5c32b97e-8e6a-499d-b07b-52257f1dc0e3
+let
+	Random.seed!(111)
+	y_pca, xs_pca = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), Diagonal([0.3, 0.3, 0.3]), μ_0, Σ_0, 1000)
+
+	α = ones(K) .* 100
+	γ = ones(K) .* 100
+	a = 0.1
+	b = 0.1
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	
+	exp_f = vb_dlm_c(y_pca, hpp, true, 200, 1e-4)
+
+	x_s, σ_s, y_s, Q_s = vb_e(y_pca, exp_f, hpp, true)
+
+	println("\nVB (x) PPCA (MSE, MAD, MAPE): ", error_metrics(xs_pca, x_s))
+	println("\nVB (y) PPCA (MSE, MAD, MAPE): ", error_metrics(y_pca[:, 1:end-1], y_s[:, 2:end]))
+	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+end
+
 # ╔═╡ 3a97cd42-7f14-4068-b711-a6759042269c
 let
 	K = size(A, 1)
 	D = size(y, 1)
 	α = ones(K)
 	γ = ones(K)
-	a = 0.001
-	b = 0.001
+	a = 0.1
+	b = 0.1
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	exp_f = vb_dlm_c(y, hpp, true) # hyper-parameter learning
@@ -1566,8 +1587,8 @@ let
 	D = size(y, 1)
 	α = ones(K)
 	γ = ones(K)
-	a = 0.001
-	b = 0.001
+	a = 0.1
+	b = 0.1
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	exp_f = vb_dlm_c(y, hpp)
@@ -1588,7 +1609,7 @@ let
 	a = 0.001
 	b = 0.001
 	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
-	exp_ = vb_dlm_c(y_k3, hpp, true)
+	exp_ = vb_dlm_c(y_k3, hpp, true, 700)
 
 	x_s, _, y_s, _ = vb_e(y_k3, exp_, hpp, true)
 	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_k3, x_s))
@@ -1603,8 +1624,8 @@ let
 	D = size(C_3, 1)
 	α = ones(K)
 	γ = ones(K)
-	a = 0.001
-	b = 0.001
+	a = 1
+	b = 1
 	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
 
 	exp_ = vb_dlm_c(y_k3, hpp) # no hyperparam learning
@@ -1629,8 +1650,8 @@ let
 	D = size(C_d3, 1)
 	α = ones(K)
 	γ = ones(K)
-	a = 0.001
-	b = 0.001
+	a = 0.1
+	b = 0.1
 	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
 
 	exp_ = vb_dlm_c(y_d3, hpp, true) 
@@ -1648,8 +1669,8 @@ let
 	D = size(C_d3, 1)
 	α = ones(K)
 	γ = ones(K)
-	a = 0.001
-	b = 0.001
+	a = 0.1
+	b = 0.1
 	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
 
 	exp_ = vb_dlm_c(y_d3, hpp) 
@@ -1674,8 +1695,8 @@ let
 	D = size(C_d3k2, 1)
 	α = ones(K)
 	γ = ones(K)
-	a = 0.001
-	b = 0.001
+	a = 1
+	b = 1
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	exp_ = vb_dlm_c(y_d3k2, hpp, true) 
@@ -1693,8 +1714,8 @@ let
 	D = size(C_d3k2, 1)
 	α = ones(K)
 	γ = ones(K)
-	a = 0.001
-	b = 0.001
+	a = 1
+	b = 1
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
 	exp_ = vb_dlm_c(y_d3k2, hpp, false) 
@@ -1718,7 +1739,6 @@ PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-MultivariateStats = "6f286f6a-111f-5878-ab1e-185364afe411"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -1727,7 +1747,6 @@ StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 
 [compat]
 Distributions = "~0.25.87"
-MultivariateStats = "~0.10.2"
 Plots = "~1.38.9"
 PlutoUI = "~0.7.50"
 SpecialFunctions = "~2.2.0"
@@ -1740,7 +1759,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.1"
 manifest_format = "2.0"
-project_hash = "a0f57b238b2a9ca79677c7bbed187e459ce714cb"
+project_hash = "d5999de436990a28cca4f7280892b159fec7b049"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -1751,18 +1770,6 @@ version = "1.1.4"
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.1"
-
-[[deps.Arpack]]
-deps = ["Arpack_jll", "Libdl", "LinearAlgebra", "Logging"]
-git-tree-sha1 = "9b9b347613394885fd1c8c7729bfc60528faa436"
-uuid = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
-version = "0.5.4"
-
-[[deps.Arpack_jll]]
-deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "OpenBLAS_jll", "Pkg"]
-git-tree-sha1 = "5ba6c757e8feccf03a1554dfaf3e26b3cfc7fd5e"
-uuid = "68821587-b530-5797-8361-c406ea357684"
-version = "3.5.1+1"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -2247,12 +2254,6 @@ uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 [[deps.MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 version = "2022.10.11"
-
-[[deps.MultivariateStats]]
-deps = ["Arpack", "LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI", "StatsBase"]
-git-tree-sha1 = "68bf5103e002c44adfd71fea6bd770b3f0586843"
-uuid = "6f286f6a-111f-5878-ab1e-185364afe411"
-version = "0.10.2"
 
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
@@ -2862,12 +2863,12 @@ version = "1.4.1+0"
 # ╟─52a70be4-fb8c-40d8-9c7a-226649ada6e3
 # ╠═fbc24a7c-48a0-43cc-9dd2-440acfb41c39
 # ╟─a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
-# ╠═8a73d154-236d-4660-bb21-24681ed7d315
+# ╟─8a73d154-236d-4660-bb21-24681ed7d315
 # ╟─408dd6d8-cb5f-49ce-944b-50a0d9cebef5
-# ╠═fb472969-3c3c-4787-8cf1-296f2c13ddf5
+# ╟─fb472969-3c3c-4787-8cf1-296f2c13ddf5
 # ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
-# ╠═87667a9e-02aa-4104-b5a0-0f6b9e98ba96
-# ╠═d60b91ea-a020-41b5-9364-787167f0bac9
+# ╟─87667a9e-02aa-4104-b5a0-0f6b9e98ba96
+# ╟─d60b91ea-a020-41b5-9364-787167f0bac9
 # ╟─b0b1f14d-4fbd-4995-845f-f19990460329
 # ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
 # ╟─3c63b27b-76e3-4edc-9b56-345738b97c41
@@ -2875,7 +2876,7 @@ version = "1.4.1+0"
 # ╟─17c0f85b-f1f2-4a26-a0f2-5fae3c3615fd
 # ╠═079cd7ef-632d-41d0-866d-6678808a8f4c
 # ╟─e0b4574c-8b75-45b7-98f8-8b9b6efd8c56
-# ╟─e6afe143-652b-4ca6-812d-8a67415a84aa
+# ╠═e6afe143-652b-4ca6-812d-8a67415a84aa
 # ╟─cdcbb9be-014c-44b2-a126-9445a151994e
 # ╟─7b185270-58d5-4406-8768-103d798fa326
 # ╠═adbf92e5-8a86-4acf-8f50-d82e122a5f5f
@@ -2889,7 +2890,7 @@ version = "1.4.1+0"
 # ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
 # ╟─80c165d8-6392-4f76-950a-dc46be06bcc9
 # ╠═075b9c39-93fc-47b9-87b8-d3ffab37149c
-# ╠═2914e760-7a5b-469a-b21a-14b4c393a27e
+# ╟─2914e760-7a5b-469a-b21a-14b4c393a27e
 # ╠═e444f18c-9370-43ae-8c52-fc9673b4e78d
 # ╟─c422d3e3-27ae-4543-9315-3342bb257d19
 # ╟─73917530-67d0-480f-a776-619ef13394dd
@@ -2904,17 +2905,18 @@ version = "1.4.1+0"
 # ╟─67ba0061-7809-4391-9410-1aaae787e636
 # ╠═806f343e-2ef7-48c6-964a-f29c0ad63256
 # ╟─a4526a71-2e74-479e-892d-b5bc04ceebf8
-# ╠═621f9118-172b-4e5e-8c17-259ff43d70d4
-# ╠═5c32b97e-8e6a-499d-b07b-52257f1dc0e3
+# ╟─621f9118-172b-4e5e-8c17-259ff43d70d4
+# ╟─5c32b97e-8e6a-499d-b07b-52257f1dc0e3
+# ╠═c039b519-e045-4ade-bfdb-b0f5ae4fa0d3
 # ╟─55eb8a6a-7bb9-4aa4-a560-d30ec9374776
-# ╟─076c7125-cc41-46d2-8c3b-f091efdc8ace
+# ╠═076c7125-cc41-46d2-8c3b-f091efdc8ace
 # ╟─3a97cd42-7f14-4068-b711-a6759042269c
 # ╟─17a8fdf6-dd03-4de9-8969-085dc0043699
 # ╟─b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
 # ╟─7112cfa1-2f3c-4197-92bd-73f43cd1f9d4
 # ╟─04fcab96-69ac-4ffe-85e3-ccdd905cc99f
 # ╟─fbbce4b8-79bc-480f-a294-b3cde52823f0
-# ╟─3ea87e4c-3310-465a-92fb-1b6210a71a72
+# ╠═3ea87e4c-3310-465a-92fb-1b6210a71a72
 # ╟─be3571b9-d315-48c0-80bb-c353bfb61028
 # ╟─ae598288-b67a-4d8a-a9f1-ac9ce7f3e833
 # ╟─7d29d039-7999-4398-8f1e-394511a85f08
@@ -2943,10 +2945,9 @@ version = "1.4.1+0"
 # ╠═f356a7c6-b78b-4042-b4e6-a5998e791d7a
 # ╟─7acc5644-20b7-473c-98a2-b5423061f893
 # ╠═6c27071e-a984-4450-92d4-4058baa92d1b
-# ╠═ff03366d-ae33-4b3e-bc46-2cd039d21c61
-# ╠═0b4973f6-b30c-47b6-82ad-7763cd09ad43
 # ╠═b6929d34-b85f-4d20-b19f-d0ff4ebcc46f
-# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╟─0b4973f6-b30c-47b6-82ad-7763cd09ad43
 # ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1
 # ╟─59bcc9bf-276c-47e1-b6a9-86f90571c0fb

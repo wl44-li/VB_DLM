@@ -1887,7 +1887,7 @@ StatsFuns = "~1.3.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.1"
+julia_version = "1.9.2"
 manifest_format = "2.0"
 project_hash = "a0f57b238b2a9ca79677c7bbed187e459ce714cb"
 
@@ -1985,7 +1985,7 @@ weakdeps = ["Dates", "LinearAlgebra"]
 [[deps.CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
-version = "1.0.2+0"
+version = "1.0.5+0"
 
 [[deps.ConcurrentUtilities]]
 deps = ["Serialization", "Sockets"]
@@ -2489,7 +2489,7 @@ version = "0.40.1+0"
 [[deps.Pkg]]
 deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
 uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-version = "1.9.0"
+version = "1.9.2"
 
 [[deps.PlotThemes]]
 deps = ["PlotUtils", "Statistics"]
@@ -2989,14 +2989,14 @@ version = "1.4.1+0"
 # ╟─477f8dbf-6797-4e7c-91be-31387f82ece7
 # ╟─c5fc190c-63a1-4d94-ac29-f56d0556452f
 # ╟─74482089-10fe-446b-b3f6-dc1b81b1a424
-# ╠═9381e183-5b4e-489f-a109-4e606212986e
-# ╠═45b0255d-72fd-4fa7-916a-4f73e730f4d5
-# ╠═6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
-# ╠═74c16682-2a48-4f10-a939-21e89a54e807
+# ╟─9381e183-5b4e-489f-a109-4e606212986e
+# ╟─45b0255d-72fd-4fa7-916a-4f73e730f4d5
+# ╟─6c1a13d3-9089-4b54-a0e5-a02fb5fdf4a1
+# ╟─74c16682-2a48-4f10-a939-21e89a54e807
 # ╠═a8b50581-e5f3-449e-803e-ab31e6e0b812
 # ╟─85e2ada1-0adc-41a8-ab34-8043379ca0a4
 # ╠═2c9a233f-3a96-43dc-b783-b82642a82590
-# ╟─d9cb7c74-007d-4229-a576-a7a41fff565b
+# ╠═d9cb7c74-007d-4229-a576-a7a41fff565b
 # ╟─01b6b048-6bd6-4c5a-8586-066cecf3ed51
 # ╟─781d041c-1e4d-4354-b240-12511207bde0
 # ╠═cb1a9949-59e1-4ccb-8efc-aa2ffbadaab2
@@ -3011,11 +3011,11 @@ version = "1.4.1+0"
 # ╟─52a70be4-fb8c-40d8-9c7a-226649ada6e3
 # ╠═fbc24a7c-48a0-43cc-9dd2-440acfb41c39
 # ╟─a810cf76-2c64-457c-b5ea-eaa8bf4b1d42
-# ╟─8a73d154-236d-4660-bb21-24681ed7d315
+# ╠═8a73d154-236d-4660-bb21-24681ed7d315
 # ╟─408dd6d8-cb5f-49ce-944b-50a0d9cebef5
-# ╟─fb472969-3c3c-4787-8cf1-296f2c13ddf5
+# ╠═fb472969-3c3c-4787-8cf1-296f2c13ddf5
 # ╟─9373df69-ba17-46e0-a48a-ab1ca7dc3a9f
-# ╟─87667a9e-02aa-4104-b5a0-0f6b9e98ba96
+# ╠═87667a9e-02aa-4104-b5a0-0f6b9e98ba96
 # ╟─d60b91ea-a020-41b5-9364-787167f0bac9
 # ╟─b0b1f14d-4fbd-4995-845f-f19990460329
 # ╠═1902c1f1-1246-4ab3-88e6-35619d685cdd
@@ -3035,7 +3035,7 @@ version = "1.4.1+0"
 # ╟─be042373-ed3e-4e2e-b714-b4f9e5964b57
 # ╟─24de2bcb-cf9d-44f7-b1d7-f80ae8c08ed1
 # ╟─e3e78fb1-00aa-4399-8330-1d4a08742b42
-# ╟─6550261c-a3b8-40bc-a4ac-c43ae33215ca
+# ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
 # ╟─80c165d8-6392-4f76-950a-dc46be06bcc9
 # ╠═e444f18c-9370-43ae-8c52-fc9673b4e78d
 # ╟─cfebbda5-825c-495d-895a-e07b07b9566f
@@ -3053,8 +3053,8 @@ version = "1.4.1+0"
 # ╟─c422d3e3-27ae-4543-9315-3342bb257d19
 # ╟─73917530-67d0-480f-a776-619ef13394dd
 # ╟─e199689c-a79d-4824-af81-0b819fbc2a52
-# ╟─23af67ea-b57d-4cf7-81af-8b2a746f84fe
-# ╟─b180f4ec-af24-4f06-a642-b080c8fcdcce
+# ╠═23af67ea-b57d-4cf7-81af-8b2a746f84fe
+# ╠═b180f4ec-af24-4f06-a642-b080c8fcdcce
 # ╟─b7a7fe42-24b9-4aff-82c7-5964acf25bce
 # ╟─78184b54-60ca-4457-bec3-092848a43f1c
 # ╟─c15e18ba-543b-4a98-9d5c-41dbc02ca879
@@ -3114,7 +3114,7 @@ version = "1.4.1+0"
 # ╟─7acc5644-20b7-473c-98a2-b5423061f893
 # ╠═6c27071e-a984-4450-92d4-4058baa92d1b
 # ╠═b6929d34-b85f-4d20-b19f-d0ff4ebcc46f
-# ╟─a5ae35dc-cc4b-48bd-869e-37823b8073d2
+# ╠═a5ae35dc-cc4b-48bd-869e-37823b8073d2
 # ╟─0b4973f6-b30c-47b6-82ad-7763cd09ad43
 # ╟─baca3b20-16ac-4e37-a2bb-7512d1c99eb8
 # ╟─e7ca9061-64dc-44ef-854e-45b8015abad1

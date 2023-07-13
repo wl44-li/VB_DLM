@@ -1706,7 +1706,7 @@ StatsPlots = "~0.15.5"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.1"
+julia_version = "1.9.2"
 manifest_format = "2.0"
 project_hash = "224a0678ab9b9b64cdf55185eb4a6f23316f69e6"
 
@@ -1889,7 +1889,7 @@ weakdeps = ["Dates", "LinearAlgebra"]
 [[deps.CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
-version = "1.0.2+0"
+version = "1.0.5+0"
 
 [[deps.CompositionsBase]]
 git-tree-sha1 = "802bb88cd69dfd1509f6670416bd4434015693ad"
@@ -2598,7 +2598,7 @@ version = "0.42.2+0"
 [[deps.Pkg]]
 deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "REPL", "Random", "SHA", "Serialization", "TOML", "Tar", "UUIDs", "p7zip_jll"]
 uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-version = "1.9.0"
+version = "1.9.2"
 
 [[deps.PlotThemes]]
 deps = ["PlotUtils", "Statistics"]
@@ -3333,7 +3333,7 @@ version = "1.4.1+0"
 # ╟─a6470873-26b3-4981-80eb-12a59bd3695d
 # ╟─c096bbab-4009-4995-8f45-dc7ffab7ccfa
 # ╟─63bc1239-1a6a-4f3b-9d2c-9b904aec573c
-# ╟─2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
+# ╠═2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
 # ╟─1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
 # ╟─3100b411-e2de-4a43-be80-bcfcb42cef40
 # ╟─ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2

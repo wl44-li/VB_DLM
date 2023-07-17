@@ -676,11 +676,6 @@ if $p>k$, latent variable $x$ will offer a 'parsimonious' explaination of the de
 
 """
 
-# ╔═╡ cfebbda5-825c-495d-895a-e07b07b9566f
-md"""
-Ground truth loading matrix
-"""
-
 # ╔═╡ 6226131c-4025-4077-887e-a4ba6f1ea580
 md"""
 ### Compare with existing PCA package
@@ -936,7 +931,7 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000,
 		kl_ρ_ = sum([kl_ρ(hpp.a, hpp.b, qθ.a_s, (qθ.b_s)[s]) for s in 1:D])
 		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
 			
-		elbo = kl_A_ + kl_ρ_ + kl_C_ - log_Z_
+		elbo = log_Z_ - (kl_A_ + kl_ρ_ + kl_C_) 
 
 		# Hyper-param learning 
 		if (hpp_learn)
@@ -1346,9 +1341,6 @@ begin
 	Random.seed!(133)
 	y_d3k2, x_d3k2 = gen_data(A, C_d3k2, Diagonal([1.0, 1.0]), R_d3, μ_0, Σ_0, T)
 end
-
-# ╔═╡ 075b9c39-93fc-47b9-87b8-d3ffab37149c
-C_d3k2 # case p=3, k=2
 
 # ╔═╡ 5ae22e9c-5303-43eb-9c17-674ac540ba40
 let
@@ -3038,8 +3030,6 @@ version = "1.4.1+0"
 # ╠═6550261c-a3b8-40bc-a4ac-c43ae33215ca
 # ╟─80c165d8-6392-4f76-950a-dc46be06bcc9
 # ╠═e444f18c-9370-43ae-8c52-fc9673b4e78d
-# ╟─cfebbda5-825c-495d-895a-e07b07b9566f
-# ╠═075b9c39-93fc-47b9-87b8-d3ffab37149c
 # ╟─6226131c-4025-4077-887e-a4ba6f1ea580
 # ╠═9a143b76-4c69-4c84-8499-dc59a15bb2d7
 # ╟─9038f307-0245-48df-8c4d-feb77d0eeb10
@@ -3047,9 +3037,9 @@ version = "1.4.1+0"
 # ╟─e193436c-7d77-46a3-9d6b-61e57c7cbbeb
 # ╟─e237140b-5cfc-4d04-a228-a925f90b24a2
 # ╟─56ffa631-8abd-40bb-9c97-4dfdd7b6e0dc
-# ╟─00cb5236-3a89-4d8c-ac48-f55af8e6722a
+# ╠═00cb5236-3a89-4d8c-ac48-f55af8e6722a
 # ╟─c5ee2c37-ea5f-4013-8930-758c10770ef4
-# ╟─5fd414dc-cabd-46a7-aee2-293112daf957
+# ╠═5fd414dc-cabd-46a7-aee2-293112daf957
 # ╟─c422d3e3-27ae-4543-9315-3342bb257d19
 # ╟─73917530-67d0-480f-a776-619ef13394dd
 # ╟─e199689c-a79d-4824-af81-0b819fbc2a52

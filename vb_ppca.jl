@@ -97,7 +97,7 @@ function vb_m(ys, hps::HPP, ss::HSS)
 			println("Consider adjusting hyperparameters α, γ, a, b")
 			q_ρ = Gamma.(a_s, 1 ./ b_s)
 	    else
-	        rethrow(err)  # If it's not a DomainError, rethrow the exception
+	        rethrow(err)
 	    end
 	end
 	ρ̄ = mean.(q_ρ)
@@ -119,6 +119,11 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	# return expected natural parameters :: Exp_ϕ (for e-step)
 	return Exp_ϕ(Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹, exp_log_ρ), γ_n, exp_ρ, exp_log_ρ, Qθ(Σ_C, μ_C, a_, b_s)
 end
+
+# ╔═╡ 361256a9-67ff-4800-baea-06eb6f2347ff
+md"""
+Test m-step update
+"""
 
 # ╔═╡ c9f2a88e-da48-49ff-b987-02fa2231548e
 function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
@@ -157,7 +162,7 @@ end
 
 # ╔═╡ 9be0a627-7d71-4b83-9758-20149b1c8eee
 md"""
-Given A is fixed to zero matrix, backward, and smoother are not necessary, since they will eventually just recover the forward results.
+Given $A$ is fixed to zero matrix, backward, and smoother are not necessary, since they eventually recover the forward results.
 """
 
 # ╔═╡ 3f01c2c3-8d79-4e22-a367-49f5c31785af
@@ -203,6 +208,11 @@ function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP, smooth_out=false)
 	return HSS(W_C, S_C), log_Z_
 end
 
+# ╔═╡ 03e29b61-f940-4759-b09b-be4be824c4e1
+md"""
+Test e-step
+"""
+
 # ╔═╡ 41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
 function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64})
     D = length(exp_ρ)
@@ -212,7 +222,7 @@ function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64
     # Update `a` using fixed point iteration
 	a = hpp.a		
 
-    for _ in 1:100
+    for _ in 1:1000
         ψ_a = digamma(a)
         ψ_a_p = trigamma(a)
         
@@ -220,7 +230,7 @@ function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64
 		a = a_new
 
 		# check convergence
-        if abs(a_new - a) < 1e-5
+        if abs(a_new - a) < 1e-4
             break
         end
     end
@@ -259,9 +269,9 @@ begin
 	Random.seed!(121)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
-	C_d3k2 = [1.0 0.0; 0.2 0.8; 0.9 0.1] #K=2, D=3
+	C_d3k2 = [1.0 0.0; 0.1 0.8; 0.9 0.2] #K=2, D=3
 	R = Diagonal([0.3, 0.3, 0.3])
-	T = 2000
+	T = 1000
 	y_pca, x_true = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, T)
 end
 
@@ -352,9 +362,7 @@ begin
 	a = 0.01
 	b = 0.01
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
-
 	exp_f = vb_ppca(y_pca, hpp, true)
-
 	exp_f.C, inv(exp_f.R⁻¹)
 end
 
@@ -380,7 +388,7 @@ function kl_C(μ_0, γ, μ_C, Σ_C, exp_ρs)
 end
 
 # ╔═╡ 43095945-3a72-4153-bd9b-c36a910a3826
-function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500, tol=5e-5)
+function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000, tol=5e-5)
 	D, T = size(ys)
 	K = length(hpp.γ)
 	
@@ -400,11 +408,11 @@ function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500,
 		kl_ρ_ = sum([kl_ρ(hpp.a, hpp.b, qθ.a_s, (qθ.b_s)[s]) for s in 1:D])
 		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
 			
-		elbo = kl_ρ_ + kl_C_ - log_Z_
+		elbo = log_Z_ - kl_ρ_ - kl_C_
 
 		# Hyper-param learning 
 		if (hpp_learn)
-			if (i%4 == 0) 
+			if (i%5 == 0) 
 				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
 				hpp = HPP(γ_n, a, b, zeros(K), Matrix{Float64}(I, K, K))
 			end
@@ -422,8 +430,13 @@ function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=500,
 		end
 	end
 		
-	return exp_np
+	return exp_np, elbo_prev
 end
+
+# ╔═╡ fe415c83-2ca5-432b-80b9-3ec89718a7e7
+md"""
+inferring loading matrix $C$ and **isotropic** noise $σ^2$
+"""
 
 # ╔═╡ 9072572f-dc8d-4ec0-aa76-d25f2acab027
 let
@@ -432,10 +445,52 @@ let
 	a = 0.01
 	b = 0.01
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
-
-	exp_f = vb_ppca_c(y_pca, hpp, true)
-
+	exp_f, el = vb_ppca_c(y_pca, hpp, true)
+	println("elbo, k=2 ", el)
 	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 8c11535b-feab-4833-8aff-3814bafed090
+let
+	K = 1
+	γ = ones(K) .* 100
+	a = 0.01
+	b = 0.01
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_pca, hpp, true)
+	println("elbo, k=1 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 74604b66-071b-42b4-b039-d3e484c89603
+md"""
+VBEM procedure is able to converge to results competitive to PPCA packages (ML, EM, Bayes) shown below, and ELBO computation can be used for model selection with the most appropriate $k$ being the highest ELBO
+"""
+
+# ╔═╡ 491489f9-373f-44ab-a6b7-c3714017536c
+let
+	M = fit(PCA, y_pca; maxoutdim=2)
+	loadings(M), tresidualvar(M)
+end
+
+# ╔═╡ ca26f018-b8d3-4a99-97e4-deff6f1e9bf0
+let
+	M = fit(PPCA, y_pca; maxoutdim=2)
+	loadings(M), M
+end
+
+# ╔═╡ 0c2becba-7a86-4b1f-a742-8b663b821997
+let
+	M = fit(PPCA, y_pca; method=(:em), maxoutdim=2)
+	loadings(M), M
+end
+
+# ╔═╡ e63dfbf4-6481-46ab-ab6d-51cd337b5e3b
+let
+	M = fit(PPCA, y_pca; method=(:bayes), maxoutdim=2)
+	loadings(M), M
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -1606,22 +1661,31 @@ version = "1.4.1+0"
 # ╟─5763062a-e218-4420-a767-bcf85c19839d
 # ╠═9a7d917d-be50-4946-bb0a-b77062819064
 # ╠═e835abae-6496-4638-a990-f008ce5286cf
-# ╠═1b0973cd-e4ff-4f13-af91-bbc981802a10
+# ╟─361256a9-67ff-4800-baea-06eb6f2347ff
+# ╟─1b0973cd-e4ff-4f13-af91-bbc981802a10
 # ╠═c9f2a88e-da48-49ff-b987-02fa2231548e
 # ╟─9be0a627-7d71-4b83-9758-20149b1c8eee
 # ╟─3f01c2c3-8d79-4e22-a367-49f5c31785af
 # ╠═0e7e482f-deb7-4947-95bf-0854b0129086
+# ╟─03e29b61-f940-4759-b09b-be4be824c4e1
 # ╟─51aef7a8-4693-40df-8643-d77c67eafa37
-# ╟─947f80a7-e19c-4d54-80cc-f5269dde0c9d
+# ╠═947f80a7-e19c-4d54-80cc-f5269dde0c9d
 # ╠═41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
 # ╠═b21b7e93-16d6-493b-9fda-3831c003a3cc
 # ╠═c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
 # ╟─4fe90ccd-e064-44e7-a1bd-25d6734645ea
 # ╠═9d880af9-d64f-4d1f-9603-48fb5410d1c7
 # ╟─09422a70-f43c-4b6b-9093-c1f0e5e1887f
-# ╠═4d73650c-cd93-4bb4-827e-f0a2edef17f1
-# ╠═50fde0ff-9da7-49fb-b060-508cca6e9709
+# ╟─4d73650c-cd93-4bb4-827e-f0a2edef17f1
+# ╟─50fde0ff-9da7-49fb-b060-508cca6e9709
 # ╠═43095945-3a72-4153-bd9b-c36a910a3826
+# ╟─fe415c83-2ca5-432b-80b9-3ec89718a7e7
 # ╠═9072572f-dc8d-4ec0-aa76-d25f2acab027
+# ╠═8c11535b-feab-4833-8aff-3814bafed090
+# ╟─74604b66-071b-42b4-b039-d3e484c89603
+# ╠═491489f9-373f-44ab-a6b7-c3714017536c
+# ╠═ca26f018-b8d3-4a99-97e4-deff6f1e9bf0
+# ╠═0c2becba-7a86-4b1f-a742-8b663b821997
+# ╠═e63dfbf4-6481-46ab-ab6d-51cd337b5e3b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

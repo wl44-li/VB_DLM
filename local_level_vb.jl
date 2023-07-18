@@ -12,6 +12,7 @@ begin
 	using LinearAlgebra
 	using Plots
 	using PlutoUI
+	using SpecialFunctions
 end
 
 # ╔═╡ 4cc367d1-37a1-4712-a63e-8826b5646a1b
@@ -886,8 +887,16 @@ $s_a = \sum_{t=1}^{T} E_q[x_{t-1} x_t] = \sum_{t=1}^{T} \sigma_{t-1, t} + \mu_{t
 # ╔═╡ 501172ab-203d-4faa-a3b0-3e4fa0c79d10
 md"""
 TO-DO:
-verify cross-variance, cross-moment by hand
+Convergence check
 """
+
+# ╔═╡ 5cf98dbf-1b32-418c-8d62-c7865dc37f04
+function kl_gamma(a_0, b_0, a_s, b_s)
+	kl = a_s*log(b_s) - a_0*log(b_0) - loggamma(a_s) + loggamma(a_0)
+	kl += (a_s - a_0)*(digamma(a_s) - log(b_s))
+	kl -= a_s*(1 - b_0/b_s)
+	return kl
+end
 
 # ╔═╡ 981608f2-57f6-44f1-95ed-82e8cca04718
 begin
@@ -907,6 +916,13 @@ begin
 	    μ_0::Float64
 	    σ_0::Float64
 	end
+
+	struct qθ
+		α_r_p
+		β_r_p
+		α_q_p
+		β_q_p
+	end
 end
 
 # ╔═╡ 241e587f-b3dd-4bf8-83d0-1459c389fcc0
@@ -925,7 +941,7 @@ function vb_m_ll(y, hss::HSS_ll, priors::Priors_ll)
     E_τ_r = α_r_p / β_r_p
     E_τ_q = α_q_p / β_q_p
 
-    return E_τ_r, E_τ_q	
+    return E_τ_r, E_τ_q, qθ(α_r_p, β_r_p, α_q_p, β_q_p)
 end
 
 # ╔═╡ 168d4dbd-f0dd-433b-bb4a-e3bb918fb184
@@ -945,11 +961,10 @@ let
 
 	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 
-	# should recover values of A, C, R close to ground truth
-	exp_np = vb_m_ll(y, hss, hpp)
+	r⁻¹, q⁻¹, _ = vb_m_ll(y, hss, hpp)
 
-	println("r ", (1 ./ exp_np)[1]) # r = 0.2, q = 1.0
-	println("q ", (1 ./ exp_np)[2])
+	println("r ", (1 / r⁻¹)) # r = 0.2, q = 1.0
+	println("q ", (1 / q⁻¹))
 end
 
 # ╔═╡ 1adc874e-e024-464a-80d5-5ded04f62f24
@@ -975,29 +990,42 @@ function forward_ll(y, a, c, E_τ_r, E_τ_q, priors::Priors_ll)
     T = length(y)
     μ_f = zeros(T)
     σ_f2 = zeros(T)
-	aa = zeros(T)
-	rr = zeros(T)
+	fs = zeros(T)
+	ss = zeros(T)
 	
-	aa[1] = a * priors.μ_0
-	rr[1] = a^2 * priors.σ_0 + 1/E_τ_q
-	f_1 = c * aa[1]
-	s_1 = c^2 * rr[1] + 1/E_τ_r
+	a_1 = a * priors.μ_0
+	r_1 = a^2 * priors.σ_0 + 1/E_τ_q
+	f_1 = c * a_1
+	s_1 = c^2 * r_1 + 1/E_τ_r
+	fs[1] = f_1
+	ss[1] = s_1
 	
-    μ_f[1] = aa[1] + rr[1] * c * (1/s_1) * (y[1] - f_1)
-    σ_f2[1] = rr[1] - rr[1]^2 * c^2 * (1/s_1)
+	μ_f[1] = a_1 + r_1 * c * (1/s_1) * (y[1] - f_1)
+    σ_f2[1] = r_1 - r_1^2 * c^2 * (1/s_1)
 	
     for t = 2:T
         # Predict step
         μ_pred = a * μ_f[t-1]
         σ_pred2 = a^2 * σ_f2[t-1] + 1/E_τ_q
 
+		f_t = c * μ_pred
+		s_t = c^2 * σ_pred2 + 1/E_τ_r
+
+		fs[t] = f_t
+		ss[t] = s_t
+
+		μ_f[t] = μ_pred + σ_pred2 * c * (1/s_t) * (y[t] - f_t)
+		σ_f2[t] = σ_pred2 - σ_pred2^2 * c^2 * (1/s_t)
         # Update step
-        K_t = σ_pred2 / (σ_pred2 + 1/E_τ_r)
-        μ_f[t] = μ_pred + K_t * (y[t] - μ_pred)
-        σ_f2[t] = (1 - K_t) * σ_pred2
+        #K_t = σ_pred2 / (σ_pred2 + 1/E_τ_r)
+        #μ_f[t] = μ_pred + K_t * (y[t] - μ_pred)
+        #σ_f2[t] = (1 - K_t) * σ_pred2
     end
+
+	# dlm pg53. beale p175
+	log_z = sum(logpdf(Normal(fs[i], sqrt(ss[i])), y[i]) for i in 1:T)
 	
-    return μ_f, σ_f2
+    return μ_f, σ_f2, log_z
 end
 
 # ╔═╡ bca920fc-9535-4eb0-89c2-03a7334df6b6
@@ -1015,9 +1043,9 @@ let
 	E_τ_q = 1.0
 	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 
-	f_ll, σs_ll = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+	f_ll, σs_ll, log_z = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
 
-	fm, f_ll, σs, σs_ll
+	fm, f_ll, σs, σs_ll, log_z
 end
 
 # ╔═╡ ece11b32-cc61-447b-bbcf-018829360b73
@@ -1108,7 +1136,7 @@ end
 # ╔═╡ bee6469f-13a1-4bd8-8f14-f01e8405a949
 function vb_e_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
     # Forward pass (filter)
-    μs_f, σs_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, priors)
+    μs_f, σs_f2, log_Z = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, priors)
 
     # Backward pass (smoother)
     μs_s, σs_s2, σs_s2_cross = backward_ll(μs_f, σs_f2, E_τ_q)
@@ -1120,7 +1148,7 @@ function vb_e_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
     s_a = sum(σs_s2_cross[1:end-1]) + sum(μs_s[1:end-1] .* μs_s[2:end])
 
     # Return the sufficient statistics in a HSS struct
-    return HSS_ll(w_c, w_a, s_c, s_a)
+    return HSS_ll(w_c, w_a, s_c, s_a), log_Z
 end
 
 # ╔═╡ 59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
@@ -1147,12 +1175,50 @@ function vb_ll(y::Vector{Float64}, hpp::Priors_ll, max_iter=100)
 	E_τ_r, E_τ_q  = missing, missing
 	
 	for i in 1:max_iter
-		E_τ_r, E_τ_q = vb_m_ll(y, hss, hpp)
+		E_τ_r, E_τ_q, _ = vb_m_ll(y, hss, hpp)
 				
-		hss = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
+		hss, _ = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
 	end
 
 	return 1/E_τ_r, 1/E_τ_q
+end
+
+# ╔═╡ 316db2e3-6fd9-45a5-932d-d3465885b842
+function vb_ll_c(y::Vector{Float64}, hpp::Priors_ll, max_iter=500, tol=5e-4)
+	hss = HSS_ll(1.0, 1.0, 1.0, 1.0)
+	E_τ_r, E_τ_q  = missing, missing
+	elbo_prev = -Inf
+	el_s = zeros(max_iter)
+	for i in 1:max_iter
+		E_τ_r, E_τ_q, qθ = vb_m_ll(y, hss, hpp)
+				
+		hss, log_z = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
+
+		kl_ga = kl_gamma(hpp.α_r, hpp.β_r, qθ.α_r_p, qθ.β_r_p) + kl_gamma(hpp.α_q, hpp.β_q, qθ.α_q_p, qθ.β_q_p)
+		elbo = log_z - kl_ga
+		el_s[i] = elbo
+		
+		if abs(elbo - elbo_prev) < tol
+			println("Stopped at iteration: $i")
+			el_s = el_s[1:i]
+            break
+		end
+		
+        elbo_prev = elbo
+
+		if (i == max_iter)
+			println("Warning: VB have not necessarily converged at $max_iter iterations")
+		end
+	end
+
+	return 1/E_τ_r, 1/E_τ_q, el_s
+end
+
+# ╔═╡ 11d5265e-3254-4012-a92c-a67823e1ae1c
+let
+	hpp_ll = Priors_ll(0.1, 0.1, 0.1, 0.1, 0.0, 1.0)
+	@time r, q, elbos = vb_ll_c(y, hpp_ll)
+	plot(elbos, label = "elbo")
 end
 
 # ╔═╡ 665c55c3-d4dc-4d13-9517-d1106ea6210f
@@ -1175,8 +1241,8 @@ function vb_ll_plot(y::Vector{Float64}, hpp::Priors_ll, max_iter=200)
 	
 	E_τ_r, E_τ_q  = missing, missing
 	for i in 1:max_iter
-		E_τ_r, E_τ_q = vb_m_ll(y, hss, hpp)
-		hss = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
+		E_τ_r, E_τ_q, _ = vb_m_ll(y, hss, hpp)
+		hss, _ = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
 
        	history_R[i] = 1/E_τ_r
 		history_Q[i] = 1/E_τ_q
@@ -1256,6 +1322,8 @@ md"""
 """
 
 # ╔═╡ 4c3c2931-e4a8-43d1-b3fa-8bb3b82fb975
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	@model function DLM_Turing(y, a, c)
 	    T = length(y)
@@ -1281,9 +1349,12 @@ begin
 	chain = sample(model, NUTS(), 3000)
 	chain = chain[100:end]
 end;
+  ╠═╡ =#
 
 # ╔═╡ 2ad03b07-68ad-4da8-a5d3-7692502c0e00
+#=╠═╡
 describe(chain)
+  ╠═╡ =#
 
 # ╔═╡ 5f9f903b-a72c-4b60-9934-4bd2ced30a2c
 md"""
@@ -1291,6 +1362,7 @@ Plot learning of $r, q$
 """
 
 # ╔═╡ 54c537af-06c3-4e12-87b8-33d3f1efa77b
+#=╠═╡
 begin
 	r_samples = chain[:r]
 	q_samples = chain[:q]
@@ -1300,6 +1372,7 @@ begin
 	p2 = plot(q_samples, title = "Trace for q", legend = false)
 	plot(p1, p2, layout = (2, 1))
 end
+  ╠═╡ =#
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1310,6 +1383,7 @@ MCMCChains = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StateSpaceModels = "99342f36-827c-5390-97c9-d7f9ee765c78"
 Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
@@ -1318,6 +1392,7 @@ Distributions = "~0.25.90"
 MCMCChains = "~6.0.3"
 Plots = "~1.38.11"
 PlutoUI = "~0.7.51"
+SpecialFunctions = "~2.2.0"
 StateSpaceModels = "~0.6.6"
 Turing = "~0.26.2"
 """
@@ -1328,7 +1403,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.2"
 manifest_format = "2.0"
-project_hash = "2ffd268c344238bf57ad2e5b1b1c7b10501acb33"
+project_hash = "bb6adab0fcd46aa0b32cd822d706299b41b94c94"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "dcfdf328328f2645531c4ddebf841228aef74130"
@@ -3366,14 +3441,15 @@ version = "1.4.1+0"
 # ╟─94caa09c-59b6-461f-b56f-178992d2bc83
 # ╟─bb4de2cf-e4b6-4788-9f8b-ff5fd2ca2570
 # ╟─501172ab-203d-4faa-a3b0-3e4fa0c79d10
-# ╟─981608f2-57f6-44f1-95ed-82e8cca04718
+# ╠═5cf98dbf-1b32-418c-8d62-c7865dc37f04
+# ╠═981608f2-57f6-44f1-95ed-82e8cca04718
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
 # ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184
 # ╠═2308aa4c-bb99-4546-a108-9fa88fca130b
 # ╟─1adc874e-e024-464a-80d5-5ded04f62f24
 # ╠═d359f3aa-b238-420f-99d2-52f85ce9ff82
 # ╟─bca920fc-9535-4eb0-89c2-03a7334df6b6
-# ╟─416a607b-26bc-4973-8c1a-489e855a06de
+# ╠═416a607b-26bc-4973-8c1a-489e855a06de
 # ╟─ece11b32-cc61-447b-bbcf-018829360b73
 # ╠═c29b63f3-0d32-46ad-99a4-3cae4a3f6181
 # ╟─135c6b95-c440-45ed-bade-0327bf1e142a
@@ -3382,11 +3458,13 @@ version = "1.4.1+0"
 # ╟─faed4326-5ee6-41da-9ba4-297e965c242e
 # ╟─17136b27-9463-4e5f-a943-d78297f28be7
 # ╠═bee6469f-13a1-4bd8-8f14-f01e8405a949
-# ╠═59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
+# ╟─59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
 # ╠═7a6940ef-56b3-4cb4-bc6b-2c97625965cc
+# ╠═316db2e3-6fd9-45a5-932d-d3465885b842
+# ╠═11d5265e-3254-4012-a92c-a67823e1ae1c
 # ╠═665c55c3-d4dc-4d13-9517-d1106ea6210f
 # ╟─e6930d53-6652-4fea-9a01-a4c87b8058dc
-# ╠═0cce2e6d-4f19-4c50-a4b5-2835c3ed4401
+# ╟─0cce2e6d-4f19-4c50-a4b5-2835c3ed4401
 # ╠═1c023156-0634-456d-a959-65880fd60c34
 # ╟─caa2e633-e044-417c-944c-6a0458475e4f
 # ╠═3e64e18a-6446-4fcc-a282-d3d6079e975a
@@ -3395,8 +3473,8 @@ version = "1.4.1+0"
 # ╟─492c0922-e5f0-435b-9372-27e79570d679
 # ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
 # ╟─4cc367d1-37a1-4712-a63e-8826b5646a1b
-# ╠═4c3c2931-e4a8-43d1-b3fa-8bb3b82fb975
-# ╠═2ad03b07-68ad-4da8-a5d3-7692502c0e00
+# ╟─4c3c2931-e4a8-43d1-b3fa-8bb3b82fb975
+# ╟─2ad03b07-68ad-4da8-a5d3-7692502c0e00
 # ╟─5f9f903b-a72c-4b60-9934-4bd2ced30a2c
 # ╠═54c537af-06c3-4e12-87b8-33d3f1efa77b
 # ╟─00000000-0000-0000-0000-000000000001

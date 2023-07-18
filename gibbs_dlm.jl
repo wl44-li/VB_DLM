@@ -878,6 +878,8 @@ Compare with single-move for sampling latent states
 """
 
 # ╔═╡ 4baa0604-712a-448f-b3ee-56543bfc0d71
+# ╠═╡ disabled = true
+#=╠═╡
 function gibbs_smx(y, A, C, mcmc=3000, burn_in=100, thinning=1)
 	P, T = size(y)
 	K = size(A, 2)
@@ -924,13 +926,16 @@ function gibbs_smx(y, A, C, mcmc=3000, burn_in=100, thinning=1)
 	end
 	return samples_X, samples_Q, samples_R
 end
+  ╠═╡ =#
 
 # ╔═╡ de7046da-e361-41d0-b2d7-12439b571795
+#=╠═╡
 begin
 	Random.seed!(99)
 	Xs_samples_sm, Qs_samples_sm, Rs_samples_sm = gibbs_smx(y, A, C)
 	mean(Qs_samples_sm, dims=1)[1, :, :], mean(Rs_samples_sm, dims=1)[1, :, :]
 end
+  ╠═╡ =#
 
 # ╔═╡ 05828da6-bc3c-45de-b059-310159038d5d
 md"""
@@ -938,6 +943,7 @@ similar to inference with unknown A, C, R, gibbs via single-move learning is poo
 """
 
 # ╔═╡ 69061e7f-8a6d-4fac-b187-4d6ff16cf777
+#=╠═╡
 let
 	# Select the first 50 time steps
 	true_latent_50 = x_true[:, 1:50]
@@ -957,8 +963,10 @@ let
 	end
 	p
 end
+  ╠═╡ =#
 
 # ╔═╡ a9cba95e-9a9e-46c1-8f66-0a9b4ee0fcf0
+#=╠═╡
 let
 	xs_m = mean(Xs_samples_sm, dims=1)[1, :, :]
 	println("MSE, MAD of MCMC X mean: ", error_metrics(x_true, xs_m))
@@ -976,6 +984,7 @@ let
 	println("Mean ESS: $mean_ess")
 	println("Mean Rhat: $mean_rhat")
 end
+  ╠═╡ =#
 
 # ╔═╡ 6bea5f44-2abd-47b9-9db5-c5f70dd12c4f
 md"""
@@ -1232,17 +1241,19 @@ function forward_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 
     # Initialize the filtered means and covariances
     μ_f = zeros(K, T)
     Σ_f = zeros(K, K, T)
-    
+    f_s = zeros(K, T)
+	S_s = zeros(K, K, T)
     # Set the initial filtered mean and covariance to their prior values
-	As = zeros(K, T)
-	Rs = zeros(K, K, T)
-	As[:, 1] = A * μ_0
-	Rs[:, :, 1] = A * inv(Λ_0) * A' + E_Q
+	A_1 = A * μ_0
+	R_1 = A * inv(Λ_0) * A' + E_Q
 	
-	f_1 = C * As[:, 1]
-	S_1 = C * Rs[:, :, 1] * C' + E_R
-    μ_f[:, 1] = As[:, 1] + Rs[:, :, 1]*C'* inv(S_1) * (y[:, 1] - f_1)
-    Σ_f[:, :, 1] = Rs[:, :, 1] - Rs[:, :, 1]*C'*inv(S_1)*C*Rs[:, :, 1]
+	f_1 = C * A_1
+	S_1 = C * R_1 * C' + E_R
+	f_s[:, 1] = f_1
+	S_s[:, :, 1] = S_1
+	
+    μ_f[:, 1] = A_1 + R_1 * C'* inv(S_1) * (y[:, 1] - f_1)
+    Σ_f[:, :, 1] = R_1 - R_1*C'*inv(S_1)*C*R_1 
     
     # Forward pass (kalman filter)
     for t = 2:T
@@ -1250,15 +1261,24 @@ function forward_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 
         μ_p = A * μ_f[:, t-1]
         Σ_p = A * Σ_f[:, :, t-1] * A' + E_Q
 
-        # Kalman gain
-        K_t = Σ_p * C' / (C * Σ_p * C' + E_R)
-
-        # Filtered state mean and covariance
-        μ_f[:, t] = μ_p + K_t * (y[:, t] - C * μ_p)
-        Σ_f[:, :, t] = (I - K_t * C) * Σ_p
+		# marginal y - normalization
+		f_t = C * μ_p
+		S_t = C * Σ_p * C' + E_R
+		f_s[:, t] = f_t
+		S_s[:, :, t] = S_t
+		
+		# Filtered state mean and covariance (2.8a - 2.8c DLM with R)
+		μ_f[:, t] = μ_p + Σ_p * C' * inv(S_t) * (y[:, t] - f_t)
+		Σ_f[:, :, t] = Σ_p - Σ_p * C * inv(S_t) * C * Σ_p
+			
+		# Kalman gain
+        #K_t = Σ_p * C' / (C * Σ_p * C' + E_R)
+        #μ_f[:, t] = μ_p + K_t * (y[:, t] - C * μ_p)
+        #Σ_f[:, :, t] = (I - K_t * C) * Σ_p
     end
-    
-    return μ_f, Σ_f
+	
+    log_z = sum(logpdf(MvNormal(f_s[:, i], Symmetric(S_s[:, :, i])), y[:, i]) for i in 1:T)
+    return μ_f, Σ_f, log_z
 end
 
 # ╔═╡ 1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
@@ -1439,11 +1459,11 @@ let
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 	prior = Prior(3.0, Matrix{Float64}(I, K, K), 3.0, Matrix{Float64}(I, K, K), zeros(K), Matrix{Float64}(I, K, K))
     
-	mean_f, cov_f = forward_(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+	mean_f, cov_f, log_z = forward_(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
 
 	m_f, c_f, _ , _, _ = v_forward(y, exp_np, hpp)
 
-	mean_f, m_f, cov_f, c_f
+	mean_f, m_f, cov_f, c_f, log_z
 end
 
 # ╔═╡ 1edc58de-db69-4dbd-bcc5-c72a07e841be
@@ -1586,6 +1606,24 @@ function vbem_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2},
 	end
 
 	return E_R, E_Q
+end
+
+# ╔═╡ 89c9159a-d647-419b-9d24-e5c7f79696d6
+md"""
+TO-DO: Convergence Check
+"""
+
+# ╔═╡ c877a6ec-16aa-4ced-9fdc-bd669fc4e9df
+@doc Wishart
+
+# ╔═╡ dd8f1c15-8915-4503-85f0-d3378f8e4751
+function kl_Wishart(ν_q, S_q, ν_0, S_0)
+	k = size(S_0, 1)
+	term1 = ν_q * tr(inv(S_0) * S_q - I)
+    term2 = (v_q - v_0) * sum(digamma((ν_q + 1 -i)/2) + k*log(2) + logdet(S_q) for i in 1:k)
+	
+    term3 = ν_q * tr(inv(S_0) * S_q - I)
+    return 0.5 * (term1 + term2 + term3) 
 end
 
 # ╔═╡ 3dca0e01-2def-48cc-83a7-a5209cbd0f64
@@ -3315,10 +3353,10 @@ version = "1.4.1+0"
 # ╟─282b71f4-4848-426d-b8fc-0e3656d01767
 # ╟─2837effd-25f2-4f49-829e-8fc191db8460
 # ╟─0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
-# ╠═4baa0604-712a-448f-b3ee-56543bfc0d71
-# ╠═de7046da-e361-41d0-b2d7-12439b571795
+# ╟─4baa0604-712a-448f-b3ee-56543bfc0d71
+# ╟─de7046da-e361-41d0-b2d7-12439b571795
 # ╟─05828da6-bc3c-45de-b059-310159038d5d
-# ╠═69061e7f-8a6d-4fac-b187-4d6ff16cf777
+# ╟─69061e7f-8a6d-4fac-b187-4d6ff16cf777
 # ╟─a9cba95e-9a9e-46c1-8f66-0a9b4ee0fcf0
 # ╟─6bea5f44-2abd-47b9-9db5-c5f70dd12c4f
 # ╟─37e0d499-bda5-4a5e-8b81-9b3f9384c2fb
@@ -3336,7 +3374,7 @@ version = "1.4.1+0"
 # ╠═2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
 # ╟─1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
 # ╟─3100b411-e2de-4a43-be80-bcfcb42cef40
-# ╟─ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
+# ╠═ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
 # ╟─1edc58de-db69-4dbd-bcc5-c72a07e841be
 # ╟─9ca2a2bf-27a9-461b-ae74-1c28ac883168
 # ╟─098bc646-7300-4ac6-88af-08a599ba774a
@@ -3345,6 +3383,9 @@ version = "1.4.1+0"
 # ╟─488d1200-1ddf-4f06-9643-2eecb2072263
 # ╟─0591883c-49af-4201-b2f1-49f208506ece
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
+# ╟─89c9159a-d647-419b-9d24-e5c7f79696d6
+# ╠═c877a6ec-16aa-4ced-9fdc-bd669fc4e9df
+# ╠═dd8f1c15-8915-4503-85f0-d3378f8e4751
 # ╟─3dca0e01-2def-48cc-83a7-a5209cbd0f64
 # ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
 # ╟─e1676b43-b8f0-409f-a6c3-7f6c8852f7ae

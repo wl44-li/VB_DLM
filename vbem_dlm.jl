@@ -1495,8 +1495,12 @@ end
 function error_metrics(true_means, smoothed_means)
     T = size(true_means, 2)
     mse = sum((true_means .- smoothed_means).^2) / T
-    mad = sum(abs.(true_means .- smoothed_means)) / T
-    mape = sum(abs.((true_means .- smoothed_means) ./ true_means)) / T * 100
+
+	abs_error = abs.(true_means .- smoothed_means)
+    mad = sum(abs_error) / T
+
+    scaled_error = abs_error ./ abs.(true_means)
+    mape = sum(scaled_error) / T * 100
 
 	# mean squared error (MSE), mean absolute deviation (MAD), and mean absolute percentage error (MAPE) 
     return mse, mad, mape
@@ -3114,6 +3118,6 @@ version = "1.4.1+0"
 # ╟─c417e618-41c2-454c-9b27-470988215d48
 # ╟─8950aa50-22b2-4299-83b2-b9abfd1d5303
 # ╟─30502079-9684-4144-8bcd-a70f2cb5928a
-# ╟─ca825009-564e-43e0-9014-cce87c46533b
+# ╠═ca825009-564e-43e0-9014-cce87c46533b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -949,7 +949,7 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000,
         elbo_prev = elbo
 
 		if (i == max_iter)
-			println("Warning: VB have not necessarily converged at $max_iter iterations")
+			println("Warning: VB have not necessarily converged at $max_iter iterations with tolerance $tol")
 		end
 	end
 		

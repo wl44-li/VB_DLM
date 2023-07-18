@@ -1218,7 +1218,10 @@ end
 let
 	hpp_ll = Priors_ll(0.1, 0.1, 0.1, 0.1, 0.0, 1.0)
 	@time r, q, elbos = vb_ll_c(y, hpp_ll)
-	plot(elbos, label = "elbo")
+	p = plot(elbos, label = "elbo", title = "ElBO progression")
+	println("r :", r)
+	println("q :", q)
+	p
 end
 
 # ╔═╡ 665c55c3-d4dc-4d13-9517-d1106ea6210f

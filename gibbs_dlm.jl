@@ -15,6 +15,7 @@ begin
 	using Statistics
 	using DataFrames
 	using StatsPlots
+	using SpecialFunctions
 end
 
 # ╔═╡ 72f82a78-828a-42f2-9b63-9950af4c7be3
@@ -63,14 +64,14 @@ end
 
 # ╔═╡ 46d87386-7c36-486f-ba59-15d71e88869c
 md"""
-Establish ground-truth and test data
+Establish **ground-truth** and test data
 """
 
 # ╔═╡ e1bd9dd3-855e-4aa6-91aa-2695da07ba48
 begin
-	A = [0.8 -0.1; 0.2 0.9]
+	A = [0.8 -0.1; 0.1 0.9]
 	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([1.0, 1.0])
+	Q = Diagonal([0.5, 0.5])
 	R = Diagonal([0.1, 0.1])
 	T = 500
 	Random.seed!(111)
@@ -295,7 +296,7 @@ let
 	Q = Diagonal([1.0, 1.0])
 	R = Diagonal([0.1, 0.1])
 	T = 500
-	Random.seed!(33)
+	Random.seed!(888)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 
@@ -1125,6 +1126,13 @@ begin
 	    μ_0::Array{Float64, 1}
 	    Λ_0::Array{Float64, 2}
 	end
+
+	struct Q_Wishart
+		ν_R_q
+		W_R_q
+		ν_Q_q
+		W_Q_q
+	end
 end
 
 # ╔═╡ 0f2e6c3a-04c4-4f6b-8ccd-ed18c41e2bc4
@@ -1140,7 +1148,7 @@ function vb_m_step(y::Array{Float64, 2}, hss::HSS, prior::Prior, A::Array{Float6
 	W_Qn_inv = inv(prior.W_Q) + hss.W_C - hss.S_A * A' - A * hss.S_A' + A * hss.W_A * A'
 
 	# Return expectations for E-step, Eq[R], E_q[Q], co-variance matrices
-	return W_Rn_inv ./ ν_Rn, W_Qn_inv ./ ν_Qn 
+	return W_Rn_inv ./ ν_Rn, W_Qn_inv ./ ν_Qn, Q_Wishart(ν_Rn, inv(W_Rn_inv), ν_Qn, inv(W_Qn_inv))
 	#return ν_Rn .* inv(W_Rn_inv), ν_Qn .* inv(W_Qn_inv) # precision matrices
 end
 
@@ -1148,19 +1156,19 @@ end
 md"""
 Test M-step update with true latent states, A, C assumed fixed
 
-- A, C as identity matrices $I$, local level multi-dimension
+- A, C as identity matrices $I$
 
-- A, C general matrices
+- A, C as general matrices
 """
 
 # ╔═╡ aaf8f3a7-9549-4d02-ba99-e223fda5252a
 let
 	A = [1.0 0.0; 0.0 1.0]
 	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([0.5, 0.5])
-	R = Diagonal([0.01, 0.01])
-	T = 1000
-	Random.seed!(111)
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.1, 0.1])
+	T = 500
+	Random.seed!(99)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
@@ -1199,8 +1207,8 @@ let
 	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
 	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
 	
-	W_Q = Matrix{Float64}(I, K, K)
-	W_R = Matrix{Float64}(I, D, D)
+	W_Q = Matrix{Float64}(10*I, K, K)
+	W_R = Matrix{Float64}(10*I, D, D)
 	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
 	hss = HSS(W_C, W_A, S_C, S_A)
 
@@ -1283,6 +1291,7 @@ end
 
 # ╔═╡ 1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
 begin
+	### Beale VBEM
 	struct Exp_ϕ
 		A
 		AᵀA
@@ -1461,7 +1470,7 @@ let
     
 	mean_f, cov_f, log_z = forward_(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
 
-	m_f, c_f, _ , _, _ = v_forward(y, exp_np, hpp)
+	m_f, c_f, _ , _, _ = v_forward(y, exp_np, hpp) #beale
 
 	mean_f, m_f, cov_f, c_f, log_z
 end
@@ -1557,7 +1566,7 @@ end
 # ╔═╡ e68dbe27-95ea-4710-9999-d2c4de0db914
 function vb_e_step(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R::Array{Float64, 2}, E_Q::Array{Float64, 2}, prior::Prior)
     # Run the forward pass
-    μ_f, Σ_f = forward_(y, A, C, E_R, E_Q, prior)
+    μ_f, Σ_f, log_Z = forward_(y, A, C, E_R, E_Q, prior)
 
     # Run the backward pass
     μ_s, Σ_s, Σ_s_cross = backward_(μ_f, Σ_f, A, E_Q)
@@ -1570,7 +1579,7 @@ function vb_e_step(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64,
     W_Y = y * y'
 
 	# Return the hidden state sufficient statistics
-    return HSS(W_C, W_A, S_C, S_A)
+    return HSS(W_C, W_A, S_C, S_A), log_Z
 end
 
 # ╔═╡ 488d1200-1ddf-4f06-9643-2eecb2072263
@@ -1594,42 +1603,70 @@ let
 end
 
 # ╔═╡ 0dfa4d60-577a-4631-bd24-c05aee2969d0
-function vbem_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::Prior, max_iter=100)
+function vbem_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::Prior, max_iter=300)
 	
 	hss = HSS(ones(size(A)), ones(size(A)), ones(size(C)), ones(size(A)))
 	E_R, E_Q  = missing, missing
 	
 	for i in 1:max_iter
-		E_R, E_Q = vb_m_step(y, hss, prior, A, C)
+		E_R, E_Q, _ = vb_m_step(y, hss, prior, A, C)
 				
-		hss = vb_e_step(y, A, C, E_R, E_Q, prior)
+		hss, _ = vb_e_step(y, A, C, E_R, E_Q, prior)
 	end
 
 	return E_R, E_Q
 end
 
-# ╔═╡ 89c9159a-d647-419b-9d24-e5c7f79696d6
+# ╔═╡ bb26ac74-da64-47be-a49a-4519101cffce
 md"""
-TO-DO: Convergence Check
+### KL Divergence 
 """
-
-# ╔═╡ c877a6ec-16aa-4ced-9fdc-bd669fc4e9df
-@doc Wishart
 
 # ╔═╡ dd8f1c15-8915-4503-85f0-d3378f8e4751
 function kl_Wishart(ν_q, S_q, ν_0, S_0)
 	k = size(S_0, 1)
-	term1 = ν_q * tr(inv(S_0) * S_q - I)
-    term2 = (v_q - v_0) * sum(digamma((ν_q + 1 -i)/2) + k*log(2) + logdet(S_q) for i in 1:k)
+	term1 = (ν_0 - ν_q)*k*log(2) + ν_0*logdet(S_0) - ν_q*logdet(S_q) + sum(loggamma((ν_0 + 1 - i)/2) for i in 1:k) - sum(loggamma((ν_q + 1 - i)/2) for i in 1:k)
+	
+    term2 = (ν_q - ν_0) * sum(digamma((ν_q + 1 - i)/2) + k*log(2) + logdet(S_q) for i in 1:k)
 	
     term3 = ν_q * tr(inv(S_0) * S_q - I)
     return 0.5 * (term1 + term2 + term3) 
 end
 
-# ╔═╡ 3dca0e01-2def-48cc-83a7-a5209cbd0f64
-md"""
-Test VBEM for general Q, R inference
-"""
+# ╔═╡ 37e01d43-b804-4736-8d91-fb9c7e0ab493
+let
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.2, 0.2])
+	T = 500
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	
+	W_Q = Matrix{Float64}(I, K, K)
+	W_R = Matrix{Float64}(I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	hss = HSS(W_C, W_A, S_C, S_A)
+	E_q_R, E_q_Q, Q_ = vb_m_step(y, hss, prior, A, C)
+
+	kl_R = kl_Wishart(Q_.ν_R_q, Q_.W_R_q, prior.ν_R, prior.W_R)
+	kl_Q = kl_Wishart(Q_.ν_Q_q, Q_.W_Q_q, prior.ν_Q, prior.W_Q)
+
+	_ , _ , log_z = forward_(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+
+	println(log_z)
+	println(kl_Q)
+	println(kl_R)
+	log_z - kl_Q - kl_R
+end
 
 # ╔═╡ 5e10db40-5c2e-41c3-a431-e0a4c81d2718
 function vbem_his_plot(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::Prior, max_iter=100)
@@ -1649,9 +1686,9 @@ function vbem_his_plot(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Floa
 
     # Repeat until convergence
     for iter in 1:max_iter
-		E_R, E_Q = vb_m_step(y, hss, prior, A, C)
+		E_R, E_Q, _ = vb_m_step(y, hss, prior, A, C)
 				
-		hss = vb_e_step(y, A, C, E_R, E_Q, prior)
+		hss, _ = vb_e_step(y, A, C, E_R, E_Q, prior)
 
         # Store the history of E_R and E_Q
         E_R_history[:, :, iter] = E_R
@@ -1671,9 +1708,51 @@ function vbem_his_plot(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Floa
 	plot(p1, p2, layout = (1, 2))
 end
 
+# ╔═╡ e1edfb29-8f82-418b-948b-5542fd6d5b24
+md"""
+## With Convergence Check
+"""
+
+# ╔═╡ 907e0fea-bad1-49f5-aa98-e2524e93e191
+function vbem_c(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::Prior, max_iter=100, tol=1e-3)
+
+	# different initialisation?
+	#hss = HSS(ones(size(A)), ones(size(A)), ones(size(C)), ones(size(A)))
+	D, _ = size(y)
+	K, _ = size(A)
+	hss = HSS(Matrix{Float64}(I, K, K), Matrix{Float64}(I, K, K), Matrix{Float64}(I, K, D), Matrix{Float64}(I, K, K))
+	
+	E_R, E_Q  = missing, missing
+	elbo_prev = -Inf
+	el_s = zeros(max_iter)
+	for i in 1:max_iter
+		E_R, E_Q, Q_Wi = vb_m_step(y, hss, prior, A, C)
+				
+		hss, log_Z = vb_e_step(y, A, C, E_R, E_Q, prior)
+
+		kl_Wi = kl_Wishart(Q_Wi.ν_R_q, Q_Wi.W_R_q, prior.ν_R, prior.W_R) + kl_Wishart(Q_Wi.ν_Q_q, Q_Wi.W_Q_q, prior.ν_Q, prior.W_Q)
+		elbo = log_Z - kl_Wi
+		el_s[i] = elbo
+		
+		if abs(elbo - elbo_prev) < tol
+			println("Stopped at iteration: $i")
+			el_s = el_s[1:i]
+            break
+		end
+		
+        elbo_prev = elbo
+
+		if (i == max_iter)
+			println("Warning: VB have not necessarily converged at $max_iter iterations with tolerance $tol")
+		end
+	end
+
+	return E_R, E_Q, el_s
+end
+
 # ╔═╡ e1676b43-b8f0-409f-a6c3-7f6c8852f7ae
 md"""
-A, C is identity matrix
+A, C is identity matrix, converged elbo around $785$
 """
 
 # ╔═╡ ffd75de1-b9fd-4883-810d-1d4f79775f0d
@@ -1682,23 +1761,44 @@ let
 	A = [1.0 0.0; 0.0 1.0]
 	C = [1.0 0.0; 0.0 1.0]
 	Q = Diagonal([1.0, 1.0])
-	R = Diagonal([0.2, 0.2])
-	T = 500
-	Random.seed!(111)
+	R = Diagonal([0.1, 0.1])
+	T = 1000
+	Random.seed!(133)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	D, _ = size(y)
 	K = size(A, 1)
-	W_Q = Matrix{Float64}(I, K, K)
-	W_R = Matrix{Float64}(I, D, D)
+	W_Q = Matrix{Float64}(10*I, K, K)
+	W_R = Matrix{Float64}(10*I, D, D)
 	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
 	vbem_his_plot(y, A, C, prior)
 end
 
-# ╔═╡ ed1bb8da-2e20-41da-a936-fec9962e1c83
+# ╔═╡ 9ebaf094-75ae-48fa-8c3a-280dfbf24dcd
+let
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.1, 0.1])
+	T = 1000
+	Random.seed!(133)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, _ = size(y)
+	K = size(A, 1)
+	W_Q = Matrix{Float64}(10*I, K, K)
+	W_R = Matrix{Float64}(10*I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	@time R, Q, elbos = vbem_c(y, A, C, prior)
+	p = plot(elbos, label = "elbo", title = "ElBO progression")
+	R, Q, p
+end
+
+# ╔═╡ b29576d1-12ed-4346-8114-1e6575f3ee7f
 md"""
-Learning given initial setup
+Initial setup (Compare with Gibbs)
 """
 
 # ╔═╡ 8443d615-15a4-4bc3-b40d-c103db279d70
@@ -1706,12 +1806,61 @@ A, C, Q, R
 
 # ╔═╡ 4190732e-a3d8-4623-9e47-46b6385335a9
 let
+	A = [0.8 -0.1; 0.1 0.9]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([0.5, 0.5])
+	R = Diagonal([0.1, 0.1])
+	T = 1000
+	Random.seed!(77)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	D, _ = size(y)
 	K = size(A, 1)
-	W_Q = Matrix{Float64}(100 * I, K, K)
-	W_R = Matrix{Float64}(100 * I, D, D)
+	W_Q = Matrix{Float64}(100*I, K, K)
+	W_R = Matrix{Float64}(100*I, D, D)
 	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
-	vbem_his_plot(y, A, C, prior, 50)
+	vbem_his_plot(y, A, C, prior, 100)
+end
+
+# ╔═╡ d1a0c9e6-b4d2-411c-8634-88c05ac81eb2
+let
+	A = [0.8 -0.1; 0.1 0.9]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([0.5, 0.5])
+	R = Diagonal([0.1, 0.1])
+	T = 500
+	Random.seed!(77)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, _ = size(y)
+	K = size(A, 1)
+	W_Q = Matrix{Float64}(100*I, K, K)
+	W_R = Matrix{Float64}(100*I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	@time R, Q, elbos = vbem_c(y, A, C, prior)
+	p = plot(elbos, label = "elbo", title = "ElBO progression")
+	R, Q, p
+end
+
+# ╔═╡ 1d5b1be7-b05b-466b-9580-67c69e60fc40
+let	
+	A = [0.8 -0.1; 0.1 0.9]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([0.5, 0.5])
+	R = Diagonal([0.1, 0.1])
+	T = 500
+	Random.seed!(77)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, _ = size(y)
+	K = size(A, 1)
+	W_Q = Matrix{Float64}(100*I, K, K)
+	W_R = Matrix{Float64}(100*I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	vbem_(y, A, C, prior, 25)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -1725,6 +1874,7 @@ PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
@@ -1736,6 +1886,7 @@ MCMCChains = "~6.0.3"
 PDMats = "~0.11.17"
 Plots = "~1.38.16"
 PlutoUI = "~0.7.51"
+SpecialFunctions = "~2.2.0"
 StatsFuns = "~1.3.0"
 StatsPlots = "~0.15.5"
 """
@@ -1746,7 +1897,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.2"
 manifest_format = "2.0"
-project_hash = "224a0678ab9b9b64cdf55185eb4a6f23316f69e6"
+project_hash = "75424a04a867dbd875891d24d5b22a0c728bd4fd"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -3321,7 +3472,7 @@ version = "1.4.1+0"
 # ╟─91892a1b-b55c-4f83-91b3-dab4132b1863
 # ╟─9d2a6daf-2b06-409e-b034-6e787e64fea8
 # ╟─3e3d4c01-8a97-4ede-a341-27ab6fd07b95
-# ╟─369366a2-b4c7-44b5-8f64-d11616e99290
+# ╠═369366a2-b4c7-44b5-8f64-d11616e99290
 # ╟─57c87102-04bc-4414-9258-e2220f9d2e22
 # ╟─11700202-40fe-408b-a8b8-5c073daec12d
 # ╟─8c9357c8-8339-4889-8a91-b62e542f0407
@@ -3364,17 +3515,17 @@ version = "1.4.1+0"
 # ╟─89fb5821-17c5-46be-8e3c-94439d295220
 # ╟─c9d18a43-5984-45f5-b558-368368212355
 # ╟─99aab1db-2156-4bd4-9b54-3bb0d4a1620b
-# ╟─95ab5440-82dd-4fc4-be08-b1a851caf9ca
+# ╠═95ab5440-82dd-4fc4-be08-b1a851caf9ca
 # ╠═0f2e6c3a-04c4-4f6b-8ccd-ed18c41e2bc4
 # ╟─f35c8af8-00b0-45ad-8910-04f656cecfa3
-# ╟─aaf8f3a7-9549-4d02-ba99-e223fda5252a
+# ╠═aaf8f3a7-9549-4d02-ba99-e223fda5252a
 # ╟─a6470873-26b3-4981-80eb-12a59bd3695d
 # ╟─c096bbab-4009-4995-8f45-dc7ffab7ccfa
 # ╟─63bc1239-1a6a-4f3b-9d2c-9b904aec573c
 # ╠═2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
 # ╟─1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
 # ╟─3100b411-e2de-4a43-be80-bcfcb42cef40
-# ╠═ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
+# ╟─ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
 # ╟─1edc58de-db69-4dbd-bcc5-c72a07e841be
 # ╟─9ca2a2bf-27a9-461b-ae74-1c28ac883168
 # ╟─098bc646-7300-4ac6-88af-08a599ba774a
@@ -3383,15 +3534,19 @@ version = "1.4.1+0"
 # ╟─488d1200-1ddf-4f06-9643-2eecb2072263
 # ╟─0591883c-49af-4201-b2f1-49f208506ece
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
-# ╟─89c9159a-d647-419b-9d24-e5c7f79696d6
-# ╠═c877a6ec-16aa-4ced-9fdc-bd669fc4e9df
+# ╟─bb26ac74-da64-47be-a49a-4519101cffce
 # ╠═dd8f1c15-8915-4503-85f0-d3378f8e4751
-# ╟─3dca0e01-2def-48cc-83a7-a5209cbd0f64
+# ╠═37e01d43-b804-4736-8d91-fb9c7e0ab493
 # ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
+# ╟─e1edfb29-8f82-418b-948b-5542fd6d5b24
+# ╠═907e0fea-bad1-49f5-aa98-e2524e93e191
 # ╟─e1676b43-b8f0-409f-a6c3-7f6c8852f7ae
 # ╠═ffd75de1-b9fd-4883-810d-1d4f79775f0d
-# ╟─ed1bb8da-2e20-41da-a936-fec9962e1c83
+# ╠═9ebaf094-75ae-48fa-8c3a-280dfbf24dcd
+# ╟─b29576d1-12ed-4346-8114-1e6575f3ee7f
 # ╠═8443d615-15a4-4bc3-b40d-c103db279d70
 # ╠═4190732e-a3d8-4623-9e47-46b6385335a9
+# ╠═d1a0c9e6-b4d2-411c-8634-88c05ac81eb2
+# ╠═1d5b1be7-b05b-466b-9580-67c69e60fc40
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

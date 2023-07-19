@@ -886,8 +886,7 @@ $s_a = \sum_{t=1}^{T} E_q[x_{t-1} x_t] = \sum_{t=1}^{T} \sigma_{t-1, t} + \mu_{t
 
 # ╔═╡ 501172ab-203d-4faa-a3b0-3e4fa0c79d10
 md"""
-TO-DO:
-Convergence check
+Convergence check, KL divergence for gamma distribution
 """
 
 # ╔═╡ 5cf98dbf-1b32-418c-8d62-c7865dc37f04
@@ -956,13 +955,10 @@ let
 	s_a = sum(x_true[t-1] * x_true[t] for t in 2:T)
 	w_c = sum(x_true[t] * x_true[t] for t in 1:T)
 	s_c = sum(x_true[t] * y[t] for t in 1:T)
-
 	hss = HSS_ll(w_c, w_a, s_c, s_a)
-
 	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 
 	r⁻¹, q⁻¹, _ = vb_m_ll(y, hss, hpp)
-
 	println("r ", (1 / r⁻¹)) # r = 0.2, q = 1.0
 	println("q ", (1 / q⁻¹))
 end
@@ -1030,7 +1026,7 @@ end
 
 # ╔═╡ bca920fc-9535-4eb0-89c2-03a7334df6b6
 md"""
-test forward
+Test forward
 """
 
 # ╔═╡ 416a607b-26bc-4973-8c1a-489e855a06de
@@ -1084,7 +1080,7 @@ end
 
 # ╔═╡ 135c6b95-c440-45ed-bade-0327bf1e142a
 md"""
-test backward
+Test backward
 """
 
 # ╔═╡ 8e98a3b4-bc92-43ad-9da3-1323e06cfce6
@@ -1183,6 +1179,11 @@ function vb_ll(y::Vector{Float64}, hpp::Priors_ll, max_iter=100)
 	return 1/E_τ_r, 1/E_τ_q
 end
 
+# ╔═╡ ee11c498-5e2a-4a37-a73b-a1ff6647d013
+md"""
+### Convergence Check
+"""
+
 # ╔═╡ 316db2e3-6fd9-45a5-932d-d3465885b842
 function vb_ll_c(y::Vector{Float64}, hpp::Priors_ll, max_iter=500, tol=5e-4)
 	hss = HSS_ll(1.0, 1.0, 1.0, 1.0)
@@ -1265,13 +1266,13 @@ end
 
 # ╔═╡ caa2e633-e044-417c-944c-6a0458475e4f
 md"""
-VB inference of unknown r, q in local level model
+VB inference of unknown $r, q$ in local level model
 """
 
 # ╔═╡ 3e64e18a-6446-4fcc-a282-d3d6079e975a
 let
 	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
-	@time r, q = vb_ll(y, hpp_ll, 50)
+	@time r, q = vb_ll(y, hpp_ll, 59)
 
 	μs_f, σs_f2 = forward_ll(y, 1.0, 1.0, 1/r, 1/q, hpp_ll)
     μs_s, σs_s2, _ = backward_ll(μs_f, σs_f2, 1/q)
@@ -1281,6 +1282,7 @@ end
 
 # ╔═╡ 23301a45-fc89-416f-bcc7-4f3ba41bf04f
 md"""
+**Comparison with MCMC**
 This is considerably faster than Gibbs sampling that takes ~0.05 second to converge (already fast). and latent x inference is on par with end-chain accuracy of Gibbs sampling.
 """
 
@@ -3463,6 +3465,7 @@ version = "1.4.1+0"
 # ╠═bee6469f-13a1-4bd8-8f14-f01e8405a949
 # ╟─59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
 # ╠═7a6940ef-56b3-4cb4-bc6b-2c97625965cc
+# ╟─ee11c498-5e2a-4a37-a73b-a1ff6647d013
 # ╠═316db2e3-6fd9-45a5-932d-d3465885b842
 # ╠═11d5265e-3254-4012-a92c-a67823e1ae1c
 # ╠═665c55c3-d4dc-4d13-9517-d1106ea6210f

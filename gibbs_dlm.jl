@@ -16,10 +16,8 @@ begin
 	using DataFrames
 	using StatsPlots
 	using SpecialFunctions
+	using PDMats
 end
-
-# ╔═╡ 72f82a78-828a-42f2-9b63-9950af4c7be3
-using PDMats
 
 # ╔═╡ 6c0ecec8-afdc-4072-9dac-4658af3706d5
 TableOfContents()
@@ -73,7 +71,7 @@ begin
 	C = [1.0 0.0; 0.0 1.0]
 	Q = Diagonal([0.5, 0.5])
 	R = Diagonal([0.1, 0.1])
-	T = 500
+	T = 1000
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
@@ -799,79 +797,15 @@ function gibbs_dlm_cov(y, A, C, mcmc=3000, burn_in=100, thinning=1)
 	return samples_X, samples_Q, samples_R
 end
 
-# ╔═╡ ad6d0997-43c1-42f3-b997-765c594794b4
-begin
-	Random.seed!(123)
-	Xs_samples, Qs_samples, Rs_samples = gibbs_dlm_cov(y, A, C, 3000, 1000, 1)
-end
-
-# ╔═╡ f0551220-d7c1-4312-b6c5-e0c432889494
-begin
-	Q_chain = Chains(reshape(Qs_samples, 3000, 4))
-	R_chain = Chains(reshape(Rs_samples, 3000, 4))
-	summarystats(Q_chain), summarystats(R_chain)
-end
-
 # ╔═╡ 0b4d5ac8-5a7b-4363-9dbe-2edc517708a0
 md"""
 Q, R sample means
 """
 
-# ╔═╡ b337a706-cbbf-4acd-8a8f-26fdbc137e8e
-begin
-	Q_m = mean(Qs_samples, dims=1)[1, :, :]
-
-	R_m = mean(Rs_samples, dims=1)[1, :, :]
-
-	Q_m, R_m
-end
-
-# ╔═╡ ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
-begin
-	xs_m = mean(Xs_samples, dims=1)[1, :, :]
-	println("MSE, MAD of MCMC X mean: ", error_metrics(x_true, xs_m))
-	println("MSE, MAD of MCMC X end: ", error_metrics(x_true, Xs_samples[end, :, :]))
-
-	X_chain = Chains(reshape(Xs_samples, 3000, 2*T))
-	x_ess = ess(X_chain)
-	x_rhat = rhat(X_chain)
-	# Convert to DataFrame
-	ess_df = DataFrame(x_ess)
-	rhat_df = DataFrame(x_rhat)
-	
-	# Get the mean ESS and Rhat across all parameters
-	mean_ess = mean(skipmissing(ess_df.ess))
-	mean_rhat = mean(skipmissing(rhat_df.rhat))
-	
-	println("Mean ESS: $mean_ess")
-	println("Mean Rhat: $mean_rhat")
-end
-
 # ╔═╡ 282b71f4-4848-426d-b8fc-0e3656d01767
 md"""
 FFBS Sample Quality in Gibbs
 """
-
-# ╔═╡ 2837effd-25f2-4f49-829e-8fc191db8460
-let
-	# Select the first 50 time steps
-	true_latent_50 = x_true[:, 1:50]
-	ffbs_sampled_latent_50 = Xs_samples[:, :, 1:50]
-	
-	# Create a new plot
-	p = plot()
-	
-	# Plot the true latent states with a thick line
-	plot!(p, true_latent_50[1, :], linewidth=1.5, alpha=5, label="True x_d1", color=:blue)
-	plot!(p, true_latent_50[2, :], linewidth=1.5, alpha=5, label="True x_d2", color=:red)
-	
-	# Plot the sampled latent states with a thin line
-	for i in 1:size(ffbs_sampled_latent_50, 1)
-	    plot!(p, ffbs_sampled_latent_50[i, 1, :], linewidth=0.1, alpha=0.1, label=false, color=:violet)
-	    plot!(p, ffbs_sampled_latent_50[i, 2, :], linewidth=0.1, alpha=0.1, label=false, color=:orange)
-	end
-	p
-end
 
 # ╔═╡ 0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
 md"""
@@ -1633,14 +1567,19 @@ function kl_Wishart(ν_q, S_q, ν_0, S_0)
     return 0.5 * (term1 + term2 + term3) 
 end
 
+# ╔═╡ 8bb29488-69a5-4547-892c-7d77699a3a92
+md"""
+Test ELBO computation with KL, log_Z
+"""
+
 # ╔═╡ 37e01d43-b804-4736-8d91-fb9c7e0ab493
 let
 	A = [1.0 0.0; 0.0 1.0]
 	C = [1.0 0.0; 0.0 1.0]
 	Q = Diagonal([1.0, 1.0])
 	R = Diagonal([0.2, 0.2])
-	T = 500
-	Random.seed!(111)
+	T = 1000
+	Random.seed!(133)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
@@ -1752,7 +1691,7 @@ end
 
 # ╔═╡ e1676b43-b8f0-409f-a6c3-7f6c8852f7ae
 md"""
-A, C is identity matrix, converged elbo around $785$
+A, C is identity matrix, converged elbo around $2300$
 """
 
 # ╔═╡ ffd75de1-b9fd-4883-810d-1d4f79775f0d
@@ -1796,25 +1735,16 @@ let
 	R, Q, p
 end
 
-# ╔═╡ b29576d1-12ed-4346-8114-1e6575f3ee7f
-md"""
-Initial setup (Compare with Gibbs)
-"""
-
 # ╔═╡ 8443d615-15a4-4bc3-b40d-c103db279d70
 A, C, Q, R
 
+# ╔═╡ 5d16e7d4-0ddf-4eb5-b453-49461455a545
+md"""
+**Compare with MCMC**
+"""
+
 # ╔═╡ 4190732e-a3d8-4623-9e47-46b6385335a9
 let
-	A = [0.8 -0.1; 0.1 0.9]
-	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([0.5, 0.5])
-	R = Diagonal([0.1, 0.1])
-	T = 1000
-	Random.seed!(77)
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([1.0, 1.0])
-	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	D, _ = size(y)
 	K = size(A, 1)
 	W_Q = Matrix{Float64}(100*I, K, K)
@@ -1825,42 +1755,97 @@ end
 
 # ╔═╡ d1a0c9e6-b4d2-411c-8634-88c05ac81eb2
 let
-	A = [0.8 -0.1; 0.1 0.9]
-	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([0.5, 0.5])
-	R = Diagonal([0.1, 0.1])
-	T = 500
-	Random.seed!(77)
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([1.0, 1.0])
-	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	D, _ = size(y)
 	K = size(A, 1)
 	W_Q = Matrix{Float64}(100*I, K, K)
 	W_R = Matrix{Float64}(100*I, D, D)
 	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
-	@time R, Q, elbos = vbem_c(y, A, C, prior)
+	@time vb_R, vb_Q, elbos = vbem_c(y, A, C, prior)
 	p = plot(elbos, label = "elbo", title = "ElBO progression")
-	R, Q, p
+	p
 end
 
 # ╔═╡ 1d5b1be7-b05b-466b-9580-67c69e60fc40
 let	
-	A = [0.8 -0.1; 0.1 0.9]
-	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([0.5, 0.5])
-	R = Diagonal([0.1, 0.1])
-	T = 500
-	Random.seed!(77)
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([1.0, 1.0])
-	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	D, _ = size(y)
 	K = size(A, 1)
 	W_Q = Matrix{Float64}(100*I, K, K)
 	W_R = Matrix{Float64}(100*I, D, D)
 	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
-	vbem_(y, A, C, prior, 25)
+	@time E_R, E_Q = vbem_(y, A, C, prior, 26)
+
+	μs_f, σs_f2 = forward_(y, A, C, E_R, E_Q, prior)
+    μs_s, σs_s2, _ = backward_(μs_f, σs_f2, A, E_Q)
+	println("MSE, MAD of VB: ", error_metrics(x_true, μs_s))
+end
+
+# ╔═╡ a4a1a8bb-2c47-44d2-96c3-daf25d032b19
+md"""
+Similar pattern is observered for general learning of $R, Q$, VB is able to converge faster and produce very similar latent state inference results to FFBS (Gibbs).
+"""
+
+# ╔═╡ ad6d0997-43c1-42f3-b997-765c594794b4
+begin
+	Random.seed!(123)
+	Xs_samples, Qs_samples, Rs_samples = gibbs_dlm_cov(y, A, C, 3000, 1000, 1)
+end
+
+# ╔═╡ f0551220-d7c1-4312-b6c5-e0c432889494
+begin
+	Q_chain = Chains(reshape(Qs_samples, 3000, 4))
+	R_chain = Chains(reshape(Rs_samples, 3000, 4))
+	summarystats(Q_chain), summarystats(R_chain)
+end
+
+# ╔═╡ b337a706-cbbf-4acd-8a8f-26fdbc137e8e
+begin
+	Q_m = mean(Qs_samples, dims=1)[1, :, :]
+
+	R_m = mean(Rs_samples, dims=1)[1, :, :]
+
+	Q_m, R_m
+end
+
+# ╔═╡ 2837effd-25f2-4f49-829e-8fc191db8460
+let
+	# Select the first 50 time steps
+	true_latent_50 = x_true[:, 1:50]
+	ffbs_sampled_latent_50 = Xs_samples[:, :, 1:50]
+	
+	# Create a new plot
+	p = plot()
+	
+	# Plot the true latent states with a thick line
+	plot!(p, true_latent_50[1, :], linewidth=1.5, alpha=5, label="True x_d1", color=:blue)
+	plot!(p, true_latent_50[2, :], linewidth=1.5, alpha=5, label="True x_d2", color=:red)
+	
+	# Plot the sampled latent states with a thin line
+	for i in 1:size(ffbs_sampled_latent_50, 1)
+	    plot!(p, ffbs_sampled_latent_50[i, 1, :], linewidth=0.1, alpha=0.1, label=false, color=:violet)
+	    plot!(p, ffbs_sampled_latent_50[i, 2, :], linewidth=0.1, alpha=0.1, label=false, color=:orange)
+	end
+	p
+end
+
+# ╔═╡ ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
+begin
+	xs_m = mean(Xs_samples, dims=1)[1, :, :]
+	println("MSE, MAD of MCMC X mean: ", error_metrics(x_true, xs_m))
+	println("MSE, MAD of MCMC X end: ", error_metrics(x_true, Xs_samples[end, :, :]))
+
+	X_chain = Chains(reshape(Xs_samples, 3000, 2*T))
+	x_ess = ess(X_chain)
+	x_rhat = rhat(X_chain)
+	# Convert to DataFrame
+	ess_df = DataFrame(x_ess)
+	rhat_df = DataFrame(x_rhat)
+	
+	# Get the mean ESS and Rhat across all parameters
+	mean_ess = mean(skipmissing(ess_df.ess))
+	mean_rhat = mean(skipmissing(rhat_df.rhat))
+	
+	println("Mean ESS: $mean_ess")
+	println("Mean Rhat: $mean_rhat")
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -3451,7 +3436,7 @@ version = "1.4.1+0"
 # ╠═e9318f52-e918-42c6-9aa9-45a39ad73ec7
 # ╟─bb13a886-0877-42fb-876e-38709f041d65
 # ╟─3308752f-d770-4951-9a21-73f1c3886df4
-# ╠═4b9cad0a-7ec4-4a58-bf4c-4f103371de33
+# ╟─4b9cad0a-7ec4-4a58-bf4c-4f103371de33
 # ╟─9e73e982-a4ae-4e9b-9650-3cf7c519657c
 # ╟─a41bd4a5-a7be-48fe-a222-6e8b3cf98dec
 # ╠═d8c05722-a79b-4132-b1c2-982ef39af257
@@ -3472,7 +3457,7 @@ version = "1.4.1+0"
 # ╟─91892a1b-b55c-4f83-91b3-dab4132b1863
 # ╟─9d2a6daf-2b06-409e-b034-6e787e64fea8
 # ╟─3e3d4c01-8a97-4ede-a341-27ab6fd07b95
-# ╠═369366a2-b4c7-44b5-8f64-d11616e99290
+# ╟─369366a2-b4c7-44b5-8f64-d11616e99290
 # ╟─57c87102-04bc-4414-9258-e2220f9d2e22
 # ╟─11700202-40fe-408b-a8b8-5c073daec12d
 # ╟─8c9357c8-8339-4889-8a91-b62e542f0407
@@ -3488,7 +3473,6 @@ version = "1.4.1+0"
 # ╠═0a609b97-7859-4053-900d-c1be5d61e68c
 # ╠═a8971bb3-cf38-4445-b66e-65ff35ca13ca
 # ╟─b4c11a46-438d-4653-89e7-bc2b99e84f48
-# ╠═72f82a78-828a-42f2-9b63-9950af4c7be3
 # ╠═494eed09-a6e8-488b-bea2-55b7ddb37082
 # ╟─060ae93d-12fe-47c6-abe1-ff7728bda572
 # ╟─425782f9-4764-4880-ab72-3b481a2cf55a
@@ -3496,11 +3480,9 @@ version = "1.4.1+0"
 # ╟─7dfa5042-227b-43aa-a55c-30decee08413
 # ╟─68c26d99-8f54-4580-8357-5598eb1c8cdf
 # ╠═f0dc526c-b221-4652-a877-58a959d97019
-# ╠═ad6d0997-43c1-42f3-b997-765c594794b4
 # ╟─f0551220-d7c1-4312-b6c5-e0c432889494
 # ╟─0b4d5ac8-5a7b-4363-9dbe-2edc517708a0
 # ╟─b337a706-cbbf-4acd-8a8f-26fdbc137e8e
-# ╟─ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
 # ╟─282b71f4-4848-426d-b8fc-0e3656d01767
 # ╟─2837effd-25f2-4f49-829e-8fc191db8460
 # ╟─0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
@@ -3527,7 +3509,7 @@ version = "1.4.1+0"
 # ╟─3100b411-e2de-4a43-be80-bcfcb42cef40
 # ╟─ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
 # ╟─1edc58de-db69-4dbd-bcc5-c72a07e841be
-# ╟─9ca2a2bf-27a9-461b-ae74-1c28ac883168
+# ╠═9ca2a2bf-27a9-461b-ae74-1c28ac883168
 # ╟─098bc646-7300-4ac6-88af-08a599ba774a
 # ╟─11796ca9-30e2-4ba7-b8dc-9a0eda90e14e
 # ╠═e68dbe27-95ea-4710-9999-d2c4de0db914
@@ -3536,17 +3518,21 @@ version = "1.4.1+0"
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
 # ╟─bb26ac74-da64-47be-a49a-4519101cffce
 # ╠═dd8f1c15-8915-4503-85f0-d3378f8e4751
-# ╠═37e01d43-b804-4736-8d91-fb9c7e0ab493
+# ╟─8bb29488-69a5-4547-892c-7d77699a3a92
+# ╟─37e01d43-b804-4736-8d91-fb9c7e0ab493
 # ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
 # ╟─e1edfb29-8f82-418b-948b-5542fd6d5b24
 # ╠═907e0fea-bad1-49f5-aa98-e2524e93e191
 # ╟─e1676b43-b8f0-409f-a6c3-7f6c8852f7ae
-# ╠═ffd75de1-b9fd-4883-810d-1d4f79775f0d
-# ╠═9ebaf094-75ae-48fa-8c3a-280dfbf24dcd
-# ╟─b29576d1-12ed-4346-8114-1e6575f3ee7f
+# ╟─ffd75de1-b9fd-4883-810d-1d4f79775f0d
+# ╟─9ebaf094-75ae-48fa-8c3a-280dfbf24dcd
 # ╠═8443d615-15a4-4bc3-b40d-c103db279d70
-# ╠═4190732e-a3d8-4623-9e47-46b6385335a9
-# ╠═d1a0c9e6-b4d2-411c-8634-88c05ac81eb2
+# ╟─5d16e7d4-0ddf-4eb5-b453-49461455a545
+# ╟─4190732e-a3d8-4623-9e47-46b6385335a9
+# ╟─d1a0c9e6-b4d2-411c-8634-88c05ac81eb2
 # ╠═1d5b1be7-b05b-466b-9580-67c69e60fc40
+# ╟─a4a1a8bb-2c47-44d2-96c3-daf25d032b19
+# ╠═ad6d0997-43c1-42f3-b997-765c594794b4
+# ╠═ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -13,6 +13,7 @@ begin
 	using Plots
 	using PlutoUI
 	using SpecialFunctions
+	import StatsBase:kldivergence
 end
 
 # ╔═╡ 4cc367d1-37a1-4712-a63e-8826b5646a1b
@@ -1196,6 +1197,7 @@ function vb_ll_c(y::Vector{Float64}, hpp::Priors_ll, max_iter=500, tol=5e-4)
 		hss, log_z = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
 
 		kl_ga = kl_gamma(hpp.α_r, hpp.β_r, qθ.α_r_p, qθ.β_r_p) + kl_gamma(hpp.α_q, hpp.β_q, qθ.α_q_p, qθ.β_q_p)
+		
 		elbo = log_z - kl_ga
 		el_s[i] = elbo
 		
@@ -1390,6 +1392,7 @@ PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StateSpaceModels = "99342f36-827c-5390-97c9-d7f9ee765c78"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
 [compat]
@@ -1399,6 +1402,7 @@ Plots = "~1.38.11"
 PlutoUI = "~0.7.51"
 SpecialFunctions = "~2.2.0"
 StateSpaceModels = "~0.6.6"
+StatsBase = "~0.33.21"
 Turing = "~0.26.2"
 """
 
@@ -1408,7 +1412,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.2"
 manifest_format = "2.0"
-project_hash = "bb6adab0fcd46aa0b32cd822d706299b41b94c94"
+project_hash = "255740f8300584bacd3900ae1027775449d976cc"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "dcfdf328328f2645531c4ddebf841228aef74130"

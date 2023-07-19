@@ -466,7 +466,7 @@ end
 
 # ╔═╡ 74604b66-071b-42b4-b039-d3e484c89603
 md"""
-VBEM procedure is able to converge to results competitive to PPCA packages (ML, EM, Bayes) shown below, and ELBO computation can be used for model selection with the most appropriate $k$ being the highest ELBO
+VBEM procedure is able to converge to results competitive to PPCA packages (ML, EM, Bayes) shown below, and ELBO computation can be used for model selection with the most appropriate $k$ being the highest ELBO, predicative likelihood approximation, **mention in thesis**
 """
 
 # ╔═╡ 491489f9-373f-44ab-a6b7-c3714017536c

@@ -17,6 +17,7 @@ begin
 	using StatsPlots
 	using SpecialFunctions
 	using PDMats
+	using StatsBase
 end
 
 # ╔═╡ 6c0ecec8-afdc-4072-9dac-4658af3706d5
@@ -1559,17 +1560,38 @@ md"""
 # ╔═╡ dd8f1c15-8915-4503-85f0-d3378f8e4751
 function kl_Wishart(ν_q, S_q, ν_0, S_0)
 	k = size(S_0, 1)
-	term1 = (ν_0 - ν_q)*k*log(2) + ν_0*logdet(S_0) - ν_q*logdet(S_q) + sum(loggamma((ν_0 + 1 - i)/2) for i in 1:k) - sum(loggamma((ν_q + 1 - i)/2) for i in 1:k)
+	term1 = 0.5*(ν_0 - ν_q)*k*log(2) + 0.5*ν_0*logdet(S_0) - 0.5*ν_q*logdet(S_q) + sum(loggamma((ν_0 + 1 - i)/2.0) for i in 1:k) - sum(loggamma((ν_q + 1 - i)/2.0) for i in 1:k)
 	
-    term2 = (ν_q - ν_0) * sum(digamma((ν_q + 1 - i)/2) + k*log(2) + logdet(S_q) for i in 1:k)
+    term2 = (ν_q - ν_0) * sum(digamma((ν_q + 1 - i)/2.0) for i in 1:k) + k*log(2) + logdet(S_q)
 	
     term3 = ν_q * tr(inv(S_0) * S_q - I)
-    return 0.5 * (term1 + term2 + term3) 
+    return term1 + 0.5 * (term2 + term3) 
 end
 
 # ╔═╡ 8bb29488-69a5-4547-892c-7d77699a3a92
 md"""
 Test ELBO computation with KL, log_Z
+
+**TO-DO** Debug ELBO curve
+
+KL computation via entropy and cross entropy library 
+"""
+
+# ╔═╡ 801905b2-73f5-4f49-a83c-b05ca77457c6
+md"""
+ELBO $\mathcal F$ can be approximated as:
+
+$\begin{align}
+\mathcal F &= \langle \ln p(Y, X, R, Q) \rangle_{\hat q(X, R, Q)} - \langle \ln q(X, R, Q) \rangle_{\hat q(X, R, Q)} \\
+
+&= \langle \ln p(Y, X|R, Q) + \ln p(R, Q) \rangle_{\hat q(X, R, Q)} - \langle \ln q(X) \rangle_{\hat q(X)} - \langle \ln q(R) \rangle_{\hat q(R)} - \langle \ln q(Q) \rangle_{\hat q(Q)}  \\
+
+&= \langle \ln p(Y, X|R, Q) \rangle_{\hat q(X, R, Q)} - \langle \ln q(X) \rangle_{\hat q(X)} + \langle \ln \frac{p(R)}{q(R)} \rangle_{\hat q(R)} + \langle \ln \frac{p(Q)}{q(Q)} \rangle_{\hat q(Q)} \\
+
+&= \langle \ln p(Y, X|R, Q) \rangle_{\hat q(X, R, Q)} + \ln Z - \langle \ln p(Y, X|R, Q)) \rangle_{\hat q(X, R, Q)} - KL(R) - KL(Q) \\
+
+&= -KL(Q) - KL(R) + \ln Z
+\end{align}$
 """
 
 # ╔═╡ 37e01d43-b804-4736-8d91-fb9c7e0ab493
@@ -1653,13 +1675,15 @@ md"""
 """
 
 # ╔═╡ 907e0fea-bad1-49f5-aa98-e2524e93e191
-function vbem_c(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::Prior, max_iter=100, tol=1e-3)
+function vbem_c(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::Prior, max_iter=200, tol=1e-3)
 
 	# different initialisation?
-	#hss = HSS(ones(size(A)), ones(size(A)), ones(size(C)), ones(size(A)))
-	D, _ = size(y)
-	K, _ = size(A)
-	hss = HSS(Matrix{Float64}(I, K, K), Matrix{Float64}(I, K, K), Matrix{Float64}(I, K, D), Matrix{Float64}(I, K, K))
+	#hss = HSS(ones(size(A)) .* 0.1, ones(size(A)) .* 0.1, ones(size(C)) .* 0.1, ones(size(A)) .* 0.1)
+
+	hss = HSS(ones(size(A)), ones(size(A)), ones(size(C)), ones(size(A)))
+	#D, _ = size(y)
+	#K, _ = size(A)
+	#hss = HSS(Matrix{Float64}(I, K, K), Matrix{Float64}(I, K, K), Matrix{Float64}(I, K, D), Matrix{Float64}(I, K, K))
 	
 	E_R, E_Q  = missing, missing
 	elbo_prev = -Inf
@@ -1861,6 +1885,7 @@ PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 
@@ -1872,6 +1897,7 @@ PDMats = "~0.11.17"
 Plots = "~1.38.16"
 PlutoUI = "~0.7.51"
 SpecialFunctions = "~2.2.0"
+StatsBase = "~0.34.0"
 StatsFuns = "~1.3.0"
 StatsPlots = "~0.15.5"
 """
@@ -1882,7 +1908,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.2"
 manifest_format = "2.0"
-project_hash = "75424a04a867dbd875891d24d5b22a0c728bd4fd"
+project_hash = "b4496579d6776b919200d593849930309c483152"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -3519,12 +3545,13 @@ version = "1.4.1+0"
 # ╟─bb26ac74-da64-47be-a49a-4519101cffce
 # ╠═dd8f1c15-8915-4503-85f0-d3378f8e4751
 # ╟─8bb29488-69a5-4547-892c-7d77699a3a92
-# ╟─37e01d43-b804-4736-8d91-fb9c7e0ab493
+# ╟─801905b2-73f5-4f49-a83c-b05ca77457c6
+# ╠═37e01d43-b804-4736-8d91-fb9c7e0ab493
 # ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
 # ╟─e1edfb29-8f82-418b-948b-5542fd6d5b24
 # ╠═907e0fea-bad1-49f5-aa98-e2524e93e191
 # ╟─e1676b43-b8f0-409f-a6c3-7f6c8852f7ae
-# ╟─ffd75de1-b9fd-4883-810d-1d4f79775f0d
+# ╠═ffd75de1-b9fd-4883-810d-1d4f79775f0d
 # ╟─9ebaf094-75ae-48fa-8c3a-280dfbf24dcd
 # ╠═8443d615-15a4-4bc3-b40d-c103db279d70
 # ╟─5d16e7d4-0ddf-4eb5-b453-49461455a545

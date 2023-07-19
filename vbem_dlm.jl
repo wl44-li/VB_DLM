@@ -11,6 +11,7 @@ begin
 	using StatsFuns
 	using SpecialFunctions
 	using PlutoUI
+	using StatsBase
 end
 
 # ╔═╡ 9a143b76-4c69-4c84-8499-dc59a15bb2d7
@@ -920,6 +921,7 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000,
 	hss = HSS(W_A, S_A, W_C, S_C)
 	exp_np = missing
 	elbo_prev = -Inf
+	el_s = zeros(max_iter)
 
 	# cf. Beal Algorithm 5.3
 	for i in 1:max_iter
@@ -932,6 +934,7 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000,
 		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
 			
 		elbo = log_Z_ - (kl_A_ + kl_ρ_ + kl_C_) 
+		el_s[i] = elbo
 
 		# Hyper-param learning 
 		if (hpp_learn)
@@ -943,6 +946,7 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000,
 
 		if abs(elbo - elbo_prev) < tol
 			println("Stopped at iteration: $i")
+			el_s = el_s[1:i]
             break
 		end
 		
@@ -953,7 +957,8 @@ function vb_dlm_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000,
 		end
 	end
 		
-	return exp_np
+	return exp_np, el_s
+
 end
 
 # ╔═╡ 51aa8176-fb01-4510-a193-87487d501fd0
@@ -995,9 +1000,6 @@ Compare with package Bayes PPCA
 
 # ╔═╡ 51e3c1bd-acfb-4f24-9152-8d32a2777fc4
 #TO-DO: higher dimension tests
-
-# ╔═╡ 2c344be0-2cfd-4267-b6f2-c2970c7e66b7
-
 
 # ╔═╡ 68faadec-a427-4a05-b1fd-9b754b8fa0d5
 
@@ -1554,7 +1556,7 @@ let
 	b = 100
 
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
-	exp_f = vb_dlm_c(y_pca, hpp, true, 300, 1e-4)
+	exp_f, _ = vb_dlm_c(y_pca, hpp, true, 300, 1e-4)
 	exp_f.C, inv(exp_f.R⁻¹)
 end
 
@@ -1619,7 +1621,7 @@ let
 	b = 0.1
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 	
-	exp_ppca = vb_dlm_c(y_pca, hpp, true, 100, 1e-3)
+	exp_ppca, elbos = vb_dlm_c(y_pca, hpp, true, 100, 1e-3)
 	x_s, σ_s, y_s, Q_s = vb_e(y_pca, exp_ppca, hpp, true)
 	
 	println("\nVB (x) PPCA (MSE, MAD, MAPE): ", error_metrics(xs_pca, x_s))
@@ -1629,7 +1631,9 @@ let
 	println("\nKalman Filtered (y), MSE, MAD, MAPE: ", error_metrics(y_pca, p_forward(y_pca, zeros(2, 2), C, R, μ_0, Σ_0)[3]))
 
 	# Should recover A as the zero matrices, C and R as usual
-	exp_ppca.A, exp_ppca.C, inv(exp_ppca.R⁻¹)
+	p = plot(elbos, label = "elbo", title = "ElBO progression")
+	println(exp_ppca.A, "\n\n", exp_ppca.C, "\n\n",inv(exp_ppca.R⁻¹))
+	p, elbos
 end
 
 # ╔═╡ 5c32b97e-8e6a-499d-b07b-52257f1dc0e3
@@ -1643,13 +1647,14 @@ let
 	b = 0.01
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 	
-	exp_f = vb_dlm_c(y_pca, hpp, true, 500, 5e-5)
+	exp_f, elbos = vb_dlm_c(y_pca, hpp, true, 500, 5e-5)
 
 	x_s, σ_s, y_s, Q_s = vb_e(y_pca, exp_f, hpp, true)
 
 	println("\nVB (x) PPCA (MSE, MAD, MAPE): ", error_metrics(xs_pca, x_s))
 	println("\nVB (y) PPCA (MSE, MAD, MAPE): ", error_metrics(y_pca[:, 1:end-1], y_s[:, 2:end]))
 	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+	plot(elbos, label = "elbo", title = "ElBO progression")
 end
 
 # ╔═╡ c31c46e3-6466-4563-b30a-39a050cb691d
@@ -1697,12 +1702,12 @@ let
 	b = 0.1
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	exp_f = vb_dlm_c(y, hpp, true) # hyper-parameter learning
+	exp_f, elbos = vb_dlm_c(y, hpp, true) # hyper-parameter learning
 	xs, _, ys, _ = vb_e(y, exp_f, hpp, true)
 	println("\nVB (x) MSE, MAD, MAPE: ", error_metrics(x_true, xs))
 	println("\nVB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 1:end-1], ys[:, 2:end]))
-
-	exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
+	p = plot(elbos, label = "elbo", title = "ElBO progression")
+	p, exp_f.A, exp_f.C, inv(exp_f.R⁻¹)
 end
 
 # ╔═╡ b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
@@ -1715,7 +1720,7 @@ let
 	b = 0.1
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	exp_f = vb_dlm_c(y, hpp)
+	exp_f, _ = vb_dlm_c(y, hpp)
 	xs, _, ys, _ = vb_e(y, exp_f, hpp, true)
 	println("\nVB (x) MSE, MAD, MAPE: ", error_metrics(x_true, xs))
 	println("\nVB (y) MSE, MAD, MAPE: ", error_metrics(y[:, 1:end-1], ys[:, 2:end]))
@@ -1733,7 +1738,7 @@ let
 	a = 0.001
 	b = 0.001
 	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
-	exp_ = vb_dlm_c(y_k3, hpp, true, 700)
+	exp_, _ = vb_dlm_c(y_k3, hpp, true, 700)
 
 	x_s, _, y_s, _ = vb_e(y_k3, exp_, hpp, true)
 	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_k3, x_s))
@@ -1752,7 +1757,7 @@ let
 	b = 1
 	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
 
-	exp_ = vb_dlm_c(y_k3, hpp) # no hyperparam learning
+	exp_, _ = vb_dlm_c(y_k3, hpp) # no hyperparam learning
 
 	x_s, _, y_s, _ = vb_e(y_k3, exp_, hpp, true)
 	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_k3, x_s))
@@ -1778,13 +1783,14 @@ let
 	b = 0.1
 	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
 
-	exp_ = vb_dlm_c(y_d3, hpp, true) 
+	exp_, elbos = vb_dlm_c(y_d3, hpp, true) 
 	x_s, _, y_s, _ = vb_e(y_d3, exp_, hpp, true)
 
 	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3, x_s))
 	println("\nVB (y) (MSE, MAD, MAPE): ", error_metrics(y_d3[:, 1:end-1], y_s[:, 2:end]))
 
 	exp_.A, exp_.C, inv(exp_.R⁻¹)
+	plot(elbos, label = "elbo", title = "ElBO progression")
 end
 
 # ╔═╡ fea6a707-abdd-4196-a651-8bb86dada5f2
@@ -1797,7 +1803,7 @@ let
 	b = 0.1
 	hpp = HPP(α, γ, a, b, μ_i, Σ_i)
 
-	exp_ = vb_dlm_c(y_d3, hpp) 
+	exp_, _ = vb_dlm_c(y_d3, hpp) 
 	x_s, _, y_s, _ = vb_e(y_d3, exp_, hpp, true)
 
 	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3, x_s))
@@ -1823,7 +1829,7 @@ let
 	b = 1
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	exp_ = vb_dlm_c(y_d3k2, hpp, true) 
+	exp_, _ = vb_dlm_c(y_d3k2, hpp, true) 
 	x_s, _, y_s, _ = vb_e(y_d3k2, exp_, hpp, true)
 
 	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3k2, x_s))
@@ -1842,7 +1848,7 @@ let
 	b = 1
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
 
-	exp_ = vb_dlm_c(y_d3k2, hpp, false) 
+	exp_, _ = vb_dlm_c(y_d3k2, hpp, false) 
 	x_s, _, y_s, _ = vb_e(y_d3k2, exp_, hpp, true)
 
 	println("\nVB (x) (MSE, MAD, MAPE): ", error_metrics(x_d3k2, x_s))
@@ -1868,6 +1874,7 @@ Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 
 [compat]
@@ -1876,6 +1883,7 @@ MultivariateStats = "~0.10.2"
 Plots = "~1.38.9"
 PlutoUI = "~0.7.50"
 SpecialFunctions = "~2.2.0"
+StatsBase = "~0.33.21"
 StatsFuns = "~1.3.0"
 """
 
@@ -1885,7 +1893,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.2"
 manifest_format = "2.0"
-project_hash = "a0f57b238b2a9ca79677c7bbed187e459ce714cb"
+project_hash = "49780c70cb6d01e43a46affea802939b53ab2d99"
 
 [[deps.AbstractPlutoDingetjes]]
 deps = ["Pkg"]
@@ -3057,7 +3065,7 @@ version = "1.4.1+0"
 # ╟─67ba0061-7809-4391-9410-1aaae787e636
 # ╟─806f343e-2ef7-48c6-964a-f29c0ad63256
 # ╟─a4526a71-2e74-479e-892d-b5bc04ceebf8
-# ╟─621f9118-172b-4e5e-8c17-259ff43d70d4
+# ╠═621f9118-172b-4e5e-8c17-259ff43d70d4
 # ╟─c4a4ad20-45ea-4ae8-a49d-b1e467b3e260
 # ╠═5c32b97e-8e6a-499d-b07b-52257f1dc0e3
 # ╠═c039b519-e045-4ade-bfdb-b0f5ae4fa0d3
@@ -3068,11 +3076,10 @@ version = "1.4.1+0"
 # ╟─9010c12e-ac9e-4426-a6ac-763904adb87f
 # ╠═7feba1b9-aa82-46e8-877c-f9891ead3b15
 # ╠═51e3c1bd-acfb-4f24-9152-8d32a2777fc4
-# ╠═2c344be0-2cfd-4267-b6f2-c2970c7e66b7
 # ╠═68faadec-a427-4a05-b1fd-9b754b8fa0d5
 # ╟─55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 # ╠═076c7125-cc41-46d2-8c3b-f091efdc8ace
-# ╟─3a97cd42-7f14-4068-b711-a6759042269c
+# ╠═3a97cd42-7f14-4068-b711-a6759042269c
 # ╟─17a8fdf6-dd03-4de9-8969-085dc0043699
 # ╟─b703c4d6-7fff-4bc1-ad1d-8bc9efe317f5
 # ╟─7112cfa1-2f3c-4197-92bd-73f43cd1f9d4
@@ -3087,7 +3094,7 @@ version = "1.4.1+0"
 # ╟─3f109d8d-5209-4a38-970c-b85eb98a4ac1
 # ╟─c8506c8c-ef40-47b6-a415-c3244e20d5a3
 # ╟─88609025-fedb-4a31-8827-c00ec539595f
-# ╟─5edb253c-471b-432c-8e80-60b768831cd8
+# ╠═5edb253c-471b-432c-8e80-60b768831cd8
 # ╟─57ee695f-12f6-4144-8d33-66a331018307
 # ╟─fea6a707-abdd-4196-a651-8bb86dada5f2
 # ╟─d95f0d89-1730-4856-975e-cb1e70ea0221

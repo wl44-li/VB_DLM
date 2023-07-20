@@ -1560,37 +1560,46 @@ md"""
 # ╔═╡ dd8f1c15-8915-4503-85f0-d3378f8e4751
 function kl_Wishart(ν_q, S_q, ν_0, S_0)
 	k = size(S_0, 1)
+	# Beale thesis
 	term1 = 0.5*(ν_0 - ν_q)*k*log(2) + 0.5*ν_0*logdet(S_0) - 0.5*ν_q*logdet(S_q) + sum(loggamma((ν_0 + 1 - i)/2.0) for i in 1:k) - sum(loggamma((ν_q + 1 - i)/2.0) for i in 1:k)
 	
-    term2 = (ν_q - ν_0) * sum(digamma((ν_q + 1 - i)/2.0) for i in 1:k) + k*log(2) + logdet(S_q)
+    term2 = (ν_q - ν_0) * (sum(digamma((ν_q + 1 - i)/2.0) for i in 1:k) + k*log(2) + logdet(S_q))
 	
     term3 = ν_q * tr(inv(S_0) * S_q - I)
     return term1 + 0.5 * (term2 + term3) 
+end
+
+# ╔═╡ 85edba6b-d971-43bb-a74b-83a08cb055d8
+function kl_wi(ν_q, S_q, ν_0, S_0)
+	k = size(S_0, 1)
+
+	# Wikipedia
+	term1 = ν_0 * logdet(inv(S_0)*S_q)
+	term2 = ν_q *(tr(inv(S_0)*S_q) - k)
+	term3 = sum(loggamma((ν_0 + 1 - i)/2.0) for i in 1:k) - sum(loggamma((ν_q + 1 - i)/2.0) for i in 1:k)
+	term4 = (ν_q - ν_0) * sum(digamma((ν_q + 1 - i)/2.0) for i in 1:k)
+
+	return -0.5*term1 + 0.5*term2 + term3 + 0.5*term4
 end
 
 # ╔═╡ 8bb29488-69a5-4547-892c-7d77699a3a92
 md"""
 Test ELBO computation with KL, log_Z
 
-**TO-DO** Debug ELBO curve
-
-KL computation via entropy and cross entropy library 
+KL computation via entropy and cross entropy library (TO-DO)
 """
 
 # ╔═╡ 801905b2-73f5-4f49-a83c-b05ca77457c6
 md"""
-ELBO $\mathcal F$ can be approximated as:
+
+SImilar to the uni-variate case, here the ELBO $\mathcal F$ can be approximated as:
 
 $\begin{align}
-\mathcal F &= \langle \ln p(Y, X, R, Q) \rangle_{\hat q(X, R, Q)} - \langle \ln q(X, R, Q) \rangle_{\hat q(X, R, Q)} \\
+\mathcal F &= E_q[\ln p(Y, X, Λ_R, Λ_Q)] - E_q[\ln q(X, Λ_R, Λ_Q)] \\
 
-&= \langle \ln p(Y, X|R, Q) + \ln p(R, Q) \rangle_{\hat q(X, R, Q)} - \langle \ln q(X) \rangle_{\hat q(X)} - \langle \ln q(R) \rangle_{\hat q(R)} - \langle \ln q(Q) \rangle_{\hat q(Q)}  \\
+&= E_q[\ln p(Y, X|Λ_R, Λ_Q) + \ln p(Λ_R, Λ_Q)] - E_q[\ln q(X)] - E_q[\ln q(Λ_R)] - E_q[\ln q(Λ_Q)]  \\
 
-&= \langle \ln p(Y, X|R, Q) \rangle_{\hat q(X, R, Q)} - \langle \ln q(X) \rangle_{\hat q(X)} + \langle \ln \frac{p(R)}{q(R)} \rangle_{\hat q(R)} + \langle \ln \frac{p(Q)}{q(Q)} \rangle_{\hat q(Q)} \\
-
-&= \langle \ln p(Y, X|R, Q) \rangle_{\hat q(X, R, Q)} + \ln Z - \langle \ln p(Y, X|R, Q)) \rangle_{\hat q(X, R, Q)} - KL(R) - KL(Q) \\
-
-&= -KL(Q) - KL(R) + \ln Z
+&= -KL(Λ_Q) - KL(Λ_R) + \ln Z
 \end{align}$
 """
 
@@ -1621,12 +1630,13 @@ let
 	kl_R = kl_Wishart(Q_.ν_R_q, Q_.W_R_q, prior.ν_R, prior.W_R)
 	kl_Q = kl_Wishart(Q_.ν_Q_q, Q_.W_Q_q, prior.ν_Q, prior.W_Q)
 
+	kl_R_wi = kl_wi(Q_.ν_R_q, Q_.W_R_q, prior.ν_R, prior.W_R)
+	kl_Q_wi = kl_wi(Q_.ν_Q_q, Q_.W_Q_q, prior.ν_Q, prior.W_Q)
 	_ , _ , log_z = forward_(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
 
 	println(log_z)
-	println(kl_Q)
-	println(kl_R)
-	log_z - kl_Q - kl_R
+	println(kl_Q, " ", kl_Q_wi)
+	println(kl_R, " ", kl_R_wi)
 end
 
 # ╔═╡ 5e10db40-5c2e-41c3-a431-e0a4c81d2718
@@ -1811,7 +1821,7 @@ Similar pattern is observered for general learning of $R, Q$, VB is able to conv
 # ╔═╡ ad6d0997-43c1-42f3-b997-765c594794b4
 begin
 	Random.seed!(123)
-	Xs_samples, Qs_samples, Rs_samples = gibbs_dlm_cov(y, A, C, 3000, 1000, 1)
+	@time Xs_samples, Qs_samples, Rs_samples = gibbs_dlm_cov(y, A, C, 3000, 1000, 1)
 end
 
 # ╔═╡ f0551220-d7c1-4312-b6c5-e0c432889494
@@ -3544,9 +3554,10 @@ version = "1.4.1+0"
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
 # ╟─bb26ac74-da64-47be-a49a-4519101cffce
 # ╠═dd8f1c15-8915-4503-85f0-d3378f8e4751
+# ╠═85edba6b-d971-43bb-a74b-83a08cb055d8
 # ╟─8bb29488-69a5-4547-892c-7d77699a3a92
 # ╟─801905b2-73f5-4f49-a83c-b05ca77457c6
-# ╠═37e01d43-b804-4736-8d91-fb9c7e0ab493
+# ╟─37e01d43-b804-4736-8d91-fb9c7e0ab493
 # ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
 # ╟─e1edfb29-8f82-418b-948b-5542fd6d5b24
 # ╠═907e0fea-bad1-49f5-aa98-e2524e93e191

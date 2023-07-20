@@ -885,9 +885,22 @@ $s_a = \sum_{t=1}^{T} E_q[x_{t-1} x_t] = \sum_{t=1}^{T} \sigma_{t-1, t} + \mu_{t
 
 """
 
+# ╔═╡ 2c4dec7a-1a9b-4988-b1a4-43f41e744beb
+md"""
+Computing ELBO [Beale 5.142 - 5.147]
+
+$\begin{align}
+\mathcal{F}(q) &= E_q[\log p(τ_r, τ_q, x_{0:T}, y_{1:T})] - E_q[\log q(τ_r, τ_q, x_{0:T})] \\
+&= E_q[\log p(x_{0:T}, y_{1:T} | τ_r, τ_q) + \log p(τ_r, τ_q)] - E_q[\log q(τ_r, τ_q)] - E_q[\log q(x_{0:T})]\\
+&= E_q[\log p(x_{0:T}, y_{1:T}] - E_q[\log q(x_{0:T})] - E_q[\frac{\log p(τ_r)}{\log q(τ_r}] - E_q[\frac{\log p(τ_q)}{\log q(τ_q}]\\
+&= E_q[\log p(x_{0:T}, y_{1:T}] - (-\ln Z + E_q[\log p(x_{0:T}, y_{1:T}]) - KL(τ_r) - KL(τ_q)\\
+&= -KL(τ_r) - KL(τ_q) + \ln Z
+\end{align}$
+"""
+
 # ╔═╡ 501172ab-203d-4faa-a3b0-3e4fa0c79d10
 md"""
-Convergence check, KL divergence for gamma distribution
+**Convergence check**, KL divergence for gamma distribution
 """
 
 # ╔═╡ 5cf98dbf-1b32-418c-8d62-c7865dc37f04
@@ -980,6 +993,16 @@ $E_q[τ_q] = \alpha_q' / \beta_q'$
 
 #### Forward pass
 The forward pass computes the filtered distribution for each latent state $x_t$ given the observations up to $y_{1:t}$. The filtered distributions are computed recursively from $t=1$ to $T$, much akin to the forward filter in FFBS, $p(x_t∣y_{1:t})$ 
+"""
+
+# ╔═╡ 03931d7c-e9d4-4283-96ed-d4a166d7e91f
+md"""
+Computing $\ln Z$:
+
+$\begin{align}
+\ln Z &= \sum_{t=1}^T \ln p(y_t|y_{1:t-1})
+\end{align}$
+
 """
 
 # ╔═╡ d359f3aa-b238-420f-99d2-52f85ce9ff82
@@ -1216,6 +1239,11 @@ function vb_ll_c(y::Vector{Float64}, hpp::Priors_ll, max_iter=500, tol=5e-4)
 
 	return 1/E_τ_r, 1/E_τ_q, el_s
 end
+
+# ╔═╡ fb5d0c6a-f110-4688-b209-2935f92adee8
+md"""
+Monitor ELBO progress
+"""
 
 # ╔═╡ 11d5265e-3254-4012-a92c-a67823e1ae1c
 let
@@ -3449,13 +3477,15 @@ version = "1.4.1+0"
 # ╟─69e31afc-7893-4099-8d48-937d8ebffa86
 # ╟─94caa09c-59b6-461f-b56f-178992d2bc83
 # ╟─bb4de2cf-e4b6-4788-9f8b-ff5fd2ca2570
+# ╟─2c4dec7a-1a9b-4988-b1a4-43f41e744beb
 # ╟─501172ab-203d-4faa-a3b0-3e4fa0c79d10
 # ╠═5cf98dbf-1b32-418c-8d62-c7865dc37f04
-# ╠═981608f2-57f6-44f1-95ed-82e8cca04718
+# ╟─981608f2-57f6-44f1-95ed-82e8cca04718
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
 # ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184
 # ╠═2308aa4c-bb99-4546-a108-9fa88fca130b
 # ╟─1adc874e-e024-464a-80d5-5ded04f62f24
+# ╟─03931d7c-e9d4-4283-96ed-d4a166d7e91f
 # ╠═d359f3aa-b238-420f-99d2-52f85ce9ff82
 # ╟─bca920fc-9535-4eb0-89c2-03a7334df6b6
 # ╠═416a607b-26bc-4973-8c1a-489e855a06de
@@ -3471,6 +3501,7 @@ version = "1.4.1+0"
 # ╠═7a6940ef-56b3-4cb4-bc6b-2c97625965cc
 # ╟─ee11c498-5e2a-4a37-a73b-a1ff6647d013
 # ╠═316db2e3-6fd9-45a5-932d-d3465885b842
+# ╟─fb5d0c6a-f110-4688-b209-2935f92adee8
 # ╠═11d5265e-3254-4012-a92c-a67823e1ae1c
 # ╠═665c55c3-d4dc-4d13-9517-d1106ea6210f
 # ╟─e6930d53-6652-4fea-9a01-a4c87b8058dc

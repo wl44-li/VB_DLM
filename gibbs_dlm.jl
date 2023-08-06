@@ -222,7 +222,7 @@ Analyse Gibbs results with Chains
 
 # ╔═╡ 0a9c1721-6901-4dc1-a93d-8d8e18f7f375
 md"""
-# TO-DO:
+# Experiements:
 
 - Single-move sampler of X v.s. FFBS for latent state $x$ inference
 - Gibbs sampling for infering unknown $Q$ and $R$ with **known** A, C - cf `DLM with R`
@@ -813,114 +813,10 @@ md"""
 Compare with single-move for sampling latent states
 """
 
-# ╔═╡ 4baa0604-712a-448f-b3ee-56543bfc0d71
-# ╠═╡ disabled = true
-#=╠═╡
-function gibbs_smx(y, A, C, mcmc=3000, burn_in=100, thinning=1)
-	P, T = size(y)
-	K = size(A, 2)
-	
-	μ_0 = zeros(K)  
-	λ_0 = Matrix{Float64}(I, K, K)
-	
-	v_0 = P + 1.0 
-	S_0 = Matrix{Float64}(0.01 * I, P, P)
-
-	v_1 = K + 1.0
-	S_1 = Matrix{Float64}(0.01 * I, K, K)
-	
-	# Initial values for the parameters
-	R⁻¹ = rand(Wishart(v_0, inv(S_0)))
-	Q⁻¹ = rand(Wishart(v_1, inv(S_1)))
-
-	R, Q = inv(R⁻¹), inv(Q⁻¹)
-	
-	n_samples = Int.(mcmc/thinning)
-	# Store the samples
-	samples_X = zeros(n_samples, K, T)
-	samples_Q = zeros(n_samples, K, K)
-	samples_R = zeros(n_samples, P, P)
-	
-	# Gibbs sampler
-	for i in 1:mcmc+burn_in
-
-		x = single_move_sampler(y, A, C, Q, R, burn_in+1)[:, :, end]
-		
-		# Update the system noise
-		Q = sample_Q_(x, A, v_1, S_1, μ_0)
-		
-	    # Update the observation noise
-		R = sample_R_(y, x, C, v_0, S_0)
-		
-	    # Store the samples
-		if i > burn_in && mod(i - burn_in, thinning) == 0
-			index = div(i - burn_in, thinning)
-		    samples_X[index, :, :] = x
-			samples_Q[index, :, :] = Q
-		    samples_R[index, :, :] = R
-		end
-	end
-	return samples_X, samples_Q, samples_R
-end
-  ╠═╡ =#
-
-# ╔═╡ de7046da-e361-41d0-b2d7-12439b571795
-#=╠═╡
-begin
-	Random.seed!(99)
-	Xs_samples_sm, Qs_samples_sm, Rs_samples_sm = gibbs_smx(y, A, C)
-	mean(Qs_samples_sm, dims=1)[1, :, :], mean(Rs_samples_sm, dims=1)[1, :, :]
-end
-  ╠═╡ =#
-
 # ╔═╡ 05828da6-bc3c-45de-b059-310159038d5d
 md"""
 similar to inference with unknown A, C, R, gibbs via single-move learning is poor compared to FFBS? 
 """
-
-# ╔═╡ 69061e7f-8a6d-4fac-b187-4d6ff16cf777
-#=╠═╡
-let
-	# Select the first 50 time steps
-	true_latent_50 = x_true[:, 1:50]
-	sm_sampled_latent_50 = Xs_samples_sm[:, :, 1:50]
-	
-	# Create a new plot
-	p = plot()
-	
-	# Plot the true latent states with a thick line
-	plot!(p, true_latent_50[1, :], linewidth=1.5, alpha=5, label="True x_d1", color=:blue)
-	plot!(p, true_latent_50[2, :], linewidth=1.5, alpha=5, label="True x_d2", color=:red)
-	
-	# Plot the sampled latent states with a thin line
-	for i in 1:size(sm_sampled_latent_50, 1)
-	    plot!(p, sm_sampled_latent_50[i, 1, :], linewidth=0.1, alpha=0.1, label=false, color=:violet)
-	    plot!(p, sm_sampled_latent_50[i, 2, :], linewidth=0.1, alpha=0.1, label=false, color=:orange)
-	end
-	p
-end
-  ╠═╡ =#
-
-# ╔═╡ a9cba95e-9a9e-46c1-8f66-0a9b4ee0fcf0
-#=╠═╡
-let
-	xs_m = mean(Xs_samples_sm, dims=1)[1, :, :]
-	println("MSE, MAD of MCMC X mean: ", error_metrics(x_true, xs_m))
-	println("MSE, MAD of MCMC X end: ", error_metrics(x_true, Xs_samples_sm[end, :, :]))
-
-	X_chain = Chains(reshape(Xs_samples_sm, 3000, 2*T))
-	x_ess = ess(X_chain)
-	x_rhat = rhat(X_chain)
-	ess_df = DataFrame(x_ess)
-	rhat_df = DataFrame(x_rhat)
-	
-	mean_ess = mean(skipmissing(ess_df.ess))
-	mean_rhat = mean(skipmissing(rhat_df.rhat))
-	
-	println("Mean ESS: $mean_ess")
-	println("Mean Rhat: $mean_rhat")
-end
-  ╠═╡ =#
 
 # ╔═╡ 6bea5f44-2abd-47b9-9db5-c5f70dd12c4f
 md"""
@@ -1152,7 +1048,7 @@ end
 
 # ╔═╡ c096bbab-4009-4995-8f45-dc7ffab7ccfa
 md"""
-## VB E
+## VB-E
 
 $\ln q(x_{0:T}) = E_q[\ln p(Λ_Q, Λ_R, x_{0:T}, y_{1:T})] + const$
 
@@ -1552,93 +1448,6 @@ function vbem_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2},
 	return E_R, E_Q
 end
 
-# ╔═╡ bb26ac74-da64-47be-a49a-4519101cffce
-md"""
-### KL Divergence 
-"""
-
-# ╔═╡ dd8f1c15-8915-4503-85f0-d3378f8e4751
-function kl_Wishart(ν_q, S_q, ν_0, S_0)
-	k = size(S_0, 1)
-	# Beale thesis
-	term1 = 0.5*(ν_0 - ν_q)*k*log(2) + 0.5*ν_0*logdet(S_0) - 0.5*ν_q*logdet(S_q) + sum(loggamma((ν_0 + 1 - i)/2.0) for i in 1:k) - sum(loggamma((ν_q + 1 - i)/2.0) for i in 1:k)
-	
-    term2 = (ν_q - ν_0) * (sum(digamma((ν_q + 1 - i)/2.0) for i in 1:k) + k*log(2) + logdet(S_q))
-	
-    term3 = ν_q * tr(inv(S_0) * S_q - I)
-    return term1 + 0.5 * (term2 + term3) 
-end
-
-# ╔═╡ 85edba6b-d971-43bb-a74b-83a08cb055d8
-function kl_wi(ν_q, S_q, ν_0, S_0)
-	k = size(S_0, 1)
-
-	# Wikipedia
-	term1 = ν_0 * logdet(inv(S_0)*S_q)
-	term2 = ν_q *(tr(inv(S_0)*S_q) - k)
-	term3 = sum(loggamma((ν_0 + 1 - i)/2.0) for i in 1:k) - sum(loggamma((ν_q + 1 - i)/2.0) for i in 1:k)
-	term4 = (ν_q - ν_0) * sum(digamma((ν_q + 1 - i)/2.0) for i in 1:k)
-
-	return -0.5*term1 + 0.5*term2 + term3 + 0.5*term4
-end
-
-# ╔═╡ 8bb29488-69a5-4547-892c-7d77699a3a92
-md"""
-Test ELBO computation with KL, log_Z
-
-KL computation via entropy and cross entropy library (TO-DO)
-"""
-
-# ╔═╡ 801905b2-73f5-4f49-a83c-b05ca77457c6
-md"""
-
-SImilar to the uni-variate case, here the ELBO $\mathcal F$ can be approximated as:
-
-$\begin{align}
-\mathcal F &= E_q[\ln p(Y, X, Λ_R, Λ_Q)] - E_q[\ln q(X, Λ_R, Λ_Q)] \\
-
-&= E_q[\ln p(Y, X|Λ_R, Λ_Q) + \ln p(Λ_R, Λ_Q)] - E_q[\ln q(X)] - E_q[\ln q(Λ_R)] - E_q[\ln q(Λ_Q)]  \\
-
-&= -KL(Λ_Q) - KL(Λ_R) + \ln Z
-\end{align}$
-"""
-
-# ╔═╡ 37e01d43-b804-4736-8d91-fb9c7e0ab493
-let
-	A = [1.0 0.0; 0.0 1.0]
-	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([1.0, 1.0])
-	R = Diagonal([0.2, 0.2])
-	T = 1000
-	Random.seed!(133)
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([1.0, 1.0])
-	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
-	D, T = size(y)
-	K = size(A, 1)
-	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
-	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
-	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
-	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
-	
-	W_Q = Matrix{Float64}(I, K, K)
-	W_R = Matrix{Float64}(I, D, D)
-	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
-	hss = HSS(W_C, W_A, S_C, S_A)
-	E_q_R, E_q_Q, Q_ = vb_m_step(y, hss, prior, A, C)
-
-	kl_R = kl_Wishart(Q_.ν_R_q, Q_.W_R_q, prior.ν_R, prior.W_R)
-	kl_Q = kl_Wishart(Q_.ν_Q_q, Q_.W_Q_q, prior.ν_Q, prior.W_Q)
-
-	kl_R_wi = kl_wi(Q_.ν_R_q, Q_.W_R_q, prior.ν_R, prior.W_R)
-	kl_Q_wi = kl_wi(Q_.ν_Q_q, Q_.W_Q_q, prior.ν_Q, prior.W_Q)
-	_ , _ , log_z = forward_(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
-
-	println(log_z)
-	println(kl_Q, " ", kl_Q_wi)
-	println(kl_R, " ", kl_R_wi)
-end
-
 # ╔═╡ 5e10db40-5c2e-41c3-a431-e0a4c81d2718
 function vbem_his_plot(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::Prior, max_iter=100)
     P, T = size(y)
@@ -1677,6 +1486,93 @@ function vbem_his_plot(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Floa
     end
 	
 	plot(p1, p2, layout = (1, 2))
+end
+
+# ╔═╡ bb26ac74-da64-47be-a49a-4519101cffce
+md"""
+### KL Divergence 
+"""
+
+# ╔═╡ dd8f1c15-8915-4503-85f0-d3378f8e4751
+function kl_Wishart(ν_q, S_q, ν_0, S_0)
+	k = size(S_0, 1)
+	# Beale thesis
+	term1 = 0.5*(ν_0 - ν_q)*k*log(2) + 0.5*ν_0*logdet(S_0) - 0.5*ν_q*logdet(S_q) + sum(loggamma((ν_0 + 1 - i)/2.0) for i in 1:k) - sum(loggamma((ν_q + 1 - i)/2.0) for i in 1:k)
+	
+    term2 = (ν_q - ν_0) * (sum(digamma((ν_q + 1 - i)/2.0) for i in 1:k) + k*log(2) + logdet(S_q))
+	
+    term3 = ν_q * tr(inv(S_0) * S_q - I)
+    return term1 + 0.5 * (term2 + term3) 
+end
+
+# ╔═╡ 85edba6b-d971-43bb-a74b-83a08cb055d8
+function kl_wi(ν_q, S_q, ν_0, S_0)
+	k = size(S_0, 1)
+
+	# Wikipedia
+	term1 = ν_0 * logdet(inv(S_0)*S_q)
+	term2 = ν_q *(tr(inv(S_0)*S_q) - k)
+	term3 = sum(loggamma((ν_0 + 1 - i)/2.0) for i in 1:k) - sum(loggamma((ν_q + 1 - i)/2.0) for i in 1:k)
+	term4 = (ν_q - ν_0) * sum(digamma((ν_q + 1 - i)/2.0) for i in 1:k)
+
+	return -0.5*term1 + 0.5*term2 + term3 + 0.5*term4
+end
+
+# ╔═╡ 801905b2-73f5-4f49-a83c-b05ca77457c6
+md"""
+
+SImilar to the uni-variate case, here the ELBO $\mathcal F$ can be approximated as:
+
+$\begin{align}
+\mathcal F &= E_q[\ln p(Y, X, Λ_R, Λ_Q)] - E_q[\ln q(X, Λ_R, Λ_Q)] \\
+
+&= E_q[\ln p(Y, X|Λ_R, Λ_Q) + \ln p(Λ_R, Λ_Q)] - E_q[\ln q(X)] - E_q[\ln q(Λ_R)] - E_q[\ln q(Λ_Q)]  \\
+
+&= -KL(Λ_Q) - KL(Λ_R) + \ln Z
+\end{align}$
+"""
+
+# ╔═╡ 8bb29488-69a5-4547-892c-7d77699a3a92
+md"""
+Test ELBO computation with KL, log_Z
+
+Two KL formula tested (Beale appendix and Wikipedia)
+"""
+
+# ╔═╡ 37e01d43-b804-4736-8d91-fb9c7e0ab493
+let
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.2, 0.2])
+	T = 1000
+	Random.seed!(133)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	
+	W_Q = Matrix{Float64}(I, K, K)
+	W_R = Matrix{Float64}(I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	hss = HSS(W_C, W_A, S_C, S_A)
+	E_q_R, E_q_Q, Q_ = vb_m_step(y, hss, prior, A, C)
+
+	kl_R = kl_Wishart(Q_.ν_R_q, Q_.W_R_q, prior.ν_R, prior.W_R)
+	kl_Q = kl_Wishart(Q_.ν_Q_q, Q_.W_Q_q, prior.ν_Q, prior.W_Q)
+
+	kl_R_wi = kl_wi(Q_.ν_R_q, Q_.W_R_q, prior.ν_R, prior.W_R)
+	kl_Q_wi = kl_wi(Q_.ν_Q_q, Q_.W_Q_q, prior.ν_Q, prior.W_Q)
+	_ , _ , log_z = forward_(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+
+	println(log_z)
+	println(kl_Q, " ", kl_Q_wi)
+	println(kl_R, " ", kl_R_wi)
 end
 
 # ╔═╡ e1edfb29-8f82-418b-948b-5542fd6d5b24
@@ -1722,11 +1618,6 @@ function vbem_c(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}
 
 	return E_R, E_Q, el_s
 end
-
-# ╔═╡ e1676b43-b8f0-409f-a6c3-7f6c8852f7ae
-md"""
-A, C is identity matrix, converged elbo around $2300$
-"""
 
 # ╔═╡ ffd75de1-b9fd-4883-810d-1d4f79775f0d
 let
@@ -1815,14 +1706,14 @@ end
 
 # ╔═╡ a4a1a8bb-2c47-44d2-96c3-daf25d032b19
 md"""
-Similar pattern is observered for general learning of $R, Q$, VB is able to converge faster and produce very similar latent state inference results to FFBS (Gibbs).
+Similar pattern is observered for general learning of $R, Q$, VB is able to converge faster and deliver very similar latent state inference results to FFBS (Gibbs).
 """
 
 # ╔═╡ ad6d0997-43c1-42f3-b997-765c594794b4
 begin
 	Random.seed!(123)
 	@time Xs_samples, Qs_samples, Rs_samples = gibbs_dlm_cov(y, A, C, 3000, 1000, 1)
-end
+end;
 
 # ╔═╡ f0551220-d7c1-4312-b6c5-e0c432889494
 begin
@@ -3522,11 +3413,7 @@ version = "1.4.1+0"
 # ╟─282b71f4-4848-426d-b8fc-0e3656d01767
 # ╟─2837effd-25f2-4f49-829e-8fc191db8460
 # ╟─0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
-# ╟─4baa0604-712a-448f-b3ee-56543bfc0d71
-# ╟─de7046da-e361-41d0-b2d7-12439b571795
 # ╟─05828da6-bc3c-45de-b059-310159038d5d
-# ╟─69061e7f-8a6d-4fac-b187-4d6ff16cf777
-# ╟─a9cba95e-9a9e-46c1-8f66-0a9b4ee0fcf0
 # ╟─6bea5f44-2abd-47b9-9db5-c5f70dd12c4f
 # ╟─37e0d499-bda5-4a5e-8b81-9b3f9384c2fb
 # ╟─456f0f6f-1c39-4a50-be3a-0db68d61a95f
@@ -3552,16 +3439,15 @@ version = "1.4.1+0"
 # ╟─488d1200-1ddf-4f06-9643-2eecb2072263
 # ╟─0591883c-49af-4201-b2f1-49f208506ece
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
-# ╟─bb26ac74-da64-47be-a49a-4519101cffce
-# ╠═dd8f1c15-8915-4503-85f0-d3378f8e4751
-# ╠═85edba6b-d971-43bb-a74b-83a08cb055d8
-# ╟─8bb29488-69a5-4547-892c-7d77699a3a92
-# ╟─801905b2-73f5-4f49-a83c-b05ca77457c6
-# ╟─37e01d43-b804-4736-8d91-fb9c7e0ab493
 # ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
+# ╟─bb26ac74-da64-47be-a49a-4519101cffce
+# ╟─dd8f1c15-8915-4503-85f0-d3378f8e4751
+# ╟─85edba6b-d971-43bb-a74b-83a08cb055d8
+# ╟─801905b2-73f5-4f49-a83c-b05ca77457c6
+# ╠═8bb29488-69a5-4547-892c-7d77699a3a92
+# ╟─37e01d43-b804-4736-8d91-fb9c7e0ab493
 # ╟─e1edfb29-8f82-418b-948b-5542fd6d5b24
 # ╠═907e0fea-bad1-49f5-aa98-e2524e93e191
-# ╟─e1676b43-b8f0-409f-a6c3-7f6c8852f7ae
 # ╠═ffd75de1-b9fd-4883-810d-1d4f79775f0d
 # ╟─9ebaf094-75ae-48fa-8c3a-280dfbf24dcd
 # ╠═8443d615-15a4-4bc3-b40d-c103db279d70

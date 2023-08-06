@@ -640,13 +640,13 @@ Hidden state (xs) learning outperform Kalman Filter and very close to Kalman smo
 
 # ╔═╡ be042373-ed3e-4e2e-b714-b4f9e5964b57
 md"""
-**Debugging notes** 
+## Debugging notes 
 
 -> check vb-m with HSS using x_true (✓)
 
--> check vb-e with Exp_ϕ using A, C, R (✓)
+-> check vb-e with Exp_ϕ using ground-truth A, C, R (✓)
 
--> check forward, backward with StateSpaceModels -> consider first uni-variate local level model (✓ - see separate notebook)
+-> check forward, backward with StateSpaceModels.jl -> consider uni-variate local level model (✓ - see separate notebook)
 
 -> verify with MCMC and Turing (✓ - see separate notebook)
 """
@@ -964,8 +964,11 @@ end
 # ╔═╡ 51aa8176-fb01-4510-a193-87487d501fd0
 md"""
 ### PPCA 
+"""
 
-**To-Do: Further testing** i.e. higher dimensions, and remove inference on $A$ in the VB procedure, we know it will be a zero matrix.
+# ╔═╡ ca28d21f-4320-4097-81b9-5740d65cdabf
+md"""
+**For formal PPCA treatment via VB, see separate notebook.** Experiments below are preliminary
 """
 
 # ╔═╡ 67ba0061-7809-4391-9410-1aaae787e636
@@ -997,12 +1000,6 @@ Compare with package EM PPCA
 md"""
 Compare with package Bayes PPCA
 """ 
-
-# ╔═╡ 51e3c1bd-acfb-4f24-9152-8d32a2777fc4
-#TO-DO: higher dimension tests
-
-# ╔═╡ 68faadec-a427-4a05-b1fd-9b754b8fa0d5
-
 
 # ╔═╡ 55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 md"""
@@ -1633,7 +1630,7 @@ let
 	# Should recover A as the zero matrices, C and R as usual
 	p = plot(elbos, label = "elbo", title = "ElBO progression")
 	println(exp_ppca.A, "\n\n", exp_ppca.C, "\n\n",inv(exp_ppca.R⁻¹))
-	p, elbos
+	p
 end
 
 # ╔═╡ 5c32b97e-8e6a-499d-b07b-52257f1dc0e3
@@ -3062,10 +3059,11 @@ version = "1.4.1+0"
 # ╟─c15e18ba-543b-4a98-9d5c-41dbc02ca879
 # ╠═72e5080a-089e-4869-a0e5-e13ee1d7a83d
 # ╟─51aa8176-fb01-4510-a193-87487d501fd0
+# ╟─ca28d21f-4320-4097-81b9-5740d65cdabf
 # ╟─67ba0061-7809-4391-9410-1aaae787e636
 # ╟─806f343e-2ef7-48c6-964a-f29c0ad63256
 # ╟─a4526a71-2e74-479e-892d-b5bc04ceebf8
-# ╠═621f9118-172b-4e5e-8c17-259ff43d70d4
+# ╟─621f9118-172b-4e5e-8c17-259ff43d70d4
 # ╟─c4a4ad20-45ea-4ae8-a49d-b1e467b3e260
 # ╠═5c32b97e-8e6a-499d-b07b-52257f1dc0e3
 # ╠═c039b519-e045-4ade-bfdb-b0f5ae4fa0d3
@@ -3075,8 +3073,6 @@ version = "1.4.1+0"
 # ╠═08a0ae3e-80c0-4f68-b782-034417bc0262
 # ╟─9010c12e-ac9e-4426-a6ac-763904adb87f
 # ╠═7feba1b9-aa82-46e8-877c-f9891ead3b15
-# ╠═51e3c1bd-acfb-4f24-9152-8d32a2777fc4
-# ╠═68faadec-a427-4a05-b1fd-9b754b8fa0d5
 # ╟─55eb8a6a-7bb9-4aa4-a560-d30ec9374776
 # ╠═076c7125-cc41-46d2-8c3b-f091efdc8ace
 # ╠═3a97cd42-7f14-4068-b711-a6759042269c

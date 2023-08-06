@@ -1356,58 +1356,10 @@ md"""
 # Extras: Using NUTS() from Turing.jl
 """
 
-# ╔═╡ 4c3c2931-e4a8-43d1-b3fa-8bb3b82fb975
-# ╠═╡ disabled = true
-#=╠═╡
-begin
-	@model function DLM_Turing(y, a, c)
-	    T = length(y)
-	    
-	    # Priors
-	    r ~ InverseGamma(0.1, 0.1)
-	    q ~ InverseGamma(0.1, 0.1)
-		
-	    x = Vector(undef, T)
-	    x[1] ~ Normal(0, 1.0)
-	    y[1] ~ Normal(c * x[1], sqrt(r))
-		
-	    for t in 2:T
-	        # State transition
-	        x[t] ~ Normal(a * x[t-1], sqrt(q))
-	        
-	        # Observation model
-	        y[t] ~ Normal(c * x[t], sqrt(r))
-	    end
-	end
-	Random.seed!(888)
-	model = DLM_Turing(y, 1.0, 1.0)
-	chain = sample(model, NUTS(), 3000)
-	chain = chain[100:end]
-end;
-  ╠═╡ =#
-
-# ╔═╡ 2ad03b07-68ad-4da8-a5d3-7692502c0e00
-#=╠═╡
-describe(chain)
-  ╠═╡ =#
-
 # ╔═╡ 5f9f903b-a72c-4b60-9934-4bd2ced30a2c
 md"""
 Plot learning of $r, q$
 """
-
-# ╔═╡ 54c537af-06c3-4e12-87b8-33d3f1efa77b
-#=╠═╡
-begin
-	r_samples = chain[:r]
-	q_samples = chain[:q]
-	
-	# Plot the trace of r and q
-	p1 = plot(r_samples, title = "Trace for r", legend = false)
-	p2 = plot(q_samples, title = "Trace for q", legend = false)
-	plot(p1, p2, layout = (2, 1))
-end
-  ╠═╡ =#
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """

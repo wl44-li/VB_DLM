@@ -21,13 +21,13 @@ TableOfContents()
 md"""
 # Probabilistic PCA
 
-Adapoted from VBEM_DLM
+Adapted from VBEM_DLM (Beale)
 
 $$x \sim \mathcal N(0, Q)$$ 
 
 $$y = Cx + v, \ v \sim \mathcal N(0, R)$$ 
 
-Where $A$ is zeros matrix, $Q$ is fixed as the identity matrix, and $R$ is isotropic diagonal matrix.
+Where $A$ is zeros matrix, $Q$ is fixed as the identity matrix, and $R$ is now **isotropic** diagonal matrix.
 """
 
 # ╔═╡ 9a7d917d-be50-4946-bb0a-b77062819064
@@ -122,7 +122,7 @@ end
 
 # ╔═╡ 361256a9-67ff-4800-baea-06eb6f2347ff
 md"""
-Test m-step update
+Test M-Step update
 """
 
 # ╔═╡ c9f2a88e-da48-49ff-b987-02fa2231548e
@@ -162,7 +162,7 @@ end
 
 # ╔═╡ 9be0a627-7d71-4b83-9758-20149b1c8eee
 md"""
-Given $A$ is fixed to zero matrix, backward, and smoother are not necessary, since they eventually recover the forward results.
+Given $A$ is fixed to zero matrix, backward, and smoother are no longer necessary, since they eventually just recover the forward results.
 """
 
 # ╔═╡ 3f01c2c3-8d79-4e22-a367-49f5c31785af
@@ -210,7 +210,7 @@ end
 
 # ╔═╡ 03e29b61-f940-4759-b09b-be4be824c4e1
 md"""
-Test e-step
+Test E-Step
 """
 
 # ╔═╡ 41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
@@ -273,7 +273,7 @@ begin
 	R = Diagonal([0.3, 0.3, 0.3])
 	T = 1000
 	y_pca, x_true = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, T)
-end
+end;
 
 # ╔═╡ 1b0973cd-e4ff-4f13-af91-bbc981802a10
 let
@@ -324,7 +324,7 @@ end
 let
 	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
 	S_C = sum(x_true[:, t] * y_pca[:, t]' for t in 1:T)
-	hss = HSS(W_C, S_C)
+	hss = HSS(W_C, S_C) #HSS computed using ground-truth xs
 end
 
 # ╔═╡ b21b7e93-16d6-493b-9fda-3831c003a3cc
@@ -466,7 +466,7 @@ end
 
 # ╔═╡ 74604b66-071b-42b4-b039-d3e484c89603
 md"""
-VBEM procedure is able to converge to results competitive to PPCA packages (ML, EM, Bayes) shown below, and ELBO computation can be used for model selection with the most appropriate $k$ being the highest ELBO, predicative likelihood approximation, **mention in thesis**
+VBEM procedure is able to converge to results competitive to PPCA packages (ML, EM, Bayes) shown below, and ELBO computation can be used for model selection with the most appropriate $k$ being the highest ELBO, and predicative likelihood approximation (**mention in thesis**)
 """
 
 # ╔═╡ 491489f9-373f-44ab-a6b7-c3714017536c
@@ -1665,11 +1665,11 @@ version = "1.4.1+0"
 # ╟─1b0973cd-e4ff-4f13-af91-bbc981802a10
 # ╠═c9f2a88e-da48-49ff-b987-02fa2231548e
 # ╟─9be0a627-7d71-4b83-9758-20149b1c8eee
-# ╠═3f01c2c3-8d79-4e22-a367-49f5c31785af
+# ╟─3f01c2c3-8d79-4e22-a367-49f5c31785af
 # ╠═0e7e482f-deb7-4947-95bf-0854b0129086
 # ╟─03e29b61-f940-4759-b09b-be4be824c4e1
 # ╟─51aef7a8-4693-40df-8643-d77c67eafa37
-# ╠═947f80a7-e19c-4d54-80cc-f5269dde0c9d
+# ╟─947f80a7-e19c-4d54-80cc-f5269dde0c9d
 # ╠═41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
 # ╠═b21b7e93-16d6-493b-9fda-3831c003a3cc
 # ╠═c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
@@ -1680,7 +1680,7 @@ version = "1.4.1+0"
 # ╟─50fde0ff-9da7-49fb-b060-508cca6e9709
 # ╠═43095945-3a72-4153-bd9b-c36a910a3826
 # ╟─fe415c83-2ca5-432b-80b9-3ec89718a7e7
-# ╠═9072572f-dc8d-4ec0-aa76-d25f2acab027
+# ╟─9072572f-dc8d-4ec0-aa76-d25f2acab027
 # ╠═8c11535b-feab-4833-8aff-3814bafed090
 # ╟─74604b66-071b-42b4-b039-d3e484c89603
 # ╠═491489f9-373f-44ab-a6b7-c3714017536c

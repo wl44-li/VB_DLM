@@ -20,6 +20,9 @@ begin
 	using StatsBase
 end
 
+# ╔═╡ d86b6c15-7408-460b-9388-4616e014df53
+using Optim
+
 # ╔═╡ 6c0ecec8-afdc-4072-9dac-4658af3706d5
 TableOfContents()
 
@@ -867,7 +870,7 @@ md"""
 $\ln q(Λ_Q, Λ_R) = E_q[\ln p(Λ_Q, Λ_R, x_{0:T}, y_{1:T})] + const$
 
 
-### Update emission precision $Λ_R$
+### Update Emission precision $Λ_R$
 $\ln q(Λ_R) =  \langle \ln p(x_{0:T}, y_{1:T}, Λ_Q, Λ_R) \rangle_{\hat q(\mathbf{x}, Λ_Q)} + c$
 
 We need only the terms that involve $Λ_R$ from the log full joint:
@@ -894,7 +897,7 @@ $$\nu_{Rn} = \nu_R + T$$
 
 # ╔═╡ c9d18a43-5984-45f5-b558-368368212355
 md"""
-### Update emission precision $Λ_Q$
+### Update System precision $Λ_Q$
 $\ln q(Λ_Q) =  \langle \ln p(x_{0:T}, y_{1:T}, Λ_Q, Λ_R) \rangle_{\hat q(\mathbf{x}, Λ_R)} + c$
 
 We need only the terms that involve $Λ_Q$ from the log full joint:
@@ -1773,6 +1776,94 @@ begin
 	println("Mean Rhat: $mean_rhat")
 end
 
+# ╔═╡ d216b8ed-cb19-4032-aeaf-15fa1268bcd4
+md"""
+Optimising hyperparameters of Wishart?
+"""
+
+# ╔═╡ 778521de-dd04-4203-a19e-98f434f8090a
+function objective_Wishart(params)
+	D = 2
+	ν_0 = D + 1.0
+	S_0 = Matrix{Float64}(I, D, D)
+	ν_q, S_q = params[1], params[2] 
+    return kl_wi(ν_q, S_q, ν_0, S_0)
+end
+
+# ╔═╡ ee0e820a-8f23-426d-9d80-a6cdf664609e
+md"""
+Using Optim package
+"""
+
+# ╔═╡ aa6ba2f9-e878-4d44-8b8c-5caeb9b2d698
+let
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.2, 0.2])
+	T = 1000
+	Random.seed!(123)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	
+	W_Q = Matrix{Float64}(I, K, K)
+	W_R = Matrix{Float64}(I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	hss = HSS(W_C, W_A, S_C, S_A)
+	E_q_R, E_q_Q, Q_ = vb_m_step(y, hss, prior, A, C)
+	
+	# Start with some initial guess for v and S:
+	initial_guess = [Q_.ν_R_q; Q_.W_R_q]
+	
+	# Perform the optimization:
+	result = optimize(objective_Wishart, initial_guess, Optim.Options(g_tol=1e-5))
+	optimal_params = Optim.minimizer(result)
+	paramOpt = optimal_params[:]
+end
+
+# ╔═╡ 1b459283-4159-49e3-9ff7-6eced3d35873
+md"""
+Use exact derivative
+
+From the simiplified lower bound, that involves just the KL divergence terms for the Wishart priors, on taking derivatives with respect to the degrees of freedom and scale matrix, we can obtain the following fix-point equations:
+
+$$KL(ν_0,V_0∣∣ν_1,V_1)=−0.5 ν_1 \log \det(V_1^{−1}V_0)+ 0.5 ν_0 (tr(V_1^{−1}V_0)−p)+ \log \Gamma_p(0.5 ν_1) − \log \Gamma_p(0.5 ν_0)+ 0.5(ν_0 - ν_1) \psi_p(0.5 ν_0)$$
+
+
+1.) Taking derivatives with respect to $\nu_0$
+
+--- The derivative of $0.5 ν_0 (tr(V_1^{−1}V_0)−p)$ with respect to $ν_0$ is $0.5(tr(V_1^{−1}V_0)−p)$
+
+--- The derivative of $- \log \Gamma_p(0.5 ν_0)$ with respect to $ν_0$ is $−0.5ψ_ p(0.5ν_0)$, where $ψ_p$ is the di-gamma function for the multivariate case.
+
+--- The derivative of $0.5(ν_0 - ν_1) \psi_p(0.5 ν_0)$ with respect to $ν_0$ is $0.5ψ_p(0.5ν_0)+0.25(ν_0−ν_1)ψ_p^{(1)}(0.5ν_0)$, where $ψ_p^{(1)}$ is the tri-gamma function for the multivariate case.
+
+Overall: 
+
+$$\frac{∂ KL}{∂ \nu_0}=0.5(tr(V_1^{−1}V_0)−p)+0.25(ν_0−ν_1)ψ_p^{(1)}(0.5ν_0)$$
+
+$$2(tr(V_1^{−1}V_0)−p) = (ν_1−ν_0)ψ_p^{(1)}(0.5ν_0)$$
+
+2.) Taking derivatives with respect to $V_0$
+
+--- The derivative of $−0.5 ν_1 \log \det(V_1^{−1}V_0)$ with respect to $V_0$ is $-0.5ν_1(V_0^\top)^{-1}$
+
+--- The derivative of $0.5 ν_0 (tr(V_1^{−1}V_0)−p)$ with respect to $V_0$ is $0.5ν_0(V_1^\top)^{-1}$, using the property that the gradient of the trace of a product of matrices with respect to one of those matrices is the other matrix transposed.
+
+Overall:
+$$\frac{∂ KL}{∂ V_0}=0.5 ν_0(V_1^\top)^{-1} - 0.5ν_1(V_0^\top)^{-1}$$
+
+
+$$ν_0(V_1^\top)^{-1} = ν_1(V_0^\top)^{-1}$$
+"""
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
@@ -1780,6 +1871,7 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MCMCChains = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
@@ -1794,6 +1886,7 @@ StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 DataFrames = "~1.5.0"
 Distributions = "~0.25.96"
 MCMCChains = "~6.0.3"
+Optim = "~1.7.6"
 PDMats = "~0.11.17"
 Plots = "~1.38.16"
 PlutoUI = "~0.7.51"
@@ -1809,7 +1902,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.2"
 manifest_format = "2.0"
-project_hash = "b4496579d6776b919200d593849930309c483152"
+project_hash = "1f04c0bd705bc42176c5e81bb92ccd47ffcc0237"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1868,6 +1961,28 @@ deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Op
 git-tree-sha1 = "5ba6c757e8feccf03a1554dfaf3e26b3cfc7fd5e"
 uuid = "68821587-b530-5797-8361-c406ea357684"
 version = "3.5.1+1"
+
+[[deps.ArrayInterface]]
+deps = ["Adapt", "LinearAlgebra", "Requires", "SparseArrays", "SuiteSparse"]
+git-tree-sha1 = "f83ec24f76d4c8f525099b2ac475fc098138ec31"
+uuid = "4fba245c-0d91-5ea0-9b3e-6abc04ee57a9"
+version = "7.4.11"
+
+    [deps.ArrayInterface.extensions]
+    ArrayInterfaceBandedMatricesExt = "BandedMatrices"
+    ArrayInterfaceBlockBandedMatricesExt = "BlockBandedMatrices"
+    ArrayInterfaceCUDAExt = "CUDA"
+    ArrayInterfaceGPUArraysCoreExt = "GPUArraysCore"
+    ArrayInterfaceStaticArraysCoreExt = "StaticArraysCore"
+    ArrayInterfaceTrackerExt = "Tracker"
+
+    [deps.ArrayInterface.weakdeps]
+    BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
+    BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
+    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+    StaticArraysCore = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
+    Tracker = "9f7883ad-71c0-57eb-9f7f-b5c9e6d3789c"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -1977,6 +2092,12 @@ git-tree-sha1 = "fc08e5930ee9a4e03f84bfb5211cb54e7769758a"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.12.10"
 
+[[deps.CommonSubexpressions]]
+deps = ["MacroTools", "Test"]
+git-tree-sha1 = "7b8a93dba8af7e3b42fecabf646260105ac373f7"
+uuid = "bbf7d656-a473-5ed7-a52c-81e309532950"
+version = "0.3.0"
+
 [[deps.Compat]]
 deps = ["UUIDs"]
 git-tree-sha1 = "7a60c856b9fa189eb34f5f8a6f6b5529b7942957"
@@ -2073,6 +2194,18 @@ git-tree-sha1 = "9e2f36d3c96a820c678f2f1f1782582fcf685bae"
 uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 version = "1.9.1"
 
+[[deps.DiffResults]]
+deps = ["StaticArraysCore"]
+git-tree-sha1 = "782dd5f4561f5d267313f23853baaaa4c52ea621"
+uuid = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
+version = "1.1.0"
+
+[[deps.DiffRules]]
+deps = ["IrrationalConstants", "LogExpFunctions", "NaNMath", "Random", "SpecialFunctions"]
+git-tree-sha1 = "23163d55f885173722d1e4cf0f6110cdbaf7e272"
+uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
+version = "1.15.1"
+
 [[deps.Distances]]
 deps = ["LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI"]
 git-tree-sha1 = "49eba9ad9f7ead780bfb7ee319f962c811c6d3b2"
@@ -2159,6 +2292,22 @@ git-tree-sha1 = "e17cc4dc2d0b0b568e80d937de8ed8341822de67"
 uuid = "1a297f60-69ca-5386-bcde-b61e274b549b"
 version = "1.2.0"
 
+[[deps.FiniteDiff]]
+deps = ["ArrayInterface", "LinearAlgebra", "Requires", "Setfield", "SparseArrays"]
+git-tree-sha1 = "c6e4a1fbe73b31a3dea94b1da449503b8830c306"
+uuid = "6a86dc24-6348-571c-b903-95158fe2bd41"
+version = "2.21.1"
+
+    [deps.FiniteDiff.extensions]
+    FiniteDiffBandedMatricesExt = "BandedMatrices"
+    FiniteDiffBlockBandedMatricesExt = "BlockBandedMatrices"
+    FiniteDiffStaticArraysExt = "StaticArrays"
+
+    [deps.FiniteDiff.weakdeps]
+    BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
+    BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
+    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
 [[deps.FixedPointNumbers]]
 deps = ["Statistics"]
 git-tree-sha1 = "335bfdceacc84c5cdf16aadc768aa5ddfc5383cc"
@@ -2176,6 +2325,16 @@ deps = ["Printf"]
 git-tree-sha1 = "8339d61043228fdd3eb658d86c926cb282ae72a8"
 uuid = "59287772-0a20-5a39-b81b-1366585eb4c0"
 version = "0.4.2"
+
+[[deps.ForwardDiff]]
+deps = ["CommonSubexpressions", "DiffResults", "DiffRules", "LinearAlgebra", "LogExpFunctions", "NaNMath", "Preferences", "Printf", "Random", "SpecialFunctions"]
+git-tree-sha1 = "00e252f4d706b3d55a8863432e742bf5717b498d"
+uuid = "f6369f11-7733-5829-9624-2563aa707210"
+version = "0.10.35"
+weakdeps = ["StaticArrays"]
+
+    [deps.ForwardDiff.extensions]
+    ForwardDiffStaticArraysExt = "StaticArrays"
 
 [[deps.FreeType2_jll]]
 deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
@@ -2476,6 +2635,12 @@ git-tree-sha1 = "7f3efec06033682db852f8b3bc3c1d2b0a0ab066"
 uuid = "38a345b3-de98-5d2b-a5d3-14cd9215e700"
 version = "2.36.0+0"
 
+[[deps.LineSearches]]
+deps = ["LinearAlgebra", "NLSolversBase", "NaNMath", "Parameters", "Printf"]
+git-tree-sha1 = "7bbea35cec17305fc70a0e5b4641477dc0789d9d"
+uuid = "d3d80556-e9d4-5f37-9878-2ab0fcc64255"
+version = "7.2.0"
+
 [[deps.LinearAlgebra]]
 deps = ["Libdl", "OpenBLAS_jll", "libblastrampoline_jll"]
 uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -2591,6 +2756,12 @@ git-tree-sha1 = "68bf5103e002c44adfd71fea6bd770b3f0586843"
 uuid = "6f286f6a-111f-5878-ab1e-185364afe411"
 version = "0.10.2"
 
+[[deps.NLSolversBase]]
+deps = ["DiffResults", "Distributed", "FiniteDiff", "ForwardDiff"]
+git-tree-sha1 = "a0b464d183da839699f4c79e7606d9d186ec172c"
+uuid = "d41bc354-129a-5804-8e4c-c37616107c6c"
+version = "7.8.3"
+
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
 git-tree-sha1 = "0877504529a3e5c3343c6f8b4c0381e57e4387e4"
@@ -2657,6 +2828,12 @@ git-tree-sha1 = "13652491f6856acfd2db29360e1bbcd4565d04f1"
 uuid = "efe28fd5-8261-553b-a9e1-b2916fc3738e"
 version = "0.5.5+0"
 
+[[deps.Optim]]
+deps = ["Compat", "FillArrays", "ForwardDiff", "LineSearches", "LinearAlgebra", "NLSolversBase", "NaNMath", "Parameters", "PositiveFactorizations", "Printf", "SparseArrays", "StatsBase"]
+git-tree-sha1 = "e3a6546c1577bfd701771b477b794a52949e7594"
+uuid = "429524aa-4258-5aef-a3af-852621145aeb"
+version = "1.7.6"
+
 [[deps.Opus_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "51a08fb14ec28da2ec7a927c4337e4332c2a4720"
@@ -2678,6 +2855,12 @@ deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse"]
 git-tree-sha1 = "67eae2738d63117a196f497d7db789821bce61d1"
 uuid = "90014a1f-27ba-587c-ab20-58faa44d9150"
 version = "0.11.17"
+
+[[deps.Parameters]]
+deps = ["OrderedCollections", "UnPack"]
+git-tree-sha1 = "34c0e9ad262e5f7fc75b10a9952ca7692cfc5fbe"
+uuid = "d96e819e-fc66-5662-9728-84c9c7592b0a"
+version = "0.12.3"
 
 [[deps.Parsers]]
 deps = ["Dates", "PrecompileTools", "UUIDs"]
@@ -2744,6 +2927,12 @@ deps = ["DataAPI", "Future"]
 git-tree-sha1 = "a6062fe4063cdafe78f4a0a81cfffb89721b30e7"
 uuid = "2dfb63ee-cc39-5dd5-95bd-886bf059d720"
 version = "1.4.2"
+
+[[deps.PositiveFactorizations]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "17275485f373e6673f7e7f97051f703ed5b15b20"
+uuid = "85a6dd25-e78a-55b7-8502-1745935b8125"
+version = "0.2.4"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
@@ -3073,6 +3262,11 @@ version = "1.4.2"
 deps = ["Random", "SHA"]
 uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
+[[deps.UnPack]]
+git-tree-sha1 = "387c1f73762231e86e0c9c5443ce3b4a0a9a0c2b"
+uuid = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
+version = "1.0.2"
+
 [[deps.Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
@@ -3389,7 +3583,7 @@ version = "1.4.1+0"
 # ╟─11700202-40fe-408b-a8b8-5c073daec12d
 # ╟─8c9357c8-8339-4889-8a91-b62e542f0407
 # ╠═a9621810-e0cb-4925-8b6a-726f78d13510
-# ╟─36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
+# ╠═36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
 # ╟─a95ed94c-5fe2-4c31-a7a6-e45e841af528
 # ╟─fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
 # ╟─ad1eab82-0fa5-462e-ad17-8cb3b787aaf0
@@ -3441,11 +3635,11 @@ version = "1.4.1+0"
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
 # ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
 # ╟─bb26ac74-da64-47be-a49a-4519101cffce
-# ╟─dd8f1c15-8915-4503-85f0-d3378f8e4751
-# ╟─85edba6b-d971-43bb-a74b-83a08cb055d8
+# ╠═dd8f1c15-8915-4503-85f0-d3378f8e4751
+# ╠═85edba6b-d971-43bb-a74b-83a08cb055d8
 # ╟─801905b2-73f5-4f49-a83c-b05ca77457c6
-# ╠═8bb29488-69a5-4547-892c-7d77699a3a92
-# ╟─37e01d43-b804-4736-8d91-fb9c7e0ab493
+# ╟─8bb29488-69a5-4547-892c-7d77699a3a92
+# ╠═37e01d43-b804-4736-8d91-fb9c7e0ab493
 # ╟─e1edfb29-8f82-418b-948b-5542fd6d5b24
 # ╠═907e0fea-bad1-49f5-aa98-e2524e93e191
 # ╠═ffd75de1-b9fd-4883-810d-1d4f79775f0d
@@ -3458,5 +3652,11 @@ version = "1.4.1+0"
 # ╟─a4a1a8bb-2c47-44d2-96c3-daf25d032b19
 # ╠═ad6d0997-43c1-42f3-b997-765c594794b4
 # ╠═ab8ec1ee-b28c-4010-9087-aaeb6a022fa9
+# ╟─d216b8ed-cb19-4032-aeaf-15fa1268bcd4
+# ╠═d86b6c15-7408-460b-9388-4616e014df53
+# ╠═778521de-dd04-4203-a19e-98f434f8090a
+# ╟─ee0e820a-8f23-426d-9d80-a6cdf664609e
+# ╠═aa6ba2f9-e878-4d44-8b8c-5caeb9b2d698
+# ╟─1b459283-4159-49e3-9ff7-6eced3d35873
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

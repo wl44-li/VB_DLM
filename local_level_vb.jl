@@ -840,8 +840,8 @@ md"""
 ### Choice of prior
 let $τ_r = 1/r, τ_q = 1/q$, a natural prior for the precision is the gamma distribution: 
 
-$$τ_r \sim \mathcal Gamma(\alpha, \beta)$$
-$$τ_q \sim \mathcal Gamma(\alpha, \beta)$$
+$$τ_r \sim \mathcal Gamma(\alpha_r, \beta_r)$$
+$$τ_q \sim \mathcal Gamma(\alpha_q, \beta_q)$$
 """
 
 # ╔═╡ bb4de2cf-e4b6-4788-9f8b-ff5fd2ca2570
@@ -854,11 +854,11 @@ $\ln q(τ_r, τ_q) =  \langle \ln p(τ_r, τ_q, x_{0:T}, y_{1:T}) \rangle_{\hat 
 
 Given that we have assumed $τ_r$ and $τ_q$ to follow Gamma distributions in the variational family, their variational posteriors $q(τ_r)$ and $q(τ_q)$ will also be Gamma distributions. The parameters of these Gamma distributions are updated in the M-step:
 
-$\alpha_r' = \alpha + T/2$
-$\beta_r' = \beta + 0.5 \sum_{t=1}^{T} E_q[(y_t - x_t)^2]$
+$\alpha_r' = \alpha_r + T/2$
+$\beta_r' = \beta_r + 0.5 \sum_{t=1}^{T} E_q[(y_t - x_t)^2]$
 
-$\alpha_q' = \alpha + (T-1)/2$
-$\beta_q' = \beta + 0.5 \sum_{t=2}^{T} E_q[(x_t - x_{t-1})^2]$
+$\alpha_q' = \alpha_q + (T-1)/2$
+$\beta_q' = \beta_q + 0.5 \sum_{t=2}^{T} E_q[(x_t - x_{t-1})^2]$
 
 Here, $E_q[\cdot]$ denotes the expectation with respect to the variational distribution $q(x_{0:T})$, and the expectations are computed using the current parameters of the variational distribution from the E-step --- latent state sufficient statistics (HSS)
 
@@ -3466,9 +3466,6 @@ version = "1.4.1+0"
 # ╟─492c0922-e5f0-435b-9372-27e79570d679
 # ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
 # ╟─4cc367d1-37a1-4712-a63e-8826b5646a1b
-# ╟─4c3c2931-e4a8-43d1-b3fa-8bb3b82fb975
-# ╟─2ad03b07-68ad-4da8-a5d3-7692502c0e00
 # ╟─5f9f903b-a72c-4b60-9934-4bd2ced30a2c
-# ╠═54c537af-06c3-4e12-87b8-33d3f1efa77b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

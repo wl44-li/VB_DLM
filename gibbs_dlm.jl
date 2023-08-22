@@ -1782,10 +1782,7 @@ Optimising hyperparameters of Wishart?
 """
 
 # ╔═╡ 778521de-dd04-4203-a19e-98f434f8090a
-function objective_Wishart(params)
-	D = 2
-	ν_0 = D + 1.0
-	S_0 = Matrix{Float64}(I, D, D)
+function objective_Wishart(params, ν_0, S_0)
 	ν_q, S_q = params[1], params[2] 
     return kl_wi(ν_q, S_q, ν_0, S_0)
 end
@@ -1823,14 +1820,22 @@ let
 	initial_guess = [Q_.ν_R_q; Q_.W_R_q]
 	
 	# Perform the optimization:
-	result = optimize(objective_Wishart, initial_guess, Optim.Options(g_tol=1e-5))
+	result = optimize(params -> objective_Wishart(params, D + 1.0, W_R), initial_guess)
 	optimal_params = Optim.minimizer(result)
-	paramOpt = optimal_params[:]
+	#paramOpt = optimal_params[:]
+end
+
+# ╔═╡ 2ce2e76c-6fef-4610-9a4e-e1547eb7532e
+function objective_G!(G, params, ν_1, S_1)
+	ν_q, S_q = params[1], params[2] 
+	p = ν_1 - 1
+	G[1] = 0.5*(tr(inv(S_1)*S_q) − p)+ 0.25*(ν_q − ν_1)*sum(trigamma((ν_q + 1 - i)/2.0) for i in 1:p)
+	G[2] = 0.5 * ν_q* inv(S_1') - 0.5*ν_1*inv(S_q')
 end
 
 # ╔═╡ 1b459283-4159-49e3-9ff7-6eced3d35873
 md"""
-Use exact derivative
+Using exact derivatives?
 
 From the simiplified lower bound, that involves just the KL divergence terms for the Wishart priors, on taking derivatives with respect to the degrees of freedom and scale matrix, we can obtain the following fix-point equations:
 
@@ -1863,6 +1868,21 @@ $$\frac{∂ KL}{∂ V_0}=0.5 ν_0(V_1^\top)^{-1} - 0.5ν_1(V_0^\top)^{-1}$$
 
 $$ν_0(V_1^\top)^{-1} = ν_1(V_0^\top)^{-1}$$
 """
+
+# ╔═╡ e812e18a-1644-4993-9b5d-0d66db7fcc1f
+md"""
+## Restrict R, Q as diagonal matrices
+"""
+
+# ╔═╡ a58173b0-df06-4f4d-871f-1fd29e092fe9
+md"""
+**advantage**: simpler to derive hyperparameter update, still working with Gamma, extending to a vector of Gamma distributed diagonal entries
+
+**disadavantage**: not as expressive as generic matrix noise by Wishart
+"""
+
+# ╔═╡ 3b6c82a0-4fc5-4bca-95fa-7e28f87f2831
+
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -3635,7 +3655,7 @@ version = "1.4.1+0"
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
 # ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
 # ╟─bb26ac74-da64-47be-a49a-4519101cffce
-# ╠═dd8f1c15-8915-4503-85f0-d3378f8e4751
+# ╟─dd8f1c15-8915-4503-85f0-d3378f8e4751
 # ╠═85edba6b-d971-43bb-a74b-83a08cb055d8
 # ╟─801905b2-73f5-4f49-a83c-b05ca77457c6
 # ╟─8bb29488-69a5-4547-892c-7d77699a3a92
@@ -3657,6 +3677,10 @@ version = "1.4.1+0"
 # ╠═778521de-dd04-4203-a19e-98f434f8090a
 # ╟─ee0e820a-8f23-426d-9d80-a6cdf664609e
 # ╠═aa6ba2f9-e878-4d44-8b8c-5caeb9b2d698
+# ╠═2ce2e76c-6fef-4610-9a4e-e1547eb7532e
 # ╟─1b459283-4159-49e3-9ff7-6eced3d35873
+# ╟─e812e18a-1644-4993-9b5d-0d66db7fcc1f
+# ╟─a58173b0-df06-4f4d-871f-1fd29e092fe9
+# ╠═3b6c82a0-4fc5-4bca-95fa-7e28f87f2831
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

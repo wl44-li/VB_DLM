@@ -959,7 +959,7 @@ end
 
 # ╔═╡ 168d4dbd-f0dd-433b-bb4a-e3bb918fb184
 md"""
-Test vb m-step, given x_true
+Test vb m-step, given ground-truth hidden states
 """
 
 # ╔═╡ 2308aa4c-bb99-4546-a108-9fa88fca130b
@@ -1077,7 +1077,7 @@ The recursion is initialized with the filtered distribution at time $T$, and it 
 """
 
 # ╔═╡ c29b63f3-0d32-46ad-99a4-3cae4a3f6181
-function backward_ll(μ_f, σ_f2, E_τ_q)
+function backward_ll(μ_f, σ_f2, E_τ_q, priors::Priors_ll)
     T = length(μ_f)
     μ_s = similar(μ_f)
     σ_s2 = similar(σ_f2)
@@ -1098,8 +1098,12 @@ function backward_ll(μ_f, σ_f2, E_τ_q)
 	
     #J_0 = σ_f2[1] / (σ_f2[1] + 1/E_τ_q)
 	J_0 = 1.0 / (1.0 + 1/E_τ_q)
+
+	μ_s0 = priors.μ_0 + J_0 * (μ_s[1] - priors.μ_0)
+	σ_s0 = priors.σ_0 + J_0^2 * (σ_s2[1] - priors.σ_0 - 1/E_τ_q)
+	
 	σ_s2_cross[1] = J_0 * σ_s2[1]
-    return μ_s, σ_s2, σ_s2_cross
+    return μ_s, σ_s2, μ_s0, σ_s0, σ_s2_cross
 end
 
 # ╔═╡ 135c6b95-c440-45ed-bade-0327bf1e142a
@@ -1119,7 +1123,7 @@ let
 	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 	μ_f, σ_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
 	
-	b_ll, σ_ll , _ = backward_ll(μ_f, σ_f2, E_τ_q)
+	b_ll, σ_ll , _ = backward_ll(μ_f, σ_f2, E_τ_q, hpp)
 
 	ωs, b_ll, Υs, σ_ll
 end
@@ -1148,7 +1152,7 @@ let
 	E_τ_q = 1.0
 	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 	μ_f, σ_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
-	_ , _ , css = backward_ll(μ_f, σ_f2, E_τ_q)
+	_ , _ , css = backward_ll(μ_f, σ_f2, E_τ_q, hpp)
 
 	Υ_ₜ₋ₜ₊₁, css
 end
@@ -1159,7 +1163,7 @@ function vb_e_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
     μs_f, σs_f2, log_Z = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, priors)
 
     # Backward pass (smoother)
-    μs_s, σs_s2, σs_s2_cross = backward_ll(μs_f, σs_f2, E_τ_q)
+    μs_s, σs_s2, μs_0, σs_s0, σs_s2_cross = backward_ll(μs_f, σs_f2, E_τ_q, priors)
 
     # Compute the sufficient statistics
     w_c = sum(σs_s2 .+ μs_s.^2)
@@ -1168,7 +1172,7 @@ function vb_e_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
     s_a = sum(σs_s2_cross[1:end-1]) + sum(μs_s[1:end-1] .* μs_s[2:end])
 
     # Return the sufficient statistics in a HSS struct
-    return HSS_ll(w_c, w_a, s_c, s_a), log_Z
+    return HSS_ll(w_c, w_a, s_c, s_a), μs_0, σs_s0, log_Z
 end
 
 # ╔═╡ 59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
@@ -1197,19 +1201,78 @@ function vb_ll(y::Vector{Float64}, hpp::Priors_ll, max_iter=100)
 	for i in 1:max_iter
 		E_τ_r, E_τ_q, _ = vb_m_ll(y, hss, hpp)
 				
-		hss, _ = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
+		hss, _, _, _ = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
 	end
 
 	return 1/E_τ_r, 1/E_τ_q
 end
 
+# ╔═╡ 5797581c-dd2b-49d8-ae6c-d2d8051de9ea
+md"""
+### Hyperparam update
+"""
+
+# ╔═╡ 7ed909ad-55a1-42bc-931b-d96b8df58f99
+function update_ab(hpp::Priors_ll, qθ)
+
+	exp_r = qθ.α_r_p / qθ.β_r_p
+	exp_log_r = digamma(qθ.α_r_p) - log(qθ.β_r_p)
+	exp_q = qθ.α_q_p / qθ.β_q_p
+	exp_log_q = digamma(qθ.α_q_p) - log(qθ.β_q_p)
+	
+    d_r, d_q = exp_r, exp_q
+    c_r, c_q = exp_log_r, exp_log_q
+    
+    # Update `a_r` using fixed point iteration
+	a_r = hpp.α_r
+	a_q = hpp.α_q
+	
+    for _ in 1:100
+        ψ_a = digamma(a_r)
+        ψ_a_p = trigamma(a_r)
+        a_new = a_r * exp(-(ψ_a - log(a_r) + log(d_r) - c_r) / (a_r * ψ_a_p - 1))
+		a_r = a_new
+
+		ψ_a_q = digamma(a_q)
+        ψ_a_q_p = trigamma(a_q)
+        a_new_q= a_q * exp(-(ψ_a_q - log(a_q) + log(d_q) - c_q) / (a_q * ψ_a_q_p - 1))
+		a_q = a_new_q
+		
+		# check convergence
+        if abs(a_new - a_r) < 1e-5 && abs(a_new_q - a_q) < 1e-5
+            break
+        end
+    end
+    
+    # Update `b` using the converged value of `a`
+    b_r = a_r/d_r
+	b_q = a_q/d_q
+	
+	return a_r, b_r, a_q, b_q
+end
+
+# ╔═╡ 80566330-0650-4cb7-814d-dc09fba5aaef
+let
+	T = length(y)
+	w_a = sum(x_true[t-1] * x_true[t-1] for t in 2:T)
+	s_a = sum(x_true[t-1] * x_true[t] for t in 2:T)
+	w_c = sum(x_true[t] * x_true[t] for t in 1:T)
+	s_c = sum(x_true[t] * y[t] for t in 1:T)
+	hss = HSS_ll(w_c, w_a, s_c, s_a)
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+
+	_, _, qθ = vb_m_ll(y, hss, hpp)
+
+	update_ab(hpp, qθ)
+end
+
 # ╔═╡ ee11c498-5e2a-4a37-a73b-a1ff6647d013
 md"""
-### Convergence Check
+## Complete with convergence check and hyperparam learning
 """
 
 # ╔═╡ 316db2e3-6fd9-45a5-932d-d3465885b842
-function vb_ll_c(y::Vector{Float64}, hpp::Priors_ll, max_iter=500, tol=5e-4)
+function vb_ll_c(y::Vector{Float64}, hpp::Priors_ll, hp_learn=false, max_iter=500, tol=5e-4)
 	hss = HSS_ll(1.0, 1.0, 1.0, 1.0)
 	E_τ_r, E_τ_q  = missing, missing
 	elbo_prev = -Inf
@@ -1217,12 +1280,19 @@ function vb_ll_c(y::Vector{Float64}, hpp::Priors_ll, max_iter=500, tol=5e-4)
 	for i in 1:max_iter
 		E_τ_r, E_τ_q, qθ = vb_m_ll(y, hss, hpp)
 				
-		hss, log_z = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
+		hss, μs_0, σs_s0, log_z = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
 
 		kl_ga = kl_gamma(hpp.α_r, hpp.β_r, qθ.α_r_p, qθ.β_r_p) + kl_gamma(hpp.α_q, hpp.β_q, qθ.α_q_p, qθ.β_q_p)
 		
 		elbo = log_z - kl_ga
 		el_s[i] = elbo
+
+		if (hp_learn)
+			if (i%5 == 0) 
+				a_r, b_r, a_q, b_q = update_ab(hpp, qθ)
+				hpp = Priors_ll(a_r, b_r, a_q, b_q, μs_0, σs_s0)
+			end
+		end
 		
 		if abs(elbo - elbo_prev) < tol
 			println("Stopped at iteration: $i")
@@ -1247,9 +1317,19 @@ Monitor ELBO progress
 
 # ╔═╡ 11d5265e-3254-4012-a92c-a67823e1ae1c
 let
-	hpp_ll = Priors_ll(0.1, 0.1, 0.1, 0.1, 0.0, 1.0)
+	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 	@time r, q, elbos = vb_ll_c(y, hpp_ll)
 	p = plot(elbos, label = "elbo", title = "ElBO progression")
+	println("r :", r)
+	println("q :", q)
+	p
+end
+
+# ╔═╡ 46dc850b-2197-491b-b729-3867ab67f0af
+let
+	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	@time r, q, elbos = vb_ll_c(y, hpp_ll, true)
+	p = plot(elbos, label = "elbo", title = "ElBO with Hyperparam learning")
 	println("r :", r)
 	println("q :", q)
 	p
@@ -1302,10 +1382,26 @@ VB inference of unknown $r, q$ in local level model
 # ╔═╡ 3e64e18a-6446-4fcc-a282-d3d6079e975a
 let
 	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
-	@time r, q = vb_ll(y, hpp_ll, 59)
+	@time r, q = vb_ll(y, hpp_ll, 69)
 
 	μs_f, σs_f2 = forward_ll(y, 1.0, 1.0, 1/r, 1/q, hpp_ll)
-    μs_s, σs_s2, _ = backward_ll(μs_f, σs_f2, 1/q)
+    μs_s, σs_s2, _ = backward_ll(μs_f, σs_f2, 1/q, hpp_ll)
+	
+	println("\nlatent x error: " , error_metrics(x_true, μs_s))
+end
+
+# ╔═╡ b3f891ed-0ccb-4841-9b74-6e8501d8965f
+md"""
+With hyper-parameter learning
+"""
+
+# ╔═╡ 5ec1eb83-ec4c-473f-92a6-f99113462cb4
+let
+	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	@time r, q = vb_ll_c(y, hpp_ll, true, 44)
+
+	μs_f, σs_f2 = forward_ll(y, 1.0, 1.0, 1/r, 1/q, hpp_ll)
+    μs_s, σs_s2, _ = backward_ll(μs_f, σs_f2, 1/q, hpp_ll)
 	
 	println("\nlatent x error: " , error_metrics(x_true, μs_s))
 end
@@ -1350,6 +1446,17 @@ let
 	end
 	p
 end
+
+# ╔═╡ c8ccefff-ba79-4086-b076-51f999cdebb1
+md"""
+## TO-DOs:
+
+Consider additional experiments:
+- longer time series (large y)
+- frequency of hyper-param update (per ? iterations)
+- latent x inference, r, q inference
+- y predicative inference (hide some y and infer them as additional unknowns)
+"""
 
 # ╔═╡ d2efd2a0-f494-4486-8ed3-ffd944b8473f
 md"""
@@ -3432,7 +3539,7 @@ version = "1.4.1+0"
 # ╟─2c4dec7a-1a9b-4988-b1a4-43f41e744beb
 # ╟─501172ab-203d-4faa-a3b0-3e4fa0c79d10
 # ╠═5cf98dbf-1b32-418c-8d62-c7865dc37f04
-# ╟─981608f2-57f6-44f1-95ed-82e8cca04718
+# ╠═981608f2-57f6-44f1-95ed-82e8cca04718
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
 # ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184
 # ╠═2308aa4c-bb99-4546-a108-9fa88fca130b
@@ -3444,26 +3551,33 @@ version = "1.4.1+0"
 # ╟─ece11b32-cc61-447b-bbcf-018829360b73
 # ╠═c29b63f3-0d32-46ad-99a4-3cae4a3f6181
 # ╟─135c6b95-c440-45ed-bade-0327bf1e142a
-# ╟─8e98a3b4-bc92-43ad-9da3-1323e06cfce6
+# ╠═8e98a3b4-bc92-43ad-9da3-1323e06cfce6
 # ╟─aa5caae7-638d-441f-a306-5442a5c8f75f
 # ╟─faed4326-5ee6-41da-9ba4-297e965c242e
 # ╟─17136b27-9463-4e5f-a943-d78297f28be7
 # ╠═bee6469f-13a1-4bd8-8f14-f01e8405a949
 # ╟─59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
 # ╠═7a6940ef-56b3-4cb4-bc6b-2c97625965cc
+# ╟─5797581c-dd2b-49d8-ae6c-d2d8051de9ea
+# ╠═7ed909ad-55a1-42bc-931b-d96b8df58f99
+# ╟─80566330-0650-4cb7-814d-dc09fba5aaef
 # ╟─ee11c498-5e2a-4a37-a73b-a1ff6647d013
 # ╠═316db2e3-6fd9-45a5-932d-d3465885b842
 # ╟─fb5d0c6a-f110-4688-b209-2935f92adee8
 # ╠═11d5265e-3254-4012-a92c-a67823e1ae1c
+# ╠═46dc850b-2197-491b-b729-3867ab67f0af
 # ╠═665c55c3-d4dc-4d13-9517-d1106ea6210f
 # ╟─e6930d53-6652-4fea-9a01-a4c87b8058dc
 # ╟─0cce2e6d-4f19-4c50-a4b5-2835c3ed4401
 # ╠═1c023156-0634-456d-a959-65880fd60c34
 # ╟─caa2e633-e044-417c-944c-6a0458475e4f
 # ╠═3e64e18a-6446-4fcc-a282-d3d6079e975a
+# ╟─b3f891ed-0ccb-4841-9b74-6e8501d8965f
+# ╠═5ec1eb83-ec4c-473f-92a6-f99113462cb4
 # ╟─23301a45-fc89-416f-bcc7-4f3ba41bf04f
 # ╠═d57adc7b-fcd5-468b-aa50-919d884a916a
 # ╟─492c0922-e5f0-435b-9372-27e79570d679
+# ╟─c8ccefff-ba79-4086-b076-51f999cdebb1
 # ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
 # ╟─4cc367d1-37a1-4712-a63e-8826b5646a1b
 # ╟─5f9f903b-a72c-4b60-9934-4bd2ced30a2c

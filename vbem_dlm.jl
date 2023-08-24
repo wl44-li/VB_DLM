@@ -585,7 +585,6 @@ $a_n = a \exp(- \frac{ψ(a) - \ln (a) + \ln d - c}{a ψ'(a) -1)})$
 # ╔═╡ 87667a9e-02aa-4104-b5a0-0f6b9e98ba96
 # cf. Newton's method, from Beal appendix C2
 function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64})
-    D = length(exp_ρ)
     d = mean(exp_ρ)
     c = mean(exp_log_ρ)
     

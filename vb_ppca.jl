@@ -27,7 +27,7 @@ $$x \sim \mathcal N(0, Q)$$
 
 $$y = Cx + v, \ v \sim \mathcal N(0, R)$$ 
 
-Where $A$ is zeros matrix, $Q$ is fixed as the identity matrix, and $R$ is now **isotropic** diagonal matrix.
+Where $A$ is fixed to the zero matrix, $Q$ is fixed as the identity matrix, and $R$ is an **isotropic** diagonal matrix.
 """
 
 # ╔═╡ 9a7d917d-be50-4946-bb0a-b77062819064

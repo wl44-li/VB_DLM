@@ -1022,6 +1022,24 @@ let
 	E_q_R, E_q_Q = vb_m_step(y, hss, prior, A, C), R, Q
 end
 
+# ╔═╡ 3a8fc929-6214-48b9-8a25-31d3088973d6
+let
+	D, T = size(y)
+	K = size(A, 1)
+
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	
+	W_Q = Matrix{Float64}(I, K, K)
+	W_R = Matrix{Float64}(I, D, D)
+	prior = Prior(D + 1.0, W_R, K + 1.0, W_Q, zeros(K), Matrix{Float64}(I, K, K))
+	hss = HSS(W_C, W_A, S_C, S_A)
+
+	E_q_R, E_q_Q = vb_m_step(y, hss, prior, A, C), R, Q
+end
+
 # ╔═╡ a6470873-26b3-4981-80eb-12a59bd3695d
 let
 	A = [0.8 -0.05; 0.1 0.75]
@@ -1433,7 +1451,7 @@ let
 	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
 	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
 	hss_t = HSS(W_C, W_A, S_C, S_A)
-	hss_t,hss_e
+	hss_t, hss_e
 end
 
 # ╔═╡ 0dfa4d60-577a-4631-bd24-c05aee2969d0
@@ -1871,7 +1889,7 @@ $$ν_0(V_1^\top)^{-1} = ν_1(V_0^\top)^{-1}$$
 
 # ╔═╡ e812e18a-1644-4993-9b5d-0d66db7fcc1f
 md"""
-## Restrict R, Q as diagonal matrices
+# Restrict R, Q as diagonal matrices
 """
 
 # ╔═╡ a58173b0-df06-4f4d-871f-1fd29e092fe9
@@ -1882,7 +1900,570 @@ md"""
 """
 
 # ╔═╡ 3b6c82a0-4fc5-4bca-95fa-7e28f87f2831
+md"""
 
+Suppose $R$ is defined through a precision vector $\mathbf{\rho}$, such that $diag(\mathbf{\rho})$ = $R^{-1}$, and 
+
+$$p(\mathbf{\rho}|a, b) = \prod_{s=1}^D \mathcal Gam(\rho_s|a, b)$$
+
+Suppose $Q$ is defined through a precision vector $\mathbf{\omicron}$, such that $diag(\mathbf{\omicron})$ = $Q^{-1}$, and 
+
+$$p(\mathbf{\omicron}|\alpha, \beta) = \prod_{s=1}^K \mathcal Gam(\omicron_s| \alpha, \beta)$$
+
+
+"""
+
+# ╔═╡ fef26680-9a52-46ae-b09f-807a58fc1db8
+md"""
+Full joint probability:
+
+$$p(\mathbf{\rho}, x_{0:T}, y_{1:T}) = p(\mathbf{\rho}|a, b) p(\mathbf{\omicron}|\alpha, \beta) p(x_0 | μ_0, Σ_0) \prod_{t=1}^T p(x_t|x_{t-1}, \mathbf{\omicron}) p(y_t|x_t, \mathbf{\rho})$$
+
+Log marginal likelihood:
+
+$\begin{align}
+\ln p(y_{1:T}) &= \ln \int \ d\mathbf{\rho} \ d\mathbf{\omicron} \ dx_{0:T} \ p(\mathbf{\rho}, \mathbf{\omicron}, x_{0:T}, y_{1:T}) \\
+&\geq \int d\mathbf{\rho} \ d\mathbf{\omicron} \ dx_{0:T} \ q(\mathbf{\omicron},  \mathbf{\rho}, x_{0:T}) \ln \frac{p(\mathbf{\rho}, \mathbf{\omicron}, x_{0:T}, y_{1:T})}{q(\mathbf{\omicron}, \mathbf{\rho}, x_{0:T})}\\
+
+&= \mathcal F
+\end{align}$
+"""
+
+# ╔═╡ 53e1d9d0-623a-4fae-a984-8d199078aa76
+md"""
+Choose $q(...)$ such that $\mathcal F$ is of tractable form:
+
+$q(\mathbf{\omicron},  \mathbf{\rho}, x_{0:T}) = q(\mathbf{\omicron}) q( \mathbf{\rho}) q(x_{0:T})$
+"""
+
+# ╔═╡ 6d857548-11ba-4ec5-9100-c2fac6f3dcf1
+md"""
+## VB-M 
+$$\ln q(\mathbf{\omicron}, \mathbf{\rho}) = E_q[\ln p(\mathbf{\omicron},  \mathbf{\rho}, x_{0:T}, y_{1:T})] + const$$
+
+### Update Emission precision vector $\mathbf{\rho}$
+$$\ln q(\mathbf{\rho}) =  E_q[\ln p(x_{0:T}, y_{1:T}, \mathbf{\omicron}, \mathbf{\rho})] + c$$
+
+We need only the terms that involve $\mathbf{\rho}$ from the log full joint:
+$\begin{align}
+\ln q(\mathbf{\rho}) &= \langle \ln p(\mathbf{\rho}) + \ln p(y_{1:T}|x_{1:T}, \mathbf{\rho}) \rangle_{\hat q(\mathbf{x}, \mathbf{\omicron})} + c \\
+
+&= \ln p(\mathbf{\rho}) + \langle \sum_{t=1}^T \ln p(y_t|x_t, \mathbf{\rho}) \rangle_{\hat q(\mathbf{x})} + c 
+\end{align}$
+
+Using conjugacy, we should expect $q(\rho)$ to also be Gamma distributed:
+
+$$q(\rho) = \prod_{s=1}^D \mathcal Gam(\rho_s|a + \frac{T}{2}, b + \frac{1}{2} G_{ss})$$
+
+In $q(\rho)$ update:
+
+$\begin{align}
+E_q[\sum_{t=1}^{T} (y_t - Cx_t)(y_t - Cx_t)^\top] &= W_Y - S_C C^\top - C S_C^\top + C W_C C^\top \\
+&= G
+\end{align}$
+"""
+
+# ╔═╡ f47d98c7-fcb3-4ac3-b5f3-c1043c8f0d03
+md"""
+### Update System precision vector $\mathbf{\omicron}$
+$$\ln q(\mathbf{\omicron}) =  E_q[\ln p(x_{0:T}, y_{1:T}, \mathbf{\omicron}, \mathbf{\rho})] + c$$
+
+We need only the terms that involve $\mathbf{\omicron}$ from the log full joint:
+$\begin{align}
+\ln q(\mathbf{\omicron}) &= \ln p(\mathbf{\omicron}) + \langle \sum_{t=1}^T \ln p(x_t|x_{t-1}, \mathbf{\omicron}) \rangle_{\hat q(\mathbf{x})} + c 
+\end{align}$
+
+Using conjugacy, we should expect $q(\omicron)$ to also be Gamma distributed:
+
+$$q(\omicron) = \prod_{s=1}^K \mathcal Gam(\omicron_s|\alpha + \frac{T}{2}, \beta + \frac{1}{2} H_{ss})$$
+
+In $q(\omicron)$ update:
+
+$\begin{align}
+E_q[\sum_{t=1}^{T} (x_t - Ax_{t-1})(x_t - Ax_{t-1})^\top] &= W_C - S_A A^\top - A S_A^\top + A W_A A^\top\\
+&=H
+\end{align}$
+"""
+
+# ╔═╡ 2afbf400-6ecc-4284-8744-f9a20f79428c
+# hyper-prior parameters
+struct HPP_D
+    α::Float64
+    β::Float64 
+	a::Float64 
+    b::Float64 
+    μ_0::Vector{Float64} # auxiliary hidden state mean
+    Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
+end
+
+# ╔═╡ abb2c6e4-73b0-4cfb-b8ea-cfeb433dad6d
+struct Q_Gamma
+	a
+	b
+	α
+	β
+end
+
+# ╔═╡ d79bf5b8-089b-42b3-bbd4-4727672507f4
+function vb_m_diag(y::Array{Float64, 2}, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float64, 2})
+    D, T = size(y)
+    K = size(A, 1)
+    # Compute the new parameters for the variational posterior of Λ_R
+	G = y*y' - hss.S_C * C' - C * hss.S_C' + C * hss.W_C * C'
+    a_ = hpp.a + 0.5 * T
+	a_s = a_ * ones(D)
+    b_s = [hpp.b + 0.5 * G[i, i] for i in 1:D]
+	q_ρ = Gamma.(a_s, 1 ./ b_s)
+	Exp_R⁻¹ = diagm(mean.(q_ρ))
+	
+    # Compute the new parameters for the variational posterior of Λ_Q
+    H = hss.W_C - hss.S_A * A' - A * hss.S_A' + A * hss.W_A * A'
+	α_ = hpp.α + 0.5 * T
+	α_s = α_ * ones(K)
+    β_s = [hpp.β + 0.5 * H[i, i] for i in 1:K]
+	q_𝛐 = Gamma.(α_s, 1 ./ β_s)	
+	Exp_Q⁻¹= diagm(mean.(q_𝛐))
+	
+	return Exp_R⁻¹, Exp_Q⁻¹, Q_Gamma(a_, b_s, α_, β_s)
+end
+
+# ╔═╡ 681b2040-f3e8-434f-a0b8-74efc8eb0638
+md"""
+Test M-step
+"""
+
+# ╔═╡ 633722b9-7f38-465a-a704-c42b432954ec
+let
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.1, 0.1])
+	T = 500
+	Random.seed!(99)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	
+	W_Q = Matrix{Float64}(I, K, K)
+	W_R = Matrix{Float64}(I, D, D)
+	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+	hss = HSS(W_C, W_A, S_C, S_A)
+
+	vb_m_diag(y, hss, prior, A, C)
+end
+
+# ╔═╡ ce12a8b1-94e3-490a-b7ad-3896aa03b5ec
+let
+	D, T = size(y)
+	K = size(A, 1)
+
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	
+	W_Q = Matrix{Float64}(I, K, K)
+	W_R = Matrix{Float64}(I, D, D)
+	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+	hss = HSS(W_C, W_A, S_C, S_A)
+	vb_m_diag(y, hss, prior, A, C)
+end
+
+# ╔═╡ 116df61f-0703-4bd2-ba4f-7c3cec18e60a
+md"""
+## VB E
+"""
+
+# ╔═╡ 6de4b964-b4a0-47f1-ba62-5f7a06e164c7
+md"""
+### Forward Backward
+"""
+
+# ╔═╡ 36f77206-f82b-44a4-9df1-3bd42a60e061
+function forward_v(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prior::HPP_D)
+    P, T = size(y)
+    K = size(A, 1)
+    
+    # Unpack the prior parameters
+    μ_0, Λ_0 = prior.μ_0, prior.Σ_0
+    
+    # Initialize the filtered means and covariances
+    μ_f = zeros(K, T)
+    Σ_f = zeros(K, K, T)
+    f_s = zeros(K, T)
+	S_s = zeros(K, K, T)
+    # Set the initial filtered mean and covariance to their prior values
+	A_1 = A * μ_0
+	R_1 = A * inv(Λ_0) * A' + E_Q
+	
+	f_1 = C * A_1
+	S_1 = C * R_1 * C' + E_R
+	f_s[:, 1] = f_1
+	S_s[:, :, 1] = S_1
+	
+    μ_f[:, 1] = A_1 + R_1 * C'* inv(S_1) * (y[:, 1] - f_1)
+    Σ_f[:, :, 1] = R_1 - R_1*C'*inv(S_1)*C*R_1 
+    
+    # Forward pass (kalman filter)
+    for t = 2:T
+        # Predicted state mean and covariance
+        μ_p = A * μ_f[:, t-1]
+        Σ_p = A * Σ_f[:, :, t-1] * A' + E_Q
+
+		# marginal y - normalization
+		f_t = C * μ_p
+		S_t = C * Σ_p * C' + E_R
+		f_s[:, t] = f_t
+		S_s[:, :, t] = S_t
+		
+		# Filtered state mean and covariance (2.8a - 2.8c DLM with R)
+		μ_f[:, t] = μ_p + Σ_p * C' * inv(S_t) * (y[:, t] - f_t)
+		Σ_f[:, :, t] = Σ_p - Σ_p * C * inv(S_t) * C * Σ_p
+			
+		# Kalman gain
+        #K_t = Σ_p * C' / (C * Σ_p * C' + E_R)
+        #μ_f[:, t] = μ_p + K_t * (y[:, t] - C * μ_p)
+        #Σ_f[:, :, t] = (I - K_t * C) * Σ_p
+    end
+	
+    log_z = sum(logpdf(MvNormal(f_s[:, i], Symmetric(S_s[:, :, i])), y[:, i]) for i in 1:T)
+    return μ_f, Σ_f, log_z
+end
+
+# ╔═╡ d982670e-dbea-4e9f-9007-19c774075430
+md"""
+Test forward
+"""
+
+# ╔═╡ 7d552dce-986f-45eb-8e8d-de848a5b3544
+let
+	A = [0.8 -0.1; 0.3 0.6]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.01, 0.01])
+	T = 500
+	
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+
+	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+
+	mean_f, cov_f, log_z = forward_v(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+	
+	# use fixed A, C, R from ground truth for the exp_np::Exp_ϕ
+	e_A = A
+	e_AᵀA = A'A
+	e_C = C
+	e_R⁻¹ = inv(R)
+	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
+	e_R⁻¹C = e_R⁻¹*e_C
+	e_CᵀR⁻¹ = e_C'*e_R⁻¹
+	e_log_ρ = log.(1 ./ diag(R))
+	
+	exp_np = Exp_ϕ(e_A, e_AᵀA, e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹, e_log_ρ)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	m_f, c_f, _ , _, _ = v_forward(y, exp_np, hpp) #beale
+
+	mean_f, m_f, cov_f, c_f, log_z
+end
+
+# ╔═╡ 332a2888-47cc-437a-bfd1-390f5fc301d1
+function backward_v(μ_f::Array{Float64, 2}, Σ_f::Array{Float64, 3}, A::Array{Float64, 2}, E_Q::Array{Float64, 2}, prior)
+    K, T = size(μ_f)
+    
+    # Initialize the smoothed means, covariances, and cross-covariances
+    μ_s = zeros(K, T)
+    Σ_s = zeros(K, K, T)
+    Σ_s_cross = zeros(K, K, T)
+    
+    # Set the final smoothed mean and covariance to their filtered values
+    μ_s[:, T] = μ_f[:, T]
+    Σ_s[:, :, T] = Σ_f[:, :, T]
+    
+    # Backward pass
+    for t = T-1:-1:1
+        # Compute the gain J_t
+        J_t = Σ_f[:, :, t] * A' / (A * Σ_f[:, :, t] * A' + E_Q)
+
+        # Update the smoothed mean μ_s and covariance Σ_s
+        μ_s[:, t] = μ_f[:, t] + J_t * (μ_s[:, t+1] - A * μ_f[:, t])
+        Σ_s[:, :, t] = Σ_f[:, :, t] + J_t * (Σ_s[:, :, t+1] - A * Σ_f[:, :, t] * A' - E_Q) * J_t'
+
+        # Compute the cross covariance Σ_s_cross
+        #Σ_s_cross[:, :, t+1] = inv(inv(Σ_f[:, :, t]) + A'*A) * A' * Σ_s[:, :, t+1]
+		Σ_s_cross[:, :, t+1] = J_t * Σ_s[:, :, t+1]
+    end
+	
+	Σ_s_cross[:, :, 1] = inv(I + A'*A) * A' * Σ_s[:, :, 1]
+	
+	J_0 = prior.Σ_0 * A' / (A * prior.Σ_0 * A' + E_Q)
+	μ_s0 = prior.μ_0 + J_0 * (μ_s[:, 1] -  A * prior.μ_0)
+	Σ_s0 = prior.Σ_0 + J_0 * (Σ_s[:, :, 1] - A * prior.Σ_0 * A' - E_Q) * J_0'
+    return μ_s, Σ_s, μ_s0, Σ_s0, Σ_s_cross
+end
+
+# ╔═╡ 6e22444a-a326-4a0d-8a41-ee8ec3efad89
+md"""
+Test backward
+"""
+
+# ╔═╡ 1db2e8a1-ee66-472e-b2c5-eb14a294b426
+let
+	A = [0.8 -0.1; 0.3 0.6]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.01, 0.01])
+	T = 500
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+	
+	e_A = A
+	e_AᵀA = A'A
+	e_C = C
+	e_R⁻¹ = inv(R)
+	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
+	e_R⁻¹C = e_R⁻¹*e_C
+	e_CᵀR⁻¹ = e_C'*e_R⁻¹
+	e_log_ρ = log.(1 ./ diag(R))
+	exp_np = Exp_ϕ(e_A, e_AᵀA, e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹, e_log_ρ)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+
+	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+    
+	μ_f, Σ_f, _ = forward_v(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+	μ_s, Σ_s, _, _, Σ_ss = backward_v(μ_f, Σ_f, A, [1.0 0.0; 0.0 1.0], prior)
+	
+	μs, Σs, Σs_, fs, Qs = v_forward(y, exp_np, hpp)
+	ηs, Ψs, η_0, Ψ_0 = v_backward(y, exp_np)
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
+	Σ_cross = v_pairwise_x(Σs_, exp_np::Exp_ϕ, Ψs)
+	μ_s, ωs, Σ_s, Υs, Σ_ss, Σ_cross
+end
+
+# ╔═╡ aee774f4-5b39-4db0-b989-7a0b2fb09721
+function vb_e_diag(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prior)
+    # Run the forward pass
+    μ_f, Σ_f, log_Z = forward_v(y, A, C, E_R, E_Q, prior)
+
+    # Run the backward pass
+    μ_s, Σ_s, μ_s0, Σ_s0, Σ_s_cross = backward_v(μ_f, Σ_f, A, E_Q, prior)
+
+    # Compute the hidden state sufficient statistics
+    W_C = sum(Σ_s, dims=3)[:, :, 1] + μ_s * μ_s'
+    W_A = sum(Σ_s[:, :, 1:end-1], dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 1:end-1]'
+	W_A += Σ_s0 + μ_s0*μ_s0'
+	
+    S_C = y * μ_s'
+    S_A = sum(Σ_s_cross, dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 2:end]'
+	S_A += μ_s0*μ_s[:, 1]'
+    W_Y = y * y'
+
+	# Return the hidden state sufficient statistics
+    return HSS(W_C, W_A, S_C, S_A), μ_s0, Σ_s0, log_Z
+end
+
+# ╔═╡ d41a19ee-df3f-486b-9b38-75c680f5b5bb
+let
+	K = size(A, 1)
+	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+
+	hss_e, _ = vb_e_diag(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	hss_t = HSS(W_C, W_A, S_C, S_A)
+	hss_t, hss_e
+end
+
+# ╔═╡ 4bcd1acb-2121-4106-acbe-261c5704d2c2
+md"""
+## Update Hyper-param
+"""
+
+# ╔═╡ 22c2bedb-013b-406c-985d-b79bd9f5feb4
+# a_0, b_0 -> p(ρ); a_s, b_s -> q(ρ)
+function kl_gamma(a_0, b_0, a_s, b_s)
+	kl = a_s*log(b_s) - a_0*log(b_0) - loggamma(a_s) + loggamma(a_0)
+	kl += (a_s - a_0)*(digamma(a_s) - log(b_s))
+	kl -= a_s*(1 - b_0/b_s)
+	return kl
+end
+
+# ╔═╡ c8fc14ae-d26b-408d-a6da-ac14815bc1b8
+function update_hyp(hpp, Q_gam)
+	b_s = Q_gam.b
+	D = length(b_s)
+	a_s = Q_gam.a * ones(D)
+	exp_ρ = a_s ./ b_s 
+	exp_log_ρ = [(digamma(Q_gam.a) - log(b_s[i])) for i in 1:D]
+    d = mean(exp_ρ)
+    c = mean(exp_log_ρ)
+    
+    # Update using fixed point equations
+	a = hpp.a		
+	α = hpp.α
+    for _ in 1:100
+        ψ_a = digamma(a)
+        ψ_a_p = trigamma(a)
+        
+        a_new = a * exp(-(ψ_a - log(a) + log(d) - c) / (a * ψ_a_p - 1))
+		a = a_new
+
+		# check convergence
+        if abs(a_new - a) < 1e-5
+            break
+        end
+    end
+    
+    # Update `b` using the converged value of `a`
+    b = a/d
+
+	β_s = Q_gam.β
+	K = length(β_s)
+	α_s = Q_gam.α * ones(K)
+	exp_𝛐 = α_s ./ β_s 
+	exp_log_𝛐 = [(digamma(Q_gam.α) - log(β_s[i])) for i in 1:K]
+    d_ = mean(exp_𝛐)
+    c_ = mean(exp_log_𝛐)
+
+	for _ in 1:100
+        ψ_α = digamma(α)
+        ψ_α_p = trigamma(α)
+        
+        α_new = α * exp(-(ψ_α - log(α) + log(d_) - c_) / (α * ψ_α_p - 1))
+		α = α_new
+
+		# check convergence
+        if abs(α_new - α) < 1e-5
+            break
+        end
+    end
+	β = α/d_
+	
+	return a, b, α, β
+end
+
+# ╔═╡ bb581c8e-ccb3-47cd-88ac-3272a0489303
+md"""
+## VBEM with Convergence
+"""
+
+# ╔═╡ 2dc970e8-90c1-4ad3-b68b-a81825a304ec
+function vbem_c_diag(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior, hp_learn=false, max_iter=200, tol=5e-3)
+	
+	D, T = size(y)
+	K = size(A, 1)
+	hss = HSS(ones(size(A)), ones(size(A)), ones(size(C)), ones(size(A)))
+	E_R_inv, E_Q_inv = missing, missing
+	elbo_prev = -Inf
+	el_s = zeros(max_iter)
+	
+	
+	for i in 1:max_iter
+		E_R_inv, E_Q_inv, Q_gam = vb_m_diag(y, hss, prior, A, C)
+		hss, μ_s0, Σ_s0, log_Z = vb_e_diag(y, A, C, inv(E_R_inv), inv(E_Q_inv), prior)
+		
+		kl_ρ = sum([kl_gamma(prior.a, prior.b, Q_gam.a, (Q_gam.b)[s]) for s in 1:D])
+		kl_𝛐 = sum([kl_gamma(prior.α, prior.β, Q_gam.α, (Q_gam.β)[s]) for s in 1:K])
+		
+		elbo = log_Z - kl_ρ - kl_𝛐
+		el_s[i] = elbo
+		
+		if (hp_learn)
+			if (i%5 == 0) 
+				a_, b_, α_, β_ = update_hyp(prior, Q_gam)
+				prior = HPP_D(α_, β_, a_, b_, μ_s0, Σ_s0)
+			end
+		end
+		
+		if abs(elbo - elbo_prev) < tol
+			println("Stopped at iteration: $i")
+			el_s = el_s[1:i]
+            break
+		end
+		
+        elbo_prev = elbo
+
+		if (i == max_iter)
+			println("Warning: VB have not necessarily converged at $max_iter iterations with tolerance $tol")
+		end
+	end
+	
+	return inv(E_R_inv), inv(E_Q_inv), el_s
+end
+
+# ╔═╡ b68f08ff-c8aa-4fdc-b4bb-c5a4e4ad3b50
+let
+	# A, C identity matrix (cf. local level model)
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.1, 0.1])
+	T = 1000
+	Random.seed!(133)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, _ = size(y)
+	K = size(A, 1)
+	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+	
+	R, Q, elbos = vbem_c_diag(y, A, C, prior)
+	p = plot(elbos, label = "elbo", title = "ElBO progression")
+
+	p, R, Q
+end
+
+# ╔═╡ f33a4026-bf24-4ea1-9af8-e1a63afbc441
+let
+	# A, C identity matrix (cf. local level model)
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.1, 0.1])
+	T = 1000
+	Random.seed!(133)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, _ = size(y)
+	K = size(A, 1)
+	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+	
+	R, Q, elbos = vbem_c_diag(y, A, C, prior, true)
+	p = plot(elbos, label = "elbo", title = "ElBO with Hyperparam learning")
+
+	p, R, Q
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -3581,7 +4162,7 @@ version = "1.4.1+0"
 # ╟─9e73e982-a4ae-4e9b-9650-3cf7c519657c
 # ╟─a41bd4a5-a7be-48fe-a222-6e8b3cf98dec
 # ╠═d8c05722-a79b-4132-b1c2-982ef39af257
-# ╟─65b7e5f4-aff8-4671-9a3a-7aeebef6b83e
+# ╠═65b7e5f4-aff8-4671-9a3a-7aeebef6b83e
 # ╟─e2a46e7b-0e83-4275-bf9d-bc1a84fa2e87
 # ╟─6a4af386-bfe0-48bb-8d40-300e02680703
 # ╠═120d3c31-bba9-476d-8a63-95cdf2457a1b
@@ -3638,6 +4219,7 @@ version = "1.4.1+0"
 # ╠═0f2e6c3a-04c4-4f6b-8ccd-ed18c41e2bc4
 # ╟─f35c8af8-00b0-45ad-8910-04f656cecfa3
 # ╠═aaf8f3a7-9549-4d02-ba99-e223fda5252a
+# ╠═3a8fc929-6214-48b9-8a25-31d3088973d6
 # ╟─a6470873-26b3-4981-80eb-12a59bd3695d
 # ╟─c096bbab-4009-4995-8f45-dc7ffab7ccfa
 # ╟─63bc1239-1a6a-4f3b-9d2c-9b904aec573c
@@ -3651,7 +4233,7 @@ version = "1.4.1+0"
 # ╟─11796ca9-30e2-4ba7-b8dc-9a0eda90e14e
 # ╠═e68dbe27-95ea-4710-9999-d2c4de0db914
 # ╟─488d1200-1ddf-4f06-9643-2eecb2072263
-# ╟─0591883c-49af-4201-b2f1-49f208506ece
+# ╠═0591883c-49af-4201-b2f1-49f208506ece
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
 # ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
 # ╟─bb26ac74-da64-47be-a49a-4519101cffce
@@ -3676,11 +4258,38 @@ version = "1.4.1+0"
 # ╠═d86b6c15-7408-460b-9388-4616e014df53
 # ╠═778521de-dd04-4203-a19e-98f434f8090a
 # ╟─ee0e820a-8f23-426d-9d80-a6cdf664609e
-# ╠═aa6ba2f9-e878-4d44-8b8c-5caeb9b2d698
+# ╟─aa6ba2f9-e878-4d44-8b8c-5caeb9b2d698
 # ╠═2ce2e76c-6fef-4610-9a4e-e1547eb7532e
 # ╟─1b459283-4159-49e3-9ff7-6eced3d35873
 # ╟─e812e18a-1644-4993-9b5d-0d66db7fcc1f
 # ╟─a58173b0-df06-4f4d-871f-1fd29e092fe9
-# ╠═3b6c82a0-4fc5-4bca-95fa-7e28f87f2831
+# ╟─3b6c82a0-4fc5-4bca-95fa-7e28f87f2831
+# ╟─fef26680-9a52-46ae-b09f-807a58fc1db8
+# ╟─53e1d9d0-623a-4fae-a984-8d199078aa76
+# ╟─6d857548-11ba-4ec5-9100-c2fac6f3dcf1
+# ╟─f47d98c7-fcb3-4ac3-b5f3-c1043c8f0d03
+# ╠═2afbf400-6ecc-4284-8744-f9a20f79428c
+# ╠═abb2c6e4-73b0-4cfb-b8ea-cfeb433dad6d
+# ╠═d79bf5b8-089b-42b3-bbd4-4727672507f4
+# ╟─681b2040-f3e8-434f-a0b8-74efc8eb0638
+# ╟─633722b9-7f38-465a-a704-c42b432954ec
+# ╠═ce12a8b1-94e3-490a-b7ad-3896aa03b5ec
+# ╟─116df61f-0703-4bd2-ba4f-7c3cec18e60a
+# ╟─6de4b964-b4a0-47f1-ba62-5f7a06e164c7
+# ╟─36f77206-f82b-44a4-9df1-3bd42a60e061
+# ╟─d982670e-dbea-4e9f-9007-19c774075430
+# ╟─7d552dce-986f-45eb-8e8d-de848a5b3544
+# ╟─332a2888-47cc-437a-bfd1-390f5fc301d1
+# ╟─6e22444a-a326-4a0d-8a41-ee8ec3efad89
+# ╟─1db2e8a1-ee66-472e-b2c5-eb14a294b426
+# ╠═aee774f4-5b39-4db0-b989-7a0b2fb09721
+# ╟─d41a19ee-df3f-486b-9b38-75c680f5b5bb
+# ╟─4bcd1acb-2121-4106-acbe-261c5704d2c2
+# ╟─22c2bedb-013b-406c-985d-b79bd9f5feb4
+# ╟─c8fc14ae-d26b-408d-a6da-ac14815bc1b8
+# ╟─bb581c8e-ccb3-47cd-88ac-3272a0489303
+# ╠═2dc970e8-90c1-4ad3-b68b-a81825a304ec
+# ╟─b68f08ff-c8aa-4fdc-b4bb-c5a4e4ad3b50
+# ╟─f33a4026-bf24-4ea1-9af8-e1a63afbc441
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

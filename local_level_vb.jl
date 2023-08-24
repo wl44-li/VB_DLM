@@ -130,10 +130,7 @@ function vb_m_uni(y::Vector{Float64}, hss::HSS_uni, hpp::HPP_uni)
 	W_A, S_A, W_C, S_C = hss.W_A, hss.S_A, hss.W_C, hss.S_C
 
 	σ_A = 1 / (α + W_A)
-    σ_C = 1 / (γ + W_C)
-
-	#q_A = Normal(σ_A*S_A, sqrt(σ_A))
-	
+    σ_C = 1 / (γ + W_C)	
 	G = y' * y - S_C * σ_C * S_C
 
 	# Update parameters of Gamma distribution
@@ -142,9 +139,6 @@ function vb_m_uni(y::Vector{Float64}, hss::HSS_uni, hpp::HPP_uni)
 
 	q_ρ = Gamma(a_n, 1 / b_n)
 	ρ̄ = mean(q_ρ)
-
-	#ρ_s = rand(q_p)
-	#q_C = Normal(σ_C*S_C, sqrt(σ_C/ρ_s))
 
 	Exp_A = S_A*σ_A
 	Exp_C = S_C*σ_C
@@ -1168,9 +1162,11 @@ function vb_e_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
     # Compute the sufficient statistics
     w_c = sum(σs_s2 .+ μs_s.^2)
     w_a = sum(σs_s2[1:end-1] .+ μs_s[1:end-1].^2)
+	w_a += σs_s0 + μs_0^2
+	
     s_c = sum(y .* μs_s)
     s_a = sum(σs_s2_cross[1:end-1]) + sum(μs_s[1:end-1] .* μs_s[2:end])
-
+	s_a += μs_0 * μs_s[1]
     # Return the sufficient statistics in a HSS struct
     return HSS_ll(w_c, w_a, s_c, s_a), μs_0, σs_s0, log_Z
 end
@@ -1214,7 +1210,6 @@ md"""
 
 # ╔═╡ 7ed909ad-55a1-42bc-931b-d96b8df58f99
 function update_ab(hpp::Priors_ll, qθ)
-
 	exp_r = qθ.α_r_p / qθ.β_r_p
 	exp_log_r = digamma(qθ.α_r_p) - log(qθ.β_r_p)
 	exp_q = qθ.α_q_p / qθ.β_q_p
@@ -1223,7 +1218,7 @@ function update_ab(hpp::Priors_ll, qθ)
     d_r, d_q = exp_r, exp_q
     c_r, c_q = exp_log_r, exp_log_q
     
-    # Update `a_r` using fixed point iteration
+    # Update using fixed point equations
 	a_r = hpp.α_r
 	a_q = hpp.α_q
 	
@@ -1232,20 +1227,23 @@ function update_ab(hpp::Priors_ll, qθ)
         ψ_a_p = trigamma(a_r)
         a_new = a_r * exp(-(ψ_a - log(a_r) + log(d_r) - c_r) / (a_r * ψ_a_p - 1))
 		a_r = a_new
+		# check convergence
+        if abs(a_new - a_r) < 1e-5
+            break
+        end
+    end
+    b_r = a_r/d_r
 
+	for _ in 1:100
 		ψ_a_q = digamma(a_q)
         ψ_a_q_p = trigamma(a_q)
         a_new_q= a_q * exp(-(ψ_a_q - log(a_q) + log(d_q) - c_q) / (a_q * ψ_a_q_p - 1))
 		a_q = a_new_q
-		
-		# check convergence
-        if abs(a_new - a_r) < 1e-5 && abs(a_new_q - a_q) < 1e-5
-            break
-        end
-    end
-    
-    # Update `b` using the converged value of `a`
-    b_r = a_r/d_r
+
+		if abs(a_new_q - a_q) < 1e-5
+			break
+		end
+	end
 	b_q = a_q/d_q
 	
 	return a_r, b_r, a_q, b_q
@@ -1319,7 +1317,7 @@ Monitor ELBO progress
 let
 	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 	@time r, q, elbos = vb_ll_c(y, hpp_ll)
-	p = plot(elbos, label = "elbo", title = "ElBO progression")
+	p = plot(elbos, label = "elbo", title = "ELBO progression")
 	println("r :", r)
 	println("q :", q)
 	p
@@ -1329,7 +1327,7 @@ end
 let
 	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 	@time r, q, elbos = vb_ll_c(y, hpp_ll, true)
-	p = plot(elbos, label = "elbo", title = "ElBO with Hyperparam learning")
+	p = plot(elbos, label = "elbo", title = "ELBO with Hyperparam learning")
 	println("r :", r)
 	println("q :", q)
 	p
@@ -1398,7 +1396,7 @@ With hyper-parameter learning
 # ╔═╡ 5ec1eb83-ec4c-473f-92a6-f99113462cb4
 let
 	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
-	@time r, q = vb_ll_c(y, hpp_ll, true, 44)
+	@time r, q = vb_ll_c(y, hpp_ll, true, 50)
 
 	μs_f, σs_f2 = forward_ll(y, 1.0, 1.0, 1/r, 1/q, hpp_ll)
     μs_s, σs_s2, _ = backward_ll(μs_f, σs_f2, 1/q, hpp_ll)
@@ -3539,7 +3537,7 @@ version = "1.4.1+0"
 # ╟─2c4dec7a-1a9b-4988-b1a4-43f41e744beb
 # ╟─501172ab-203d-4faa-a3b0-3e4fa0c79d10
 # ╠═5cf98dbf-1b32-418c-8d62-c7865dc37f04
-# ╠═981608f2-57f6-44f1-95ed-82e8cca04718
+# ╟─981608f2-57f6-44f1-95ed-82e8cca04718
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
 # ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184
 # ╠═2308aa4c-bb99-4546-a108-9fa88fca130b

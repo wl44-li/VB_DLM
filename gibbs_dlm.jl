@@ -2429,15 +2429,15 @@ let
 	Q = Diagonal([1.0, 1.0])
 	R = Diagonal([0.1, 0.1])
 	T = 1000
-	Random.seed!(133)
+	Random.seed!(1)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	D, _ = size(y)
 	K = size(A, 1)
-	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
 	
-	R, Q, elbos = vbem_c_diag(y, A, C, prior)
+	@time R, Q, elbos = vbem_c_diag(y, A, C, prior)
 	p = plot(elbos, label = "elbo", title = "ElBO progression")
 
 	p, R, Q
@@ -2451,19 +2451,27 @@ let
 	Q = Diagonal([1.0, 1.0])
 	R = Diagonal([0.1, 0.1])
 	T = 1000
-	Random.seed!(133)
+	Random.seed!(1)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	D, _ = size(y)
 	K = size(A, 1)
-	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
 	
-	R, Q, elbos = vbem_c_diag(y, A, C, prior, true)
+	@time R, Q, elbos = vbem_c_diag(y, A, C, prior, true)
 	p = plot(elbos, label = "elbo", title = "ElBO with Hyperparam learning")
 
 	p, R, Q
 end
+
+# ╔═╡ 845aa9ff-f164-4ff3-99a5-f4b6a3d7f4f3
+md"""
+## TO-DO:
+- Test hidden state inference
+- Test y_pred performance (leave some y out)
+- Test different length T
+"""
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -4289,7 +4297,8 @@ version = "1.4.1+0"
 # ╟─c8fc14ae-d26b-408d-a6da-ac14815bc1b8
 # ╟─bb581c8e-ccb3-47cd-88ac-3272a0489303
 # ╠═2dc970e8-90c1-4ad3-b68b-a81825a304ec
-# ╟─b68f08ff-c8aa-4fdc-b4bb-c5a4e4ad3b50
-# ╟─f33a4026-bf24-4ea1-9af8-e1a63afbc441
+# ╠═b68f08ff-c8aa-4fdc-b4bb-c5a4e4ad3b50
+# ╠═f33a4026-bf24-4ea1-9af8-e1a63afbc441
+# ╟─845aa9ff-f164-4ff3-99a5-f4b6a3d7f4f3
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

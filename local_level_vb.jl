@@ -1426,6 +1426,11 @@ let
 	plot!(r_ss, label="r samples")
 end
 
+# ╔═╡ 0fd29561-868d-4f34-81c4-52a779baf517
+md"""
+Plot MCMC with hidden x inference
+"""
+
 # ╔═╡ 492c0922-e5f0-435b-9372-27e79570d679
 let
 	x_ss, q_ss, r_ss = gibbs_ll(y, 1.0, 1.0)
@@ -1450,10 +1455,10 @@ md"""
 ## TO-DOs:
 
 Consider additional experiments:
-- longer time series (large y)
+- longer time series (compare MCMC and VB)
 - frequency of hyper-param update (per ? iterations)
 - latent x inference, r, q inference
-- y predicative inference (hide some y and infer them as additional unknowns)
+- y predicative inference (hide some y and infer them as additional unknown variables)
 """
 
 # ╔═╡ d2efd2a0-f494-4486-8ed3-ffd944b8473f
@@ -1495,7 +1500,7 @@ Turing = "~0.26.2"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.2"
+julia_version = "1.9.3"
 manifest_format = "2.0"
 project_hash = "255740f8300584bacd3900ae1027775449d976cc"
 
@@ -3574,6 +3579,7 @@ version = "1.4.1+0"
 # ╠═5ec1eb83-ec4c-473f-92a6-f99113462cb4
 # ╟─23301a45-fc89-416f-bcc7-4f3ba41bf04f
 # ╠═d57adc7b-fcd5-468b-aa50-919d884a916a
+# ╟─0fd29561-868d-4f34-81c4-52a779baf517
 # ╟─492c0922-e5f0-435b-9372-27e79570d679
 # ╟─c8ccefff-ba79-4086-b076-51f999cdebb1
 # ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f

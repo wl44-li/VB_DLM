@@ -2439,7 +2439,11 @@ let
 	
 	@time R, Q, elbos = vbem_c_diag(y, A, C, prior)
 	p = plot(elbos, label = "elbo", title = "ElBO progression")
-
+	
+	μs_f, σs_f2 = forward_v(y, A, C, R, Q, prior)
+    μs_s, σs_s2, _ = backward_v(μs_f, σs_f2, A, Q, prior)
+	println("MSE, MAD of VB: ", error_metrics(x_true, μs_s))
+	
 	p, R, Q
 end
 
@@ -2462,6 +2466,9 @@ let
 	@time R, Q, elbos = vbem_c_diag(y, A, C, prior, true)
 	p = plot(elbos, label = "elbo", title = "ElBO with Hyperparam learning")
 
+	μs_f, σs_f2 = forward_v(y, A, C, R, Q, prior)
+    μs_s, σs_s2, _ = backward_v(μs_f, σs_f2, A, Q, prior)
+	println("MSE, MAD of VB: ", error_metrics(x_true, μs_s))
 	p, R, Q
 end
 
@@ -2469,7 +2476,8 @@ end
 md"""
 ## TO-DO:
 - Test hidden state inference
-- Test y_pred performance (leave some y out)
+- Test y_pred performance (train-test for future t)
+- Test with missing y
 - Test different length T
 """
 
@@ -2509,7 +2517,7 @@ StatsPlots = "~0.15.5"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.2"
+julia_version = "1.9.3"
 manifest_format = "2.0"
 project_hash = "1f04c0bd705bc42176c5e81bb92ccd47ffcc0237"
 
@@ -4284,10 +4292,10 @@ version = "1.4.1+0"
 # ╠═ce12a8b1-94e3-490a-b7ad-3896aa03b5ec
 # ╟─116df61f-0703-4bd2-ba4f-7c3cec18e60a
 # ╟─6de4b964-b4a0-47f1-ba62-5f7a06e164c7
-# ╟─36f77206-f82b-44a4-9df1-3bd42a60e061
+# ╠═36f77206-f82b-44a4-9df1-3bd42a60e061
 # ╟─d982670e-dbea-4e9f-9007-19c774075430
 # ╟─7d552dce-986f-45eb-8e8d-de848a5b3544
-# ╟─332a2888-47cc-437a-bfd1-390f5fc301d1
+# ╠═332a2888-47cc-437a-bfd1-390f5fc301d1
 # ╟─6e22444a-a326-4a0d-8a41-ee8ec3efad89
 # ╟─1db2e8a1-ee66-472e-b2c5-eb14a294b426
 # ╠═aee774f4-5b39-4db0-b989-7a0b2fb09721

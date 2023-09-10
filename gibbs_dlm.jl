@@ -1796,7 +1796,7 @@ end
 
 # ╔═╡ d216b8ed-cb19-4032-aeaf-15fa1268bcd4
 md"""
-Optimising hyperparameters of Wishart?
+Optimising hyperparameters of Wishart prior?
 """
 
 # ╔═╡ 778521de-dd04-4203-a19e-98f434f8090a
@@ -2471,6 +2471,11 @@ let
 	println("MSE, MAD of VB: ", error_metrics(x_true, μs_s))
 	p, R, Q
 end
+
+# ╔═╡ efb9cb5b-1cef-483c-aaa0-4f6e5accefeb
+md"""
+Compare with MCMC counterpart?
+"""
 
 # ╔═╡ 845aa9ff-f164-4ff3-99a5-f4b6a3d7f4f3
 md"""
@@ -4307,6 +4312,7 @@ version = "1.4.1+0"
 # ╠═2dc970e8-90c1-4ad3-b68b-a81825a304ec
 # ╠═b68f08ff-c8aa-4fdc-b4bb-c5a4e4ad3b50
 # ╠═f33a4026-bf24-4ea1-9af8-e1a63afbc441
+# ╟─efb9cb5b-1cef-483c-aaa0-4f6e5accefeb
 # ╟─845aa9ff-f164-4ff3-99a5-f4b6a3d7f4f3
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

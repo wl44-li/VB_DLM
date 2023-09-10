@@ -388,7 +388,7 @@ function kl_C(μ_0, γ, μ_C, Σ_C, exp_ρs)
 end
 
 # ╔═╡ 43095945-3a72-4153-bd9b-c36a910a3826
-function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000, tol=5e-5)
+function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000, tol=1e-4)
 	D, T = size(ys)
 	K = length(hpp.γ)
 	
@@ -469,6 +469,11 @@ md"""
 VBEM procedure is able to converge to results competitive to PPCA packages (ML, EM, Bayes) shown below, and ELBO computation can be used for model selection with the most appropriate $k$ being the highest ELBO, and predicative likelihood approximation (**mention in thesis**)
 """
 
+# ╔═╡ 3d55a597-b5d0-4e9d-9b05-71aa166b9d93
+md"""
+Compare with existing PCA package
+"""
+
 # ╔═╡ 491489f9-373f-44ab-a6b7-c3714017536c
 let
 	M = fit(PCA, y_pca; maxoutdim=2)
@@ -477,7 +482,7 @@ end
 
 # ╔═╡ ca26f018-b8d3-4a99-97e4-deff6f1e9bf0
 let
-	M = fit(PPCA, y_pca; maxoutdim=2)
+	M = fit(PPCA, y_pca; maxoutdim=2) # default MLE
 	loadings(M), M
 end
 
@@ -518,7 +523,7 @@ StatsFuns = "~1.3.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.2"
+julia_version = "1.9.3"
 manifest_format = "2.0"
 project_hash = "739d4c557e2ca3850209b4b1b9874c315c51f860"
 
@@ -1659,7 +1664,7 @@ version = "1.4.1+0"
 # ╠═cc904ce6-21bd-11ee-11da-ad91a6b43e16
 # ╟─38cfa6e8-8e34-425b-90f7-ef53b6b189df
 # ╟─5763062a-e218-4420-a767-bcf85c19839d
-# ╠═9a7d917d-be50-4946-bb0a-b77062819064
+# ╟─9a7d917d-be50-4946-bb0a-b77062819064
 # ╠═e835abae-6496-4638-a990-f008ce5286cf
 # ╟─361256a9-67ff-4800-baea-06eb6f2347ff
 # ╟─1b0973cd-e4ff-4f13-af91-bbc981802a10
@@ -1680,9 +1685,10 @@ version = "1.4.1+0"
 # ╟─50fde0ff-9da7-49fb-b060-508cca6e9709
 # ╠═43095945-3a72-4153-bd9b-c36a910a3826
 # ╟─fe415c83-2ca5-432b-80b9-3ec89718a7e7
-# ╟─9072572f-dc8d-4ec0-aa76-d25f2acab027
+# ╠═9072572f-dc8d-4ec0-aa76-d25f2acab027
 # ╠═8c11535b-feab-4833-8aff-3814bafed090
 # ╟─74604b66-071b-42b4-b039-d3e484c89603
+# ╟─3d55a597-b5d0-4e9d-9b05-71aa166b9d93
 # ╠═491489f9-373f-44ab-a6b7-c3714017536c
 # ╠═ca26f018-b8d3-4a99-97e4-deff6f1e9bf0
 # ╠═0c2becba-7a86-4b1f-a742-8b663b821997

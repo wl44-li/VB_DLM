@@ -1461,6 +1461,54 @@ Consider additional experiments:
 - y predicative inference (hide some y and infer them as additional unknown variables)
 """
 
+# ╔═╡ fff799a4-fea3-40a6-bb0a-2c7acb069844
+md"""
+### $T = 20000$
+"""
+
+# ╔═╡ 993c2fe7-8b8e-4335-ba9f-c3ade3a0712b
+let
+	Random.seed!(123)
+	T = 20000
+	A = 1.0
+	C = 1.0
+	R = 0.2
+	Q = 1.0 # assume fixed in Beale
+	y, x_true = gen_data(A, C, Q, R, 0.0, 1.0, T)
+
+	@time x_ss, q_ss, r_ss = gibbs_ll(y, 1.0, 1.0)
+
+	println("\nmean system noise (q): ", mean(q_ss))
+	println("mean observation noise (r): ", mean(r_ss))
+
+	x_m = mean(x_ss, dims=1)[1,:]
+	println("\naverage x sample error ", error_metrics(x_true, x_ss[end,: ]))
+	println("end chain x sample error" , error_metrics(x_true, x_m))
+	plot(q_ss, title = "MCMC-Gibbs", label="q samples")
+	plot!(r_ss, label="r samples")
+end
+
+# ╔═╡ 7e48d98b-a876-429a-9b73-de3c269449c3
+let
+	Random.seed!(123)
+	T = 20000
+	A = 1.0
+	C = 1.0
+	R = 0.2
+	Q = 1.0 
+	y, x_true = gen_data(A, C, Q, R, 0.0, 1.0, T)
+	
+	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	@time r, q, elbos = vb_ll_c(y, hpp_ll, true)
+	p = plot(elbos, label = "elbo", title = "ELBO with Hyperparam learning")
+	println("r :", r)
+	println("q :", q)
+	μs_f, σs_f2 = forward_ll(y, 1.0, 1.0, 1/r, 1/q, hpp_ll)
+    μs_s, σs_s2, _ = backward_ll(μs_f, σs_f2, 1/q, hpp_ll)
+	println("\nlatent x error: " , error_metrics(x_true, μs_s))
+	p
+end
+
 # ╔═╡ d2efd2a0-f494-4486-8ed3-ffd944b8473f
 md"""
 # Extras: Using NUTS() from Turing.jl
@@ -3582,6 +3630,9 @@ version = "1.4.1+0"
 # ╟─0fd29561-868d-4f34-81c4-52a779baf517
 # ╟─492c0922-e5f0-435b-9372-27e79570d679
 # ╟─c8ccefff-ba79-4086-b076-51f999cdebb1
+# ╟─fff799a4-fea3-40a6-bb0a-2c7acb069844
+# ╠═993c2fe7-8b8e-4335-ba9f-c3ade3a0712b
+# ╠═7e48d98b-a876-429a-9b73-de3c269449c3
 # ╟─d2efd2a0-f494-4486-8ed3-ffd944b8473f
 # ╟─4cc367d1-37a1-4712-a63e-8826b5646a1b
 # ╟─5f9f903b-a72c-4b60-9934-4bd2ced30a2c

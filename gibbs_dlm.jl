@@ -2005,7 +2005,7 @@ struct Q_Gamma
 end
 
 # ╔═╡ d79bf5b8-089b-42b3-bbd4-4727672507f4
-function vb_m_diag(y::Array{Float64, 2}, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float64, 2})
+function vb_m_diag(y, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float64, 2})
     D, T = size(y)
     K = size(A, 1)
     # Compute the new parameters for the variational posterior of Λ_R
@@ -2087,7 +2087,7 @@ md"""
 """
 
 # ╔═╡ 36f77206-f82b-44a4-9df1-3bd42a60e061
-function forward_v(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prior::HPP_D)
+function forward_v(y, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prior::HPP_D)
     P, T = size(y)
     K = size(A, 1)
     
@@ -2097,8 +2097,10 @@ function forward_v(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64,
     # Initialize the filtered means and covariances
     μ_f = zeros(K, T)
     Σ_f = zeros(K, K, T)
-    f_s = zeros(K, T)
-	S_s = zeros(K, K, T)
+
+    f_s = zeros(P, T)
+	S_s = zeros(P, P, T)
+	
     # Set the initial filtered mean and covariance to their prior values
 	A_1 = A * μ_0
 	R_1 = A * inv(Λ_0) * A' + E_Q
@@ -2125,7 +2127,7 @@ function forward_v(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64,
 		
 		# Filtered state mean and covariance (2.8a - 2.8c DLM with R)
 		μ_f[:, t] = μ_p + Σ_p * C' * inv(S_t) * (y[:, t] - f_t)
-		Σ_f[:, :, t] = Σ_p - Σ_p * C * inv(S_t) * C * Σ_p
+		Σ_f[:, :, t] = Σ_p - Σ_p * C' * inv(S_t) * C * Σ_p
 			
 		# Kalman gain
         #K_t = Σ_p * C' / (C * Σ_p * C' + E_R)
@@ -2268,7 +2270,7 @@ let
 end
 
 # ╔═╡ aee774f4-5b39-4db0-b989-7a0b2fb09721
-function vb_e_diag(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prior)
+function vb_e_diag(y, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prior)
     # Run the forward pass
     μ_f, Σ_f, log_Z = forward_v(y, A, C, E_R, E_Q, prior)
 
@@ -2378,9 +2380,9 @@ md"""
 """
 
 # ╔═╡ 2dc970e8-90c1-4ad3-b68b-a81825a304ec
-function vbem_c_diag(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior, hp_learn=false, max_iter=200, tol=5e-3)
-	
-	D, T = size(y)
+function vbem_c_diag(y, A::Array{Float64, 2}, C::Array{Float64, 2}, prior, hp_learn=false, max_iter=200, tol=5e-3)
+
+	D, _ = size(y)
 	K = size(A, 1)
 	hss = HSS(ones(size(A)), ones(size(A)), ones(size(C)), ones(size(A)))
 	E_R_inv, E_Q_inv = missing, missing
@@ -2485,6 +2487,51 @@ md"""
 - Test with missing y
 - Test different length T
 """
+
+# ╔═╡ 473620a5-7151-4cc2-90f7-2bb5ca962b51
+md"""
+Test with local linear trend
+"""
+
+# ╔═╡ b05e7363-3664-41ef-b76a-e4282e953596
+begin
+	A_lg = [1.0 1.0; 0.0 1.0]
+    C_lg = [1.0 0.0]
+	Q_lg = Diagonal([1.0, 1.0])
+	R_lg = [1.0]
+	Random.seed!(123)
+	lg_data_Y, lg_data_θ = gen_data(A_lg, C_lg, Q_lg, R_lg, μ_0, Σ_0, 100)
+end
+
+# ╔═╡ 58c594f5-f3c5-4972-8d71-11a7e673e1ec
+let
+	D = 1
+	K = size(A_lg, 1)
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	
+	@time R, Q, elbos = vbem_c_diag(lg_data_Y, A_lg, C_lg, prior)
+	p = plot(elbos, label = "elbo", title = "ElBO progression")
+	
+	μs_f, σs_f2 = forward_v(lg_data_Y, A_lg, C_lg, R, Q, prior)
+    μs_s, σs_s2, _ = backward_v(μs_f, σs_f2, A_lg, Q, prior)
+	println("MSE, MAD of VB: ", error_metrics(lg_data_θ, μs_s))
+	
+	p, R, Q
+end
+
+# ╔═╡ 9d670e26-725b-476c-a945-055952e2eb83
+let
+	D = 1
+	K = size(A_lg, 1)
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	
+	@time R, Q, elbos = vbem_c_diag(lg_data_Y, A_lg, C_lg, prior, true)
+	p = plot(elbos, label = "elbo", title = "ElBO with Hyperparam learning")
+	μs_f, σs_f2 = forward_v(lg_data_Y, A_lg, C_lg, R, Q, prior)
+    μs_s, σs_s2, _ = backward_v(μs_f, σs_f2, A_lg, Q, prior)
+	println("MSE, MAD of VB: ", error_metrics(lg_data_θ, μs_s))
+	p, R, Q
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -4168,7 +4215,7 @@ version = "1.4.1+0"
 # ╠═ee858a0c-1414-11ee-3b47-2fb4b9112c53
 # ╟─6c0ecec8-afdc-4072-9dac-4658af3706d5
 # ╟─73e449fb-81d2-4a9e-a89d-38909093863b
-# ╟─e1f22c73-dee8-4507-af03-3d2d0ceb9011
+# ╠═e1f22c73-dee8-4507-af03-3d2d0ceb9011
 # ╟─544ac3d9-a2b8-4950-a501-40c14c84b2d8
 # ╟─46d87386-7c36-486f-ba59-15d71e88869c
 # ╠═e1bd9dd3-855e-4aa6-91aa-2695da07ba48
@@ -4314,5 +4361,9 @@ version = "1.4.1+0"
 # ╠═f33a4026-bf24-4ea1-9af8-e1a63afbc441
 # ╟─efb9cb5b-1cef-483c-aaa0-4f6e5accefeb
 # ╟─845aa9ff-f164-4ff3-99a5-f4b6a3d7f4f3
+# ╟─473620a5-7151-4cc2-90f7-2bb5ca962b51
+# ╠═b05e7363-3664-41ef-b76a-e4282e953596
+# ╠═58c594f5-f3c5-4972-8d71-11a7e673e1ec
+# ╠═9d670e26-725b-476c-a945-055952e2eb83
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -2043,7 +2043,7 @@ let
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
-	D, T = size(y)
+	D, _ = size(y)
 	K = size(A, 1)
 
 	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
@@ -4240,7 +4240,7 @@ version = "1.4.1+0"
 # ╟─779e0cef-0865-4087-b3d1-563aec15a734
 # ╟─611e868a-e808-4a1f-8dd3-2d7ef64e2984
 # ╟─69efb78d-1297-46b4-a6bb-218c07c9b2af
-# ╟─9f1a120d-80ac-46e0-ae7c-949d2f571b98
+# ╠═9f1a120d-80ac-46e0-ae7c-949d2f571b98
 # ╟─f08a6391-24da-4d3e-8a3e-55806bb9efbb
 # ╟─39ecddfa-89a0-49ec-86f1-4794336215d0
 # ╟─0a9c1721-6901-4dc1-a93d-8d8e18f7f375
@@ -4283,7 +4283,7 @@ version = "1.4.1+0"
 # ╟─89fb5821-17c5-46be-8e3c-94439d295220
 # ╟─c9d18a43-5984-45f5-b558-368368212355
 # ╟─99aab1db-2156-4bd4-9b54-3bb0d4a1620b
-# ╠═95ab5440-82dd-4fc4-be08-b1a851caf9ca
+# ╟─95ab5440-82dd-4fc4-be08-b1a851caf9ca
 # ╠═0f2e6c3a-04c4-4f6b-8ccd-ed18c41e2bc4
 # ╟─f35c8af8-00b0-45ad-8910-04f656cecfa3
 # ╠═aaf8f3a7-9549-4d02-ba99-e223fda5252a
@@ -4340,8 +4340,8 @@ version = "1.4.1+0"
 # ╠═abb2c6e4-73b0-4cfb-b8ea-cfeb433dad6d
 # ╠═d79bf5b8-089b-42b3-bbd4-4727672507f4
 # ╟─681b2040-f3e8-434f-a0b8-74efc8eb0638
-# ╟─633722b9-7f38-465a-a704-c42b432954ec
-# ╠═ce12a8b1-94e3-490a-b7ad-3896aa03b5ec
+# ╠═633722b9-7f38-465a-a704-c42b432954ec
+# ╟─ce12a8b1-94e3-490a-b7ad-3896aa03b5ec
 # ╟─116df61f-0703-4bd2-ba4f-7c3cec18e60a
 # ╟─6de4b964-b4a0-47f1-ba62-5f7a06e164c7
 # ╠═36f77206-f82b-44a4-9df1-3bd42a60e061

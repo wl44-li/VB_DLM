@@ -616,11 +616,6 @@ md"""
 ### Sample latent $x$
 """
 
-# ╔═╡ 1f0d9a8f-94b9-4e87-a837-9c350b905c72
-md"""
-
-"""
-
 # ╔═╡ aa404f69-e857-4eb6-87f1-298d62429891
 md"""
 Multi-move FFBS sampling
@@ -967,8 +962,27 @@ let
 	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 
 	r⁻¹, q⁻¹, _ = vb_m_ll(y, hss, hpp)
-	println("r ", (1 / r⁻¹)) # r = 0.2, q = 1.0
+	println("r ", (1 / r⁻¹)) # ground-truth: r = 0.2, q = 1.0
 	println("q ", (1 / q⁻¹))
+end
+
+# ╔═╡ 4dcb2ee0-fcec-4e1e-99ce-b93044ddcd6d
+let
+	Random.seed!(111)
+	T = 200
+	A = 1.0
+	C = 1.0
+	R = 0.05
+	Q = 0.5 
+	y, x_true = gen_data(A, C, Q, R, 0.0, 1.0, T)
+	w_a = sum(x_true[t-1] * x_true[t-1] for t in 2:T)
+	s_a = sum(x_true[t-1] * x_true[t] for t in 2:T)
+	w_c = sum(x_true[t] * x_true[t] for t in 1:T)
+	s_c = sum(x_true[t] * y[t] for t in 1:T)
+	hss = HSS_ll(w_c, w_a, s_c, s_a)
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+
+	r⁻¹, q⁻¹, _ = vb_m_ll(y, hss, hpp)
 end
 
 # ╔═╡ 1adc874e-e024-464a-80d5-5ded04f62f24
@@ -3570,7 +3584,6 @@ version = "1.4.1+0"
 # ╠═8e3edeee-c940-4975-99e8-bc27c3b18939
 # ╟─5985ac18-636e-4606-9978-7e1e0ce1fd09
 # ╟─392e0306-6e39-4d62-80aa-7c9f837cd0a0
-# ╟─1f0d9a8f-94b9-4e87-a837-9c350b905c72
 # ╟─aa404f69-e857-4eb6-87f1-298d62429891
 # ╟─7ea26a1d-b6be-4d47-ad30-222ec6ea1a5a
 # ╟─494373d7-3a8c-4717-bc9b-6e57267b3a58
@@ -3594,6 +3607,7 @@ version = "1.4.1+0"
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
 # ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184
 # ╠═2308aa4c-bb99-4546-a108-9fa88fca130b
+# ╠═4dcb2ee0-fcec-4e1e-99ce-b93044ddcd6d
 # ╟─1adc874e-e024-464a-80d5-5ded04f62f24
 # ╟─03931d7c-e9d4-4283-96ed-d4a166d7e91f
 # ╠═d359f3aa-b238-420f-99d2-52f85ce9ff82

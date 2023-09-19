@@ -20,81 +20,6 @@ begin
 	using StatsBase
 end
 
-# ╔═╡ 787099f0-3bfd-4d0d-aaf5-47bf9872773b
-# 1-d linear-growth generation
-function gen_linear_growth_data(q_x, q_s, r, μ_0, Σ_0, T)
-    # Define A and C for the linear growth model
-    A = [1.0 1.0; 0.0 1.0]
-    C = [1.0 0.0]
-
-    # Initialize
-    x = zeros(2, T)
-    y = zeros(T)
-
-    # Initial state
-    x[:, 1] = rand(MvNormal(μ_0, Σ_0))
-    y[1] = dot(C, x[:, 1]) + rand(Normal(0.0, sqrt(1/r)))
-
-    Q = [1/q_x 0.0; 0.0 1/q_s]
-
-    for t in 2:T
-        x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(2), Q))
-        y[t] = dot(C, x[:, t]) + rand(Normal(0.0, sqrt(1/r)))
-    end
-
-    return y, x
-end
-
-# ╔═╡ 1da797ab-876a-4ba1-b635-9a6d58ea2047
-let
-	T = 100
-	Random.seed!(123)
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([1.0, 1.0])
-	y, x_true = gen_linear_growth_data(0.5, 0.3, 0.1, μ_0, Σ_0, T)
-end
-
-# ╔═╡ 25bce776-de40-405f-b56e-2e077f5e58e3
-# ╠═╡ disabled = true
-#=╠═╡
-md"""
-VB-M\\
-\( q_x \)
-\begin{align*}
-\ln q(q_x) &\propto E_q[\ln p(x_{1:T}, s_{1:T} | q_x, q_s)] + \ln p(q_x) \\
-&= E_q[\ln p(x_1) + \sum_{t=2}^T \ln p(x_t | x_{t-1}, s_{t-1})] + \ln p(q_x) \\
-&= E_q[\ln p(x_1) + \sum_{t=2}^T \ln \mathcal{N}(x_t; x_{t-1} + s_{t-1}, q_x^{-1})] + \ln \mathcal{G}(q_x; \alpha_x, \beta_x)
-\end{align*}
-
-Expanding the Gaussian term and taking the expectation:
-\begin{align*}
-E_q[\ln \mathcal{N}(x_t; x_{t-1} + s_{t-1}, q_x^{-1})] &= -\frac{T}{2} \ln(2\pi) + \frac{T}{2} \ln q_x - \frac{q_x}{2} E_q[(x_t - x_{t-1} - s_{t-1})^2] \\
-&= -\frac{T}{2} \ln(2\pi) + \frac{T}{2} \ln q_x - \frac{q_x}{2} \left( W_A - 2S_A + W_C \right)
-\end{align*}
-
-Combining the above with the prior term, we get:
-\begin{align*}
-\ln q(q_x) &\propto \frac{T}{2} \ln q_x - \frac{q_x}{2} \left( W_A - 2S_A + W_C \right) + (\alpha_x - 1) \ln q_x - \beta_x q_x + \text{const}.
-\end{align*}
-
-\( q_s \)
-\begin{align*}
-\ln q(q_s) &\propto E_q[\ln p(s_{1:T} | q_s)] + \ln p(q_s) \\
-&= E_q[\sum_{t=1}^T \ln \mathcal{N}(s_t; 0, q_s^{-1})] + \ln \mathcal{G}(q_s; \alpha_s, \beta_s) \\
-&= -\frac{T}{2} \ln(2\pi) + \frac{T}{2} \ln q_s - \frac{q_s}{2} E_q[s_t^2] + (\alpha_s - 1) \ln q_s - \beta_s q_s + \text{const} \\
-&= -\frac{T}{2} \ln(2\pi) + \frac{T}{2} \ln q_s - \frac{q_s}{2} W_S + (\alpha_s - 1) \ln q_s - \beta_s q_s + \text{const}.
-\end{align*}
-
-\( r \)
-\begin{align*}
-\ln q^(r) &\propto E_q[\ln p(y_{1:T} | x_{1:T}, r)] + \ln p(r) \\
-&= E_q[\sum_{t=1}^T \ln \mathcal{N}(y_t; x_t, r^{-1})] + \ln \mathcal{G}(r; \alpha_r, \beta_r) \\
-&= -\frac{T}{2} \ln(2\pi) + \frac{T}{2} \ln r - \frac{r}{2} E_q[(y_t - x_t)^2] + (\alpha_r - 1) \ln r - \beta_r r + \text{const} \\
-&= -\frac{T}{2} \ln(2\pi) + \frac{T}{2} \ln r - \frac{r}{2} \left( W_Y - 2S_C + W_C \right) + (\alpha_r - 1) \ln r - \beta_r r + \text{const}.
-\end{align*}
-"""
-  ╠═╡ =#
-
 # ╔═╡ 8b2e4f25-3daf-4b61-99cd-cce847bb601c
 function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	K, _ = size(A)
@@ -106,27 +31,16 @@ function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
 
 	for t in 2:T
-		if (tr(Q) != 0)
-			x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
+		x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
+
+		if D == 1
+			y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), sqrt.(R))) 
 		else
-			x[:, t] = A * x[:, t-1] # Q zero matrix special case
+			y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
 		end
-		y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
 	end
 
 	return y, x
-end
-
-# ╔═╡ 8d71163c-88b6-4e26-a11f-6ca03753e2d2
-begin
-	A_lg = [1.0 1.0; 0.0 1.0]
-    C_lg = [1.0 0.0]
-	Q_lg = Diagonal([0.1, 0.1])
-	R_lg = [0.1]
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([1.0, 1.0])
-	Random.seed!(99)
-	y, x_true = gen_data(A_lg, C_lg, Q_lg, R_lg, μ_0, Σ_0, 100)
 end
 
 # ╔═╡ d3c060a3-42d0-47a7-b3d7-72efb0fd310e
@@ -138,6 +52,28 @@ struct HPP_D
     b::Float64 
     μ_0::Vector{Float64} # auxiliary hidden state mean
     Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
+end
+
+# ╔═╡ 885536c6-1531-4fa5-b191-41b890ab2e9e
+let
+	Random.seed!(133)
+	ss = zeros(1, 1000)
+	for i in 1:1000
+		ss[:, i] = rand(MvNormal(zeros(1), [2])) 
+	end
+
+	plot(ss'), summarystats(ss)
+end
+
+# ╔═╡ 7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
+let
+	Random.seed!(133)
+	ss = zeros(1000)
+	for i in 1:1000
+		ss[i] = rand(Normal(0, 2)) 
+	end
+
+	plot(ss), summarystats(ss)
 end
 
 # ╔═╡ 89eaa26c-c4d7-441e-87ec-51f70519030a
@@ -160,6 +96,7 @@ end
 function vb_m_diag(y, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float64, 2})
     D, T = size(y)
     K = size(A, 1)
+	
     # Compute the new parameters for the variational posterior of Λ_R
 	G = y*y' - 2 * C * hss.S_C + C * hss.W_C * C'
     a_ = hpp.a + 0.5 * T
@@ -167,31 +104,91 @@ function vb_m_diag(y, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float
     b_s = [hpp.b + 0.5 * G[i, i] for i in 1:D]
 	q_ρ = Gamma.(a_s, 1 ./ b_s)
 	Exp_R⁻¹ = diagm(mean.(q_ρ))
-	
+		
     # Compute the new parameters for the variational posterior of Λ_Q
+	"""
     H = hss.W_C - hss.S_A * A' - A * hss.S_A' + A * hss.W_A * A'
 	α_ = hpp.α + 0.5 * T
 	α_s = α_ * ones(K)
     β_s = [hpp.β + 0.5 * H[i, i] for i in 1:K]
 	q_𝛐 = Gamma.(α_s, 1 ./ β_s)	
 	Exp_Q⁻¹= diagm(mean.(q_𝛐))
+	"""
 	
-	return Exp_R⁻¹, a_s, b_s, Exp_Q⁻¹
+	α_ = hpp.α + 0.5 * T
+	α_s = α_ * ones(K)
+	H_22 = hss.W_C[2, 2] + hss.W_A[2, 2] - 2*hss.S_A[2, 2]
+	H_11 = hss.W_C[1, 1] - 2*hss.S_A[1, 1] + hss.W_A[1, 1] - 2*hss.S_A[2, 1] + 2*hss.W_A[1, 2] + hss.W_A[2, 2]
+
+	H = Diagonal([H_11, H_22])
+	β_s = [hpp.β + 0.5 * H[i, i] for i in 1:K]
+	q_𝛐 = Gamma.(α_s, 1 ./ β_s)	
+	Exp_Q⁻¹= diagm(mean.(q_𝛐))
+	return Exp_R⁻¹, Exp_Q⁻¹
 end
+
+# ╔═╡ 8d71163c-88b6-4e26-a11f-6ca03753e2d2
+begin
+	A_lg = [1.0 1.0; 0.0 1.0]
+    C_lg = [1.0 0.0]
+	Q_lg = Diagonal([0.2, 0.1])
+	R_lg = [0.1]
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	Random.seed!(111)
+	T = 100
+	y, x_true = gen_data(A_lg, C_lg, Q_lg, R_lg, μ_0, Σ_0, T)
+end
+
+# ╔═╡ 552ff579-43c5-413c-a1bc-3a0fb2b3c116
+md"""
+Local Linear Model
+
+y: uni-var
+
+x: 2-d
+
+DEBUG
+"""
 
 # ╔═╡ 7363c673-25ee-406d-90c2-1ebc4138621a
 let
-	D, T = size(y)
-	K = size(A_lg, 1)
+    y = vec(y)
+	w_c_x = sum(x_true[1, t] * x_true[1, t] for t in 1:T)
+	s_c = sum(x_true[1, t] * y[t] for t in 1:T)
+	G_11 = y' * y - 2 * s_c + w_c_x
+	#println(G_11)
+	#(T/2) / (0.5*G_11)
+	#vb_m_diag(y, hss, prior, A_lg, C_lg), hss
 
+	w_a_s = sum(x_true[2, t-1] * x_true[2, t-1] for t in 2:T)
+	s_a_s = sum(x_true[2, t-1] * x_true[2, t] for t in 2:T)
+	w_c_s = sum(x_true[2, t] * x_true[2, t] for t in 1:T)
+
+	H_22 = w_a_s + w_c_s - 2*s_a_s
+	println("q_s ", (T/2 + 0.01)/(0.5*H_22 + 0.01))
+
+	s_a_x = sum(x_true[1, t-1] * x_true[1, t] for t in 2:T)
+	w_a_x = sum(x_true[1, t-1] * x_true[1, t-1] for t in 2:T)
+
+	s_a_sx = sum(x_true[2, t-1] * x_true[1, t] for t in 2:T)
+	w_a_sx = sum(x_true[1, t-1] * x_true[2, t-1] for t in 2:T)
+	
+	H_11 = w_c_x - 2*s_a_x + w_a_x - 2*s_a_sx + 2*w_a_sx + w_a_s
+	println("q_x ", (T/2 + 0.01)/(0.5*H_11 + 0.01))
+
+	(w_c_x, s_a_x, w_a_x, s_a_sx, w_a_sx, w_a_s, w_c_s, s_a_s)
+end
+
+# ╔═╡ 66d58f4c-b724-4c7c-a7a3-18bd72e579d2
+let
 	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
 	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
 	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
 	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
-	
-	W_Q = Matrix{Float64}(I, K, K)
-	W_R = Matrix{Float64}(I, D, D)
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	#G = y*y' - 2 * C_lg * S_C + C_lg * W_C * C_lg'
+	#println(G)
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(2), Matrix{Float64}(I, 2, 2))
 	hss = HSS(W_C, W_A, S_C, S_A)
 	vb_m_diag(y, hss, prior, A_lg, C_lg)
 end
@@ -1773,15 +1770,16 @@ version = "1.4.1+0"
 
 # ╔═╡ Cell order:
 # ╠═eaa545cc-5312-11ee-1998-0b3161d803eb
-# ╟─787099f0-3bfd-4d0d-aaf5-47bf9872773b
-# ╟─1da797ab-876a-4ba1-b635-9a6d58ea2047
-# ╟─25bce776-de40-405f-b56e-2e077f5e58e3
 # ╠═8b2e4f25-3daf-4b61-99cd-cce847bb601c
-# ╠═8d71163c-88b6-4e26-a11f-6ca03753e2d2
-# ╠═d3c060a3-42d0-47a7-b3d7-72efb0fd310e
-# ╠═89eaa26c-c4d7-441e-87ec-51f70519030a
-# ╠═8eaae5a9-40eb-4249-8eb8-67652eb75006
+# ╟─d3c060a3-42d0-47a7-b3d7-72efb0fd310e
+# ╠═885536c6-1531-4fa5-b191-41b890ab2e9e
+# ╠═7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
+# ╟─89eaa26c-c4d7-441e-87ec-51f70519030a
+# ╟─8eaae5a9-40eb-4249-8eb8-67652eb75006
 # ╠═47f722d7-6512-4bee-9c05-878bfd886c6c
+# ╠═8d71163c-88b6-4e26-a11f-6ca03753e2d2
+# ╟─552ff579-43c5-413c-a1bc-3a0fb2b3c116
 # ╠═7363c673-25ee-406d-90c2-1ebc4138621a
+# ╠═66d58f4c-b724-4c7c-a7a3-18bd72e579d2
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

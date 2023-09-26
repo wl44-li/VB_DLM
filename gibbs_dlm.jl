@@ -1129,7 +1129,7 @@ function forward_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 
 		
 		# Filtered state mean and covariance (2.8a - 2.8c DLM with R)
 		μ_f[:, t] = μ_p + Σ_p * C' * inv(S_t) * (y[:, t] - f_t)
-		Σ_f[:, :, t] = Σ_p - Σ_p * C * inv(S_t) * C * Σ_p
+		Σ_f[:, :, t] = Σ_p - Σ_p * C' * inv(S_t) * C * Σ_p
 			
 		# Kalman gain
         #K_t = Σ_p * C' / (C * Σ_p * C' + E_R)
@@ -1426,7 +1426,8 @@ function vb_e_step(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64,
     # Compute the hidden state sufficient statistics
     W_C = sum(Σ_s, dims=3)[:, :, 1] + μ_s * μ_s'
     W_A = sum(Σ_s[:, :, 1:end-1], dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 1:end-1]'
-    S_C = y * μ_s'
+    #S_C = y * μ_s'
+	S_C = μ_s * y'
     S_A = sum(Σ_s_cross, dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 2:end]'
     W_Y = y * y'
 
@@ -1682,7 +1683,7 @@ let
 end
 
 # ╔═╡ 8443d615-15a4-4bc3-b40d-c103db279d70
-A, C, Q, R
+A, C, Q, R # ground-truth
 
 # ╔═╡ 5d16e7d4-0ddf-4eb5-b453-49461455a545
 md"""
@@ -2282,7 +2283,7 @@ function vb_e_diag(y, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prio
     W_A = sum(Σ_s[:, :, 1:end-1], dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 1:end-1]'
 	W_A += Σ_s0 + μ_s0*μ_s0'
 	
-    S_C = y * μ_s'
+    S_C = μ_s * y'
     S_A = sum(Σ_s_cross, dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 2:end]'
 	S_A += μ_s0*μ_s[:, 1]'
     W_Y = y * y'
@@ -2476,7 +2477,7 @@ end
 
 # ╔═╡ efb9cb5b-1cef-483c-aaa0-4f6e5accefeb
 md"""
-Compare with MCMC counterpart?
+TO-DO: Compare with MCMC counterpart
 """
 
 # ╔═╡ 845aa9ff-f164-4ff3-99a5-f4b6a3d7f4f3
@@ -2487,51 +2488,6 @@ md"""
 - Test with missing y
 - Test different length T
 """
-
-# ╔═╡ 473620a5-7151-4cc2-90f7-2bb5ca962b51
-md"""
-Test with local linear trend
-"""
-
-# ╔═╡ b05e7363-3664-41ef-b76a-e4282e953596
-begin
-	A_lg = [1.0 1.0; 0.0 1.0]
-    C_lg = [1.0 0.0]
-	Q_lg = Diagonal([1.0, 1.0])
-	R_lg = [1.0]
-	Random.seed!(123)
-	lg_data_Y, lg_data_θ = gen_data(A_lg, C_lg, Q_lg, R_lg, μ_0, Σ_0, 100)
-end
-
-# ╔═╡ 58c594f5-f3c5-4972-8d71-11a7e673e1ec
-let
-	D = 1
-	K = size(A_lg, 1)
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
-	
-	@time R, Q, elbos = vbem_c_diag(lg_data_Y, A_lg, C_lg, prior)
-	p = plot(elbos, label = "elbo", title = "ElBO progression")
-	
-	μs_f, σs_f2 = forward_v(lg_data_Y, A_lg, C_lg, R, Q, prior)
-    μs_s, σs_s2, _ = backward_v(μs_f, σs_f2, A_lg, Q, prior)
-	println("MSE, MAD of VB: ", error_metrics(lg_data_θ, μs_s))
-	
-	p, R, Q
-end
-
-# ╔═╡ 9d670e26-725b-476c-a945-055952e2eb83
-let
-	D = 1
-	K = size(A_lg, 1)
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
-	
-	@time R, Q, elbos = vbem_c_diag(lg_data_Y, A_lg, C_lg, prior, true)
-	p = plot(elbos, label = "elbo", title = "ElBO with Hyperparam learning")
-	μs_f, σs_f2 = forward_v(lg_data_Y, A_lg, C_lg, R, Q, prior)
-    μs_s, σs_s2, _ = backward_v(μs_f, σs_f2, A_lg, Q, prior)
-	println("MSE, MAD of VB: ", error_metrics(lg_data_θ, μs_s))
-	p, R, Q
-end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -4303,7 +4259,7 @@ version = "1.4.1+0"
 # ╟─488d1200-1ddf-4f06-9643-2eecb2072263
 # ╠═0591883c-49af-4201-b2f1-49f208506ece
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
-# ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
+# ╠═5e10db40-5c2e-41c3-a431-e0a4c81d2718
 # ╟─bb26ac74-da64-47be-a49a-4519101cffce
 # ╟─dd8f1c15-8915-4503-85f0-d3378f8e4751
 # ╠═85edba6b-d971-43bb-a74b-83a08cb055d8
@@ -4351,19 +4307,15 @@ version = "1.4.1+0"
 # ╟─6e22444a-a326-4a0d-8a41-ee8ec3efad89
 # ╟─1db2e8a1-ee66-472e-b2c5-eb14a294b426
 # ╠═aee774f4-5b39-4db0-b989-7a0b2fb09721
-# ╟─d41a19ee-df3f-486b-9b38-75c680f5b5bb
+# ╠═d41a19ee-df3f-486b-9b38-75c680f5b5bb
 # ╟─4bcd1acb-2121-4106-acbe-261c5704d2c2
 # ╟─22c2bedb-013b-406c-985d-b79bd9f5feb4
-# ╟─c8fc14ae-d26b-408d-a6da-ac14815bc1b8
+# ╠═c8fc14ae-d26b-408d-a6da-ac14815bc1b8
 # ╟─bb581c8e-ccb3-47cd-88ac-3272a0489303
 # ╠═2dc970e8-90c1-4ad3-b68b-a81825a304ec
 # ╠═b68f08ff-c8aa-4fdc-b4bb-c5a4e4ad3b50
 # ╠═f33a4026-bf24-4ea1-9af8-e1a63afbc441
 # ╟─efb9cb5b-1cef-483c-aaa0-4f6e5accefeb
 # ╟─845aa9ff-f164-4ff3-99a5-f4b6a3d7f4f3
-# ╟─473620a5-7151-4cc2-90f7-2bb5ca962b51
-# ╠═b05e7363-3664-41ef-b76a-e4282e953596
-# ╠═58c594f5-f3c5-4972-8d71-11a7e673e1ec
-# ╠═9d670e26-725b-476c-a945-055952e2eb83
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

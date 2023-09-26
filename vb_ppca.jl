@@ -27,7 +27,7 @@ $$x \sim \mathcal N(0, Q)$$
 
 $$y = Cx + v, \ v \sim \mathcal N(0, R)$$ 
 
-Where $A$ is fixed to the zero matrix, $Q$ is fixed as the identity matrix, and $R$ is an **isotropic** diagonal matrix.
+Where $A$ is fixed to the zero matrix, $Q$ is fixed as the identity matrix. $R$ is an **isotropic** diagonal matrix, $C$ is the matrix of **factor loadings**.
 """
 
 # ╔═╡ 9a7d917d-be50-4946-bb0a-b77062819064
@@ -61,6 +61,11 @@ begin
 		b_s # q(ρ)
 	end
 end
+
+# ╔═╡ 9024aaad-b1fe-4311-9693-7652b8252d8f
+md"""
+## VBM-step
+"""
 
 # ╔═╡ e835abae-6496-4638-a990-f008ce5286cf
 # input: data, hyperprior, and e-step suff stats
@@ -122,7 +127,12 @@ end
 
 # ╔═╡ 361256a9-67ff-4800-baea-06eb6f2347ff
 md"""
-Test M-Step update
+### Test M-Step
+"""
+
+# ╔═╡ 9ab66239-2b93-4ded-8ef0-761e10b7e69e
+md"""
+## VBE-step
 """
 
 # ╔═╡ c9f2a88e-da48-49ff-b987-02fa2231548e
@@ -210,7 +220,7 @@ end
 
 # ╔═╡ 03e29b61-f940-4759-b09b-be4be824c4e1
 md"""
-Test E-Step
+### Test E-Step
 """
 
 # ╔═╡ 41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
@@ -242,7 +252,7 @@ function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64
 end
 
 # ╔═╡ 4fe90ccd-e064-44e7-a1bd-25d6734645ea
-# A -> transition matrix, C -> emission matrix, Q -> process noise, Q -> observation noise, μ_0, Σ_0 -> auxiliary hidden state x_0
+# A -> transition matrix, C -> emission matrix, Q -> process noise, R -> observation noise, μ_0, Σ_0 -> auxiliary hidden state x_0
 function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	K, _ = size(A)
 	D, _ = size(C)
@@ -264,12 +274,17 @@ function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	return y, x
 end
 
+# ╔═╡ 5e02e5a8-c783-4f94-8fc1-2ec7de4bc5a6
+md"""
+### ground-truth
+"""
+
 # ╔═╡ 9d880af9-d64f-4d1f-9603-48fb5410d1c7
 begin
 	Random.seed!(121)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
-	C_d3k2 = [1.0 0.0; 0.1 0.8; 0.9 0.2] #K=2, D=3
+	C_d3k2 = [1.0 0.0; 0.1 0.8; 0.9 0.2] 
 	R = Diagonal([0.3, 0.3, 0.3])
 	T = 1000
 	y_pca, x_true = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, T)
@@ -496,6 +511,57 @@ end
 let
 	M = fit(PPCA, y_pca; method=(:bayes), maxoutdim=2)
 	loadings(M), M
+end
+
+# ╔═╡ d619fca8-b264-4b38-8bb7-84141a7697db
+md"""
+## Further testing
+"""
+
+# ╔═╡ b87c1604-79df-4665-8e85-528f7ed16d72
+md"""
+x: 2-d
+
+y: 10-d
+"""
+
+# ╔═╡ fde9b49e-801a-434b-8c30-e79fdbbc39b0
+begin
+	Random.seed!(121)
+	μ_0_t = zeros(2)
+	Σ_0_t = Diagonal(ones(2))
+	C_ = [1.0 0.0; 0.6 1.0; 0.3 0.2; 0.5 0.1; 0.1 0.3; 0.4 0.1; 0.8 0.2; 0.3 0.3; 0.4 0.6; 0.1 0.4] 
+	R_ = Diagonal(ones(10) .* 0.1)
+	y_10, x_2 = gen_data(zeros(2, 2), C_, Diagonal([1.0, 1.0]), R_, μ_0_t, Σ_0_t, T)
+end
+
+# ╔═╡ 8f358be3-86a9-4770-a941-004db6097889
+C_
+
+# ╔═╡ 4be24344-04e5-4717-8d00-ef65250ccc3a
+let
+	K = 2
+	γ = ones(K) .* 100
+	a = 0.01
+	b = 0.01
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_10, hpp, true)
+	println("elbo, k=2 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 31a9fbed-db80-46b3-978a-5033c5607457
+let
+	K = 1
+	γ = ones(K) .* 100
+	a = 0.01
+	b = 0.01
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_10, hpp, true)
+	println("elbo, k=1 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -1664,10 +1730,12 @@ version = "1.4.1+0"
 # ╠═cc904ce6-21bd-11ee-11da-ad91a6b43e16
 # ╟─38cfa6e8-8e34-425b-90f7-ef53b6b189df
 # ╟─5763062a-e218-4420-a767-bcf85c19839d
-# ╟─9a7d917d-be50-4946-bb0a-b77062819064
+# ╠═9a7d917d-be50-4946-bb0a-b77062819064
+# ╟─9024aaad-b1fe-4311-9693-7652b8252d8f
 # ╠═e835abae-6496-4638-a990-f008ce5286cf
 # ╟─361256a9-67ff-4800-baea-06eb6f2347ff
 # ╠═1b0973cd-e4ff-4f13-af91-bbc981802a10
+# ╟─9ab66239-2b93-4ded-8ef0-761e10b7e69e
 # ╠═c9f2a88e-da48-49ff-b987-02fa2231548e
 # ╟─9be0a627-7d71-4b83-9758-20149b1c8eee
 # ╟─3f01c2c3-8d79-4e22-a367-49f5c31785af
@@ -1678,7 +1746,8 @@ version = "1.4.1+0"
 # ╠═41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
 # ╠═b21b7e93-16d6-493b-9fda-3831c003a3cc
 # ╠═c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
-# ╟─4fe90ccd-e064-44e7-a1bd-25d6734645ea
+# ╠═4fe90ccd-e064-44e7-a1bd-25d6734645ea
+# ╟─5e02e5a8-c783-4f94-8fc1-2ec7de4bc5a6
 # ╠═9d880af9-d64f-4d1f-9603-48fb5410d1c7
 # ╟─09422a70-f43c-4b6b-9093-c1f0e5e1887f
 # ╟─4d73650c-cd93-4bb4-827e-f0a2edef17f1
@@ -1693,5 +1762,11 @@ version = "1.4.1+0"
 # ╠═ca26f018-b8d3-4a99-97e4-deff6f1e9bf0
 # ╠═0c2becba-7a86-4b1f-a742-8b663b821997
 # ╠═e63dfbf4-6481-46ab-ab6d-51cd337b5e3b
+# ╟─d619fca8-b264-4b38-8bb7-84141a7697db
+# ╟─b87c1604-79df-4665-8e85-528f7ed16d72
+# ╠═fde9b49e-801a-434b-8c30-e79fdbbc39b0
+# ╠═8f358be3-86a9-4770-a941-004db6097889
+# ╠═4be24344-04e5-4717-8d00-ef65250ccc3a
+# ╠═31a9fbed-db80-46b3-978a-5033c5607457
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

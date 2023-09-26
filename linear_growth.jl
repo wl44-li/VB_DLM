@@ -20,6 +20,9 @@ begin
 	using StatsBase
 end
 
+# ╔═╡ d98925a3-49a7-436b-8a48-02cb872d9fb9
+TableOfContents()
+
 # ╔═╡ 8b2e4f25-3daf-4b61-99cd-cce847bb601c
 function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	K, _ = size(A)
@@ -43,16 +46,11 @@ function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	return y, x
 end
 
-# ╔═╡ d3c060a3-42d0-47a7-b3d7-72efb0fd310e
-# hyper-prior parameters
-struct HPP_D
-    α::Float64
-    β::Float64 
-	a::Float64 
-    b::Float64 
-    μ_0::Vector{Float64} # auxiliary hidden state mean
-    Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
-end
+# ╔═╡ 5fb46b76-a90b-4d34-a7c1-ec5f47c5fe09
+md"""
+
+MvNormal behaviour 1-d is the same as Normal
+"""
 
 # ╔═╡ 885536c6-1531-4fa5-b191-41b890ab2e9e
 let
@@ -76,12 +74,28 @@ let
 	plot(ss), summarystats(ss)
 end
 
+# ╔═╡ 5c58ea90-44c6-471a-8d90-14429ac23f14
+md"""
+## VB-M step
+"""
+
 # ╔═╡ 89eaa26c-c4d7-441e-87ec-51f70519030a
 struct Q_Gamma
 	a
 	b
 	α
 	β
+end
+
+# ╔═╡ d3c060a3-42d0-47a7-b3d7-72efb0fd310e
+# hyper-prior parameters
+struct HPP_D
+    α::Float64
+    β::Float64 
+	a::Float64 
+    b::Float64 
+    μ_0::Vector{Float64} # auxiliary hidden state mean
+    Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
 end
 
 # ╔═╡ 8eaae5a9-40eb-4249-8eb8-67652eb75006
@@ -93,27 +107,16 @@ struct HSS
 end
 
 # ╔═╡ 47f722d7-6512-4bee-9c05-878bfd886c6c
-function vb_m_diag(y, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float64, 2})
+function vb_m_step(y, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float64, 2})
     D, T = size(y)
     K = size(A, 1)
 	
-    # Compute the new parameters for the variational posterior of Λ_R
 	G = y*y' - 2 * C * hss.S_C + C * hss.W_C * C'
     a_ = hpp.a + 0.5 * T
 	a_s = a_ * ones(D)
     b_s = [hpp.b + 0.5 * G[i, i] for i in 1:D]
 	q_ρ = Gamma.(a_s, 1 ./ b_s)
 	Exp_R⁻¹ = diagm(mean.(q_ρ))
-		
-    # Compute the new parameters for the variational posterior of Λ_Q
-	"""
-    H = hss.W_C - hss.S_A * A' - A * hss.S_A' + A * hss.W_A * A'
-	α_ = hpp.α + 0.5 * T
-	α_s = α_ * ones(K)
-    β_s = [hpp.β + 0.5 * H[i, i] for i in 1:K]
-	q_𝛐 = Gamma.(α_s, 1 ./ β_s)	
-	Exp_Q⁻¹= diagm(mean.(q_𝛐))
-	"""
 	
 	α_ = hpp.α + 0.5 * T
 	α_s = α_ * ones(K)
@@ -124,19 +127,19 @@ function vb_m_diag(y, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float
 	β_s = [hpp.β + 0.5 * H[i, i] for i in 1:K]
 	q_𝛐 = Gamma.(α_s, 1 ./ β_s)	
 	Exp_Q⁻¹= diagm(mean.(q_𝛐))
-	return Exp_R⁻¹, Exp_Q⁻¹
+	return Exp_R⁻¹, Exp_Q⁻¹, Q_Gamma(a_, b_s, α_, β_s)
 end
 
 # ╔═╡ 8d71163c-88b6-4e26-a11f-6ca03753e2d2
 begin
 	A_lg = [1.0 1.0; 0.0 1.0]
     C_lg = [1.0 0.0]
-	Q_lg = Diagonal([0.2, 0.1])
+	Q_lg = Diagonal([0.05, 0.03])
 	R_lg = [0.1]
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	Random.seed!(111)
-	T = 100
+	T = 1000
 	y, x_true = gen_data(A_lg, C_lg, Q_lg, R_lg, μ_0, Σ_0, T)
 end
 
@@ -147,8 +150,6 @@ Local Linear Model
 y: uni-var
 
 x: 2-d
-
-DEBUG
 """
 
 # ╔═╡ 7363c673-25ee-406d-90c2-1ebc4138621a
@@ -157,15 +158,14 @@ let
 	w_c_x = sum(x_true[1, t] * x_true[1, t] for t in 1:T)
 	s_c = sum(x_true[1, t] * y[t] for t in 1:T)
 	G_11 = y' * y - 2 * s_c + w_c_x
-	#println(G_11)
-	#(T/2) / (0.5*G_11)
-	#vb_m_diag(y, hss, prior, A_lg, C_lg), hss
+	println("G_11: ", G_11)
 
 	w_a_s = sum(x_true[2, t-1] * x_true[2, t-1] for t in 2:T)
 	s_a_s = sum(x_true[2, t-1] * x_true[2, t] for t in 2:T)
 	w_c_s = sum(x_true[2, t] * x_true[2, t] for t in 1:T)
 
 	H_22 = w_a_s + w_c_s - 2*s_a_s
+	println(H_22)
 	println("q_s ", (T/2 + 0.01)/(0.5*H_22 + 0.01))
 
 	s_a_x = sum(x_true[1, t-1] * x_true[1, t] for t in 2:T)
@@ -175,10 +175,24 @@ let
 	w_a_sx = sum(x_true[1, t-1] * x_true[2, t-1] for t in 2:T)
 	
 	H_11 = w_c_x - 2*s_a_x + w_a_x - 2*s_a_sx + 2*w_a_sx + w_a_s
+	println(H_11)
 	println("q_x ", (T/2 + 0.01)/(0.5*H_11 + 0.01))
 
 	(w_c_x, s_a_x, w_a_x, s_a_sx, w_a_sx, w_a_s, w_c_s, s_a_s)
 end
+
+# ╔═╡ ac33edbd-fba3-45a4-9ba5-0b7e4f7a563b
+md"""
+
+### Test M-step
+ground-truth precisions
+
+R⁻¹ = 10
+
+Q⁻¹[1, 1] = 20
+
+Q⁻¹[2, 2] = 33.3
+"""
 
 # ╔═╡ 66d58f4c-b724-4c7c-a7a3-18bd72e579d2
 let
@@ -186,11 +200,336 @@ let
 	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
 	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
 	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
-	#G = y*y' - 2 * C_lg * S_C + C_lg * W_C * C_lg'
-	#println(G)
+
+	G = y*y' - 2 * C_lg * S_C + C_lg * W_C * C_lg'
+	println("G: ", G)
+
+	# DEBUG: H matrix form
+	H = W_C - S_A * A_lg' - A_lg * S_A' + A_lg * W_A * A_lg'
+	
 	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(2), Matrix{Float64}(I, 2, 2))
 	hss = HSS(W_C, W_A, S_C, S_A)
-	vb_m_diag(y, hss, prior, A_lg, C_lg)
+	R_inv, Q_inv, _ = vb_m_step(y, hss, prior, A_lg, C_lg)
+end
+
+# ╔═╡ f5d00b0d-87d8-4677-a1f3-fbd5b63b337d
+md"""
+## VB-E step
+"""
+
+# ╔═╡ db3f4331-1128-47fd-b319-a40925517bf7
+function forward_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q::Array{Float64, 2}, prior::HPP_D)
+    P, T = size(y)
+    K = size(A, 1)
+    μ_0, Σ_0 = prior.μ_0, prior.Σ_0
+    
+    # Initialize the filtered means and covariances
+    μ_f = zeros(K, T)
+    Σ_f = zeros(K, K, T)
+    f_s = zeros(P, T)
+	S_s = zeros(P, P, T)
+    # Set the initial filtered mean and covariance to their prior values
+	A_1 = A * μ_0
+	R_1 = A * Σ_0 * A' + E_Q
+	
+	f_1 = C * A_1
+	S_1 = C * R_1 * C' + E_R
+	f_s[:, 1] = f_1
+	S_s[:, :, 1] = S_1
+	
+    μ_f[:, 1] = A_1 + R_1 * C'* inv(S_1) * (y[:, 1] - f_1)
+    Σ_f[:, :, 1] = R_1 - R_1*C'*inv(S_1)*C*R_1 
+    
+    # Forward pass (kalman filter)
+    for t = 2:T
+        μ_p = A * μ_f[:, t-1]
+        Σ_p = A * Σ_f[:, :, t-1] * A' + E_Q
+		f_t = C * μ_p
+		S_t = C * Σ_p * C' + E_R
+		f_s[:, t] = f_t
+		S_s[:, :, t] = S_t
+		μ_f[:, t] = μ_p + Σ_p * C' * inv(S_t) * (y[:, t] - f_t)
+		Σ_f[:, :, t] = Σ_p - Σ_p * C' * inv(S_t) * C * Σ_p
+    end
+	
+    log_z = sum(logpdf(MvNormal(f_s[:, i], Symmetric(S_s[:, :, i])), y[:, i]) for i in 1:T)
+    return μ_f, Σ_f, log_z
+end
+
+# ╔═╡ ca6046a5-363d-4292-885b-b88fed02bc46
+function backward_(μ_f::Array{Float64, 2}, Σ_f::Array{Float64, 3}, A::Array{Float64, 2}, E_Q::Array{Float64, 2}, prior)
+    K, T = size(μ_f)
+    
+    μ_s = zeros(K, T)
+    Σ_s = zeros(K, K, T)
+    Σ_s_cross = zeros(K, K, T)
+    
+    μ_s[:, T] = μ_f[:, T]
+    Σ_s[:, :, T] = Σ_f[:, :, T]
+    
+    # Backward pass
+    for t = T-1:-1:1
+        J_t = Σ_f[:, :, t] * A' / (A * Σ_f[:, :, t] * A' + E_Q)
+
+        μ_s[:, t] = μ_f[:, t] + J_t * (μ_s[:, t+1] - A * μ_f[:, t])
+        Σ_s[:, :, t] = Σ_f[:, :, t] + J_t * (Σ_s[:, :, t+1] - A * Σ_f[:, :, t] * A' - E_Q) * J_t'
+
+		Σ_s_cross[:, :, t+1] = J_t * Σ_s[:, :, t+1]
+    end
+	Σ_s_cross[:, :, 1] = inv(I + A'*A) * A' * Σ_s[:, :, 1]
+
+	J_0 = prior.Σ_0 * A' / (A * prior.Σ_0 * A' + E_Q)
+	μ_s0 = prior.μ_0 + J_0 * (μ_s[:, 1] -  A * prior.μ_0)
+	Σ_s0 = prior.Σ_0 + J_0 * (Σ_s[:, :, 1] - A * prior.Σ_0 * A' - E_Q) * J_0'
+	
+    return μ_s, Σ_s, μ_s0, Σ_s0, Σ_s_cross
+end
+
+# ╔═╡ bb71b7ec-56ef-4850-8499-83fb66f5e977
+function vb_e_step(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q::Array{Float64, 2}, prior::HPP_D)
+    # Run the forward pass
+    μ_f, Σ_f, log_Z = forward_(y, A, C, E_R, E_Q, prior)
+
+    # Run the backward pass
+    μ_s, Σ_s, μ_s0, Σ_s0, Σ_s_cross = backward_(μ_f, Σ_f, A, E_Q, prior)
+
+    # Compute the hidden state sufficient statistics
+    W_C = sum(Σ_s, dims=3)[:, :, 1] + μ_s * μ_s'
+    W_A = sum(Σ_s[:, :, 1:end-1], dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 1:end-1]'
+    S_C = μ_s * y'
+    S_A = sum(Σ_s_cross, dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 2:end]'
+    W_Y = y * y'
+
+	# Return the hidden state sufficient statistics
+    return HSS(W_C, W_A, S_C, S_A), μ_s0, Σ_s0, log_Z
+end
+
+# ╔═╡ 672181cc-1d87-4130-a043-df6055d23780
+md"""
+### Test E-step
+"""
+
+# ╔═╡ 5d3e1bea-4975-4a88-b6bb-e6ef5e5dec77
+let
+	K = size(A_lg, 1)
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+
+	hss_e, _ = vb_e_step(y, A_lg, C_lg, [0.1], [0.02 0.0; 0.0 0.01], prior)
+
+	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
+	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	hss_t = HSS(W_C, W_A, S_C, S_A)
+	hss_t, hss_e
+end
+
+# ╔═╡ 499b23e4-b27c-49c2-b8e2-28549585a2b5
+md"""
+## VBEM
+"""
+
+# ╔═╡ 43351344-ed89-47ba-8728-b5e7aee6c202
+function vbem_lg(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::HPP_D, max_iter=100)
+	
+	hss = HSS(ones(size(A)), ones(size(A)), ones(size(C')), ones(size(A)))
+	E_R_inv, E_Q_inv = missing, missing
+
+	for i in 1:max_iter
+		E_R_inv, E_Q_inv, _ = vb_m_step(y, hss, prior, A, C)
+				
+		hss, _ = vb_e_step(y, A, C, inv(E_R_inv), inv(E_Q_inv), prior)
+	end
+	
+	return E_R_inv, E_Q_inv
+end
+
+# ╔═╡ 325b8f6b-861e-40ea-a41d-d222f4f85fe6
+function vbem_his_plot(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::HPP_D, max_iter=100)
+    P, T = size(y)
+    K, _ = size(A)
+
+    W_C = zeros(K, K)
+    W_A = zeros(K, K)
+    S_C = zeros(K, P)
+    S_A = zeros(K, K)
+    hss = HSS(W_C, W_A, S_C, S_A)
+	
+    # Initialize the history of E_R and E_Q
+    E_R_history = zeros(P, max_iter)
+    E_Q_history = zeros(K, K, max_iter)
+
+    # Repeat until convergence
+    for iter in 1:max_iter
+		E_R_inv, E_Q_inv = vb_m_step(y, hss, prior, A, C)
+				
+		hss, _ = vb_e_step(y, A, C, inv(E_R_inv), inv(E_Q_inv), prior)
+
+        # Store the history of E_R and E_Q
+        E_R_history[:, iter] = E_R_inv
+        E_Q_history[:, :, iter] = E_Q_inv
+    end
+
+	p1 = plot(title = "Learning of E_R")
+    for i in 1:P
+        plot!(5:max_iter, [E_R_history[i, t] for t in 5:max_iter], label = "E_R[$i]")
+    end
+
+    p2 = plot(title = "Learning of E_Q")
+    for i in 1:K
+        plot!(5:max_iter, [E_Q_history[i, i, t] for t in 5:max_iter], label = "E_Q[$i, $i]")
+    end
+	
+	plot(p1, p2, layout = (1, 2))
+end
+
+# ╔═╡ fcf3fe2d-4954-4c67-9439-f3907264d9dd
+let
+	K = size(A_lg, 1)
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	vbem_his_plot(y, A_lg, C_lg, prior)
+end
+
+# ╔═╡ 46dfaa18-367b-467a-b345-bc892e8926bf
+let
+	K = size(A_lg, 1)
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	vbem_lg(y, A_lg, C_lg, prior, 20)
+end
+
+# ╔═╡ bfb12482-859e-412d-b647-d0824cb42b4c
+md"""
+## Convergence and Hyperparam Update
+"""
+
+# ╔═╡ f928d8a9-46d2-47ac-8ec4-a06fab255257
+function update_hyp(hpp, Q_gam)
+	b_s = Q_gam.b
+	D = length(b_s)
+	a_s = Q_gam.a * ones(D)
+	exp_ρ = a_s ./ b_s 
+	exp_log_ρ = [(digamma(Q_gam.a) - log(b_s[i])) for i in 1:D]
+    d = mean(exp_ρ)
+    c = mean(exp_log_ρ)
+    
+    # Update using fixed point equations
+	a = hpp.a		
+	α = hpp.α
+    for _ in 1:100
+        ψ_a = digamma(a)
+        ψ_a_p = trigamma(a)
+        
+        a_new = a * exp(-(ψ_a - log(a) + log(d) - c) / (a * ψ_a_p - 1))
+		a = a_new
+
+		# check convergence
+        if abs(a_new - a) < 1e-5
+            break
+        end
+    end
+    
+    # Update `b` using the converged value of `a`
+    b = a/d
+
+	β_s = Q_gam.β
+	K = length(β_s)
+	α_s = Q_gam.α * ones(K)
+	exp_𝛐 = α_s ./ β_s 
+	exp_log_𝛐 = [(digamma(Q_gam.α) - log(β_s[i])) for i in 1:K]
+    d_ = mean(exp_𝛐)
+    c_ = mean(exp_log_𝛐)
+
+	for _ in 1:100
+        ψ_α = digamma(α)
+        ψ_α_p = trigamma(α)
+        
+        α_new = α * exp(-(ψ_α - log(α) + log(d_) - c_) / (α * ψ_α_p - 1))
+		α = α_new
+
+		# check convergence
+        if abs(α_new - α) < 1e-5
+            break
+        end
+    end
+	β = α/d_
+	
+	return a, b, α, β
+end
+
+# ╔═╡ b1200f96-ad6b-4579-8708-94d3a1960f29
+function kl_gamma(a_0, b_0, a_s, b_s)
+	kl = a_s*log(b_s) - a_0*log(b_0) - loggamma(a_s) + loggamma(a_0)
+	kl += (a_s - a_0)*(digamma(a_s) - log(b_s))
+	kl -= a_s*(1 - b_0/b_s)
+	return kl
+end
+
+# ╔═╡ fa6e2b54-246c-4353-a1ac-11e41fe69c99
+function vbem_lg_c(y, A::Array{Float64, 2}, C::Array{Float64, 2}, prior, hp_learn=false, max_iter=200, tol=5e-3)
+
+	D, _ = size(y)
+	K = size(A, 1)
+	hss = HSS(ones(size(A)), ones(size(A)), ones(size(C')), ones(size(A)))
+	E_R_inv, E_Q_inv = missing, missing
+	elbo_prev = -Inf
+	el_s = zeros(max_iter)
+	
+	for i in 1:max_iter
+		E_R_inv, E_Q_inv, Q_gam = vb_m_step(y, hss, prior, A, C)
+		hss, μ_s0, Σ_s0, log_Z = vb_e_step(y, A, C, inv(E_R_inv), inv(E_Q_inv), prior)
+		
+		kl_ρ = sum([kl_gamma(prior.a, prior.b, Q_gam.a, (Q_gam.b)[s]) for s in 1:D])
+		kl_𝛐 = sum([kl_gamma(prior.α, prior.β, Q_gam.α, (Q_gam.β)[s]) for s in 1:K])
+		
+		elbo = log_Z - kl_ρ - kl_𝛐
+		el_s[i] = elbo
+		
+		if (hp_learn)
+			if (i%5 == 0) 
+				a_, b_, α_, β_ = update_hyp(prior, Q_gam)
+				prior = HPP_D(α_, β_, a_, b_, μ_s0, Σ_s0)
+			end
+		end
+		
+		if abs(elbo - elbo_prev) < tol
+			println("Stopped at iteration: $i")
+			el_s = el_s[1:i]
+            break
+		end
+		
+        elbo_prev = elbo
+
+		if (i == max_iter)
+			println("Warning: VB have not necessarily converged at $max_iter iterations with tolerance $tol")
+		end
+	end
+	
+	return inv(E_R_inv), inv(E_Q_inv), el_s
+end
+
+# ╔═╡ 0234e5f1-90f4-4e6f-8e58-1ea46e2d09bb
+let
+	D, _ = size(y)
+	K = size(A_lg, 1)
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	
+	R, Q, elbos = vbem_lg_c(y, A_lg, C_lg, prior)
+	p = plot(elbos, label = "elbo", title = "ElBO progression")
+	p, R, Q
+end
+
+# ╔═╡ 87d7e601-6508-4636-9356-220a738a9406
+let
+	K = size(A_lg, 1)
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	vbem_lg_c(y, A_lg, C_lg, prior, true, 15)
+end
+
+# ╔═╡ 9789edc5-83fa-4398-b323-1ed43fae518b
+let
+	K = size(A_lg, 1)
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	vbem_lg_c(y, A_lg, C_lg, prior, true, 10)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -1770,16 +2109,38 @@ version = "1.4.1+0"
 
 # ╔═╡ Cell order:
 # ╠═eaa545cc-5312-11ee-1998-0b3161d803eb
-# ╠═8b2e4f25-3daf-4b61-99cd-cce847bb601c
-# ╟─d3c060a3-42d0-47a7-b3d7-72efb0fd310e
-# ╠═885536c6-1531-4fa5-b191-41b890ab2e9e
-# ╠═7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
-# ╟─89eaa26c-c4d7-441e-87ec-51f70519030a
-# ╟─8eaae5a9-40eb-4249-8eb8-67652eb75006
+# ╟─d98925a3-49a7-436b-8a48-02cb872d9fb9
+# ╟─8b2e4f25-3daf-4b61-99cd-cce847bb601c
+# ╟─5fb46b76-a90b-4d34-a7c1-ec5f47c5fe09
+# ╟─885536c6-1531-4fa5-b191-41b890ab2e9e
+# ╟─7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
+# ╟─5c58ea90-44c6-471a-8d90-14429ac23f14
+# ╠═89eaa26c-c4d7-441e-87ec-51f70519030a
+# ╠═d3c060a3-42d0-47a7-b3d7-72efb0fd310e
+# ╠═8eaae5a9-40eb-4249-8eb8-67652eb75006
 # ╠═47f722d7-6512-4bee-9c05-878bfd886c6c
 # ╠═8d71163c-88b6-4e26-a11f-6ca03753e2d2
 # ╟─552ff579-43c5-413c-a1bc-3a0fb2b3c116
 # ╠═7363c673-25ee-406d-90c2-1ebc4138621a
+# ╟─ac33edbd-fba3-45a4-9ba5-0b7e4f7a563b
 # ╠═66d58f4c-b724-4c7c-a7a3-18bd72e579d2
+# ╟─f5d00b0d-87d8-4677-a1f3-fbd5b63b337d
+# ╠═db3f4331-1128-47fd-b319-a40925517bf7
+# ╠═ca6046a5-363d-4292-885b-b88fed02bc46
+# ╠═bb71b7ec-56ef-4850-8499-83fb66f5e977
+# ╟─672181cc-1d87-4130-a043-df6055d23780
+# ╟─5d3e1bea-4975-4a88-b6bb-e6ef5e5dec77
+# ╟─499b23e4-b27c-49c2-b8e2-28549585a2b5
+# ╠═43351344-ed89-47ba-8728-b5e7aee6c202
+# ╟─325b8f6b-861e-40ea-a41d-d222f4f85fe6
+# ╠═fcf3fe2d-4954-4c67-9439-f3907264d9dd
+# ╠═46dfaa18-367b-467a-b345-bc892e8926bf
+# ╟─bfb12482-859e-412d-b647-d0824cb42b4c
+# ╠═f928d8a9-46d2-47ac-8ec4-a06fab255257
+# ╠═b1200f96-ad6b-4579-8708-94d3a1960f29
+# ╠═fa6e2b54-246c-4353-a1ac-11e41fe69c99
+# ╠═0234e5f1-90f4-4e6f-8e58-1ea46e2d09bb
+# ╠═87d7e601-6508-4636-9356-220a738a9406
+# ╠═9789edc5-83fa-4398-b323-1ed43fae518b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

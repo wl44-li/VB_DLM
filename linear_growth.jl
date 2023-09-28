@@ -46,33 +46,10 @@ function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	return y, x
 end
 
-# ╔═╡ 5fb46b76-a90b-4d34-a7c1-ec5f47c5fe09
+# ╔═╡ 35d519d0-690b-4850-863d-ae22edb45692
 md"""
-
-MvNormal behaviour 1-d is the same as Normal
+# Linear growth model
 """
-
-# ╔═╡ 885536c6-1531-4fa5-b191-41b890ab2e9e
-let
-	Random.seed!(133)
-	ss = zeros(1, 1000)
-	for i in 1:1000
-		ss[:, i] = rand(MvNormal(zeros(1), [2])) 
-	end
-
-	plot(ss'), summarystats(ss)
-end
-
-# ╔═╡ 7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
-let
-	Random.seed!(133)
-	ss = zeros(1000)
-	for i in 1:1000
-		ss[i] = rand(Normal(0, 2)) 
-	end
-
-	plot(ss), summarystats(ss)
-end
 
 # ╔═╡ 5c58ea90-44c6-471a-8d90-14429ac23f14
 md"""
@@ -159,13 +136,13 @@ let
 	s_c = sum(x_true[1, t] * y[t] for t in 1:T)
 	G_11 = y' * y - 2 * s_c + w_c_x
 	println("G_11: ", G_11)
-
+	println()
 	w_a_s = sum(x_true[2, t-1] * x_true[2, t-1] for t in 2:T)
 	s_a_s = sum(x_true[2, t-1] * x_true[2, t] for t in 2:T)
 	w_c_s = sum(x_true[2, t] * x_true[2, t] for t in 1:T)
 
 	H_22 = w_a_s + w_c_s - 2*s_a_s
-	println(H_22)
+	println("H_22: ", H_22)
 	println("q_s ", (T/2 + 0.01)/(0.5*H_22 + 0.01))
 
 	s_a_x = sum(x_true[1, t-1] * x_true[1, t] for t in 2:T)
@@ -175,7 +152,7 @@ let
 	w_a_sx = sum(x_true[1, t-1] * x_true[2, t-1] for t in 2:T)
 	
 	H_11 = w_c_x - 2*s_a_x + w_a_x - 2*s_a_sx + 2*w_a_sx + w_a_s
-	println(H_11)
+	println("H_11: ", H_11)
 	println("q_x ", (T/2 + 0.01)/(0.5*H_11 + 0.01))
 
 	(w_c_x, s_a_x, w_a_x, s_a_sx, w_a_sx, w_a_s, w_c_s, s_a_s)
@@ -370,12 +347,12 @@ function vbem_his_plot(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Floa
         E_Q_history[:, :, iter] = E_Q_inv
     end
 
-	p1 = plot(title = "Learning of E_R")
+	p1 = plot(title = "Learning of R")
     for i in 1:P
         plot!(5:max_iter, [E_R_history[i, t] for t in 5:max_iter], label = "E_R[$i]")
     end
 
-    p2 = plot(title = "Learning of E_Q")
+    p2 = plot(title = "Learning of Q")
     for i in 1:K
         plot!(5:max_iter, [E_Q_history[i, i, t] for t in 5:max_iter], label = "E_Q[$i, $i]")
     end
@@ -530,6 +507,44 @@ let
 	K = size(A_lg, 1)
 	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
 	vbem_lg_c(y, A_lg, C_lg, prior, true, 10)
+end
+
+# ╔═╡ 299e6072-e261-4bd1-b5a7-e16454f42429
+md"""
+# Aside
+"""
+
+# ╔═╡ f0302ce8-e5ec-4336-966c-062de4a1e937
+md"""
+## debugging notes
+"""
+
+# ╔═╡ 5fb46b76-a90b-4d34-a7c1-ec5f47c5fe09
+md"""
+
+MvNormal behaviour 1-d is the same as Normal
+"""
+
+# ╔═╡ 885536c6-1531-4fa5-b191-41b890ab2e9e
+let
+	Random.seed!(133)
+	ss = zeros(1, 1000)
+	for i in 1:1000
+		ss[:, i] = rand(MvNormal(zeros(1), [2])) 
+	end
+
+	plot(ss'), summarystats(ss)
+end
+
+# ╔═╡ 7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
+let
+	Random.seed!(133)
+	ss = zeros(1000)
+	for i in 1:1000
+		ss[i] = rand(Normal(0, 2)) 
+	end
+
+	plot(ss), summarystats(ss)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2111,9 +2126,7 @@ version = "1.4.1+0"
 # ╠═eaa545cc-5312-11ee-1998-0b3161d803eb
 # ╟─d98925a3-49a7-436b-8a48-02cb872d9fb9
 # ╟─8b2e4f25-3daf-4b61-99cd-cce847bb601c
-# ╟─5fb46b76-a90b-4d34-a7c1-ec5f47c5fe09
-# ╟─885536c6-1531-4fa5-b191-41b890ab2e9e
-# ╟─7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
+# ╟─35d519d0-690b-4850-863d-ae22edb45692
 # ╟─5c58ea90-44c6-471a-8d90-14429ac23f14
 # ╠═89eaa26c-c4d7-441e-87ec-51f70519030a
 # ╠═d3c060a3-42d0-47a7-b3d7-72efb0fd310e
@@ -2132,8 +2145,8 @@ version = "1.4.1+0"
 # ╟─5d3e1bea-4975-4a88-b6bb-e6ef5e5dec77
 # ╟─499b23e4-b27c-49c2-b8e2-28549585a2b5
 # ╠═43351344-ed89-47ba-8728-b5e7aee6c202
-# ╟─325b8f6b-861e-40ea-a41d-d222f4f85fe6
-# ╠═fcf3fe2d-4954-4c67-9439-f3907264d9dd
+# ╠═325b8f6b-861e-40ea-a41d-d222f4f85fe6
+# ╟─fcf3fe2d-4954-4c67-9439-f3907264d9dd
 # ╠═46dfaa18-367b-467a-b345-bc892e8926bf
 # ╟─bfb12482-859e-412d-b647-d0824cb42b4c
 # ╠═f928d8a9-46d2-47ac-8ec4-a06fab255257
@@ -2142,5 +2155,10 @@ version = "1.4.1+0"
 # ╠═0234e5f1-90f4-4e6f-8e58-1ea46e2d09bb
 # ╠═87d7e601-6508-4636-9356-220a738a9406
 # ╠═9789edc5-83fa-4398-b323-1ed43fae518b
+# ╟─299e6072-e261-4bd1-b5a7-e16454f42429
+# ╟─f0302ce8-e5ec-4336-966c-062de4a1e937
+# ╟─5fb46b76-a90b-4d34-a7c1-ec5f47c5fe09
+# ╟─885536c6-1531-4fa5-b191-41b890ab2e9e
+# ╟─7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

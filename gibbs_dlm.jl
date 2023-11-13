@@ -411,6 +411,23 @@ function ffbs_x(Ys, A, C, R, Q, m_0, P_0)
 	return X[:, 2:end], X[:, 1]
 end
 
+# ╔═╡ 8bf82189-1c2e-468f-87fa-a881b3d5db92
+md"""
+### TO-TEST: SVD FFBS
+"""
+
+# ╔═╡ 739c8e87-783c-4c8d-bb5b-a003df79d05f
+MM = randn(4,3)
+
+# ╔═╡ 71b5aa0e-f288-4ebf-a94d-955e07ff3a8d
+F = svd(MM);
+
+# ╔═╡ 6094dd4f-91bd-4190-8a70-894c5ab2f424
+MM ≈ F.U * Diagonal(F.S) * F.Vt
+
+# ╔═╡ 31b9e521-bdce-4d89-bdd3-47ed5b63bda3
+F.U * Diagonal(F.S) * F.Vt
+
 # ╔═╡ 36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
 let
 	Random.seed!(177)
@@ -1232,6 +1249,122 @@ function forward_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 
     return μ_f, Σ_f, log_z
 end
 
+# ╔═╡ 5a0e86f3-a97c-4f3a-9cc5-4d6cd48b80b7
+md"""
+### TO-TEST: SVD-based Kalman Filter
+"""
+
+# ╔═╡ 6a9af65b-7384-4c6a-b025-9d577db2b3d1
+function forward_svd(Ys, A, C, R, Q, m_0, C_0)
+    _, T = size(Ys)
+    K, _ = size(A)
+    
+    # Initialize
+    ms = zeros(K, T+1)
+    
+    # Initialize SVD components for C_t and R_t
+    Us_C = Array{Array{Float64,2},1}(undef, T+1)
+    Ss_C = Array{Array{Float64,1},1}(undef, T+1)
+    Vs_C = Array{Array{Float64,2},1}(undef, T+1)
+
+    Us_R = Array{Array{Float64,2},1}(undef, T)
+    Ss_R = Array{Array{Float64,1},1}(undef, T)
+    Vs_R = Array{Array{Float64,2},1}(undef, T)
+
+    # SVD of initial C_0
+    F = svd(C_0)
+    Us_C[1], Ss_C[1], Vs_C[1] = F.U, F.S, F.Vt
+
+    for t in 1:T
+        a_t = A * ms[:, t]
+        R_t = A * (Us_C[t] * Diagonal(Ss_C[t]) * Vs_C[t]) * A' + Q
+
+        # Compute SVD of R_t
+        F = svd(R_t)
+        Us_R[t], Ss_R[t], Vs_R[t] = F.U, F.S, F.Vt
+
+        # Update
+        f_t = C * a_t
+        Q_t = C * R_t * C' + R # V
+
+        # Kalman Gain and update estimates
+        K_t = R_t * C' * inv(Q_t)
+        ms[:, t+1] = a_t + K_t * (Ys[:, t] - f_t)
+
+        # Update and SVD of C_t
+        C_t = R_t - K_t * C * R_t
+        F = svd(C_t)
+        Us_C[t+1], Ss_C[t+1], Vs_C[t+1] = F.U, F.S, F.Vt
+    end
+    return ms, Us_C, Ss_C, Vs_C, Us_R, Ss_R, Vs_R
+end
+
+
+# ╔═╡ da86cb64-730d-4742-bd77-66ca2327f520
+function ffbs_svd(Ys, A, C, R, Q, m_0, C_0)
+    K, _ = size(A)
+    _, T = size(Ys)
+
+    ms, Us_C, Ss_C, Vs_C, Us_R, Ss_R, Vs_R = forward_svd(Ys, A, C, R, Q, m_0, C_0)
+    X = zeros(K, T+1)
+
+    Σ_T = Us_C[end] * Diagonal(Ss_C[end]) * Vs_C[end]
+    X[:, end] = rand(MvNormal(ms[:, end], Symmetric(Σ_T)))
+
+    # Backward Sampling
+    for t in T:-1:1
+        Σ_t = Us_C[t] * Diagonal(Ss_C[t]) * Vs_C[t]
+        R_t = Us_R[t] * Diagonal(Ss_R[t]) * Vs_R[t]
+
+        # Compute the smoothing mean and covariance using the SVD components
+        h_t = ms[:, t] + Σ_t * A' * inv(R_t) * (X[:, t+1] - ms[:, t])
+        H_t = Σ_t - Σ_t * A' * inv(R_t) * A * Σ_t
+
+        # Perform SVD on H_t to ensure numerical stability for sampling
+        F = svd(H_t)
+        U_H, S_H, V_Ht = F.U, F.S, F.Vt
+
+        # Sample the current state using the SVD components
+        H_t_svd = U_H * Diagonal(S_H) * V_Ht
+        X[:, t] = rand(MvNormal(h_t, Symmetric(H_t_svd)))
+    end
+    return X
+end
+
+# ╔═╡ 0d35590c-4f96-4aa4-a587-cbc9b0bca377
+md"""
+### TO-TEST: information fitler
+"""
+
+# ╔═╡ 5f92ab95-278a-4a79-b061-5fb36ac5c75e
+function information_filter(Ys, A, C, R, Q, η_0, Λ_0)
+    _, T = size(Ys)
+    K, _ = size(A)
+
+    # Initialize information vectors and matrices
+    ηs = zeros(K, T+1)
+    Λs = zeros(K, K, T+1)
+
+    ηs[:, 1] = η_0
+    Λs[:, :, 1] = Λ_0
+
+    for t in 1:T
+        M_t = A' * inv(Λs[:, :, t]) * A + inv(Q)
+        J_t = inv(Q) * A * inv(M_t)
+		
+        Λ_t_t_1 = inv(Q) - J_t' * inv(Q) * J_t  
+        η_t_t_1 = J_t' * ηs[:, t]
+		
+        Λ_t_t = Λ_t_t_1 + C' * inv(R) * C
+        η_t_t = η_t_t_1 + C' * inv(R) * Ys[:, t]
+
+        ηs[:, t+1] = η_t_t
+        Λs[:, :, t+1] = Λ_t_t
+    end
+
+    return ηs, Λs
+end
+
 # ╔═╡ 1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
 begin
 	### Beale VBEM
@@ -1427,12 +1560,10 @@ md"""
 function backward_(μ_f::Array{Float64, 2}, Σ_f::Array{Float64, 3}, A::Array{Float64, 2}, E_Q::Array{Float64, 2})
     K, T = size(μ_f)
     
-    # Initialize the smoothed means, covariances, and cross-covariances
     μ_s = zeros(K, T)
     Σ_s = zeros(K, K, T)
     Σ_s_cross = zeros(K, K, T)
     
-    # Set the final smoothed mean and covariance to their filtered values
     μ_s[:, T] = μ_f[:, T]
     Σ_s[:, :, T] = Σ_f[:, :, T]
     
@@ -1445,16 +1576,52 @@ function backward_(μ_f::Array{Float64, 2}, Σ_f::Array{Float64, 3}, A::Array{Fl
         μ_s[:, t] = μ_f[:, t] + J_t * (μ_s[:, t+1] - A * μ_f[:, t])
         Σ_s[:, :, t] = Σ_f[:, :, t] + J_t * (Σ_s[:, :, t+1] - A * Σ_f[:, :, t] * A' - E_Q) * J_t'
 
-        # Compute the cross covariance Σ_s_cross
-        #Σ_s_cross[:, :, t+1] = inv(inv(Σ_f[:, :, t]) + A'*A) * A' * Σ_s[:, :, t+1]
 		Σ_s_cross[:, :, t+1] = J_t * Σ_s[:, :, t+1]
     end
 	
 	Σ_s_cross[:, :, 1] = inv(I + A'*A) * A' * Σ_s[:, :, 1]
-	#J_1 = I * A' / (A * I * A' + E_Q)
-	#Σ_s_cross[:, :, 1] = J_1 * Σ_s[:, :, 1]
     return μ_s, Σ_s, Σ_s_cross
 end
+
+# ╔═╡ 4c4b9817-e137-4468-b364-34e791f5e26c
+md"""
+### TO-TEST: SVD Kalman Smoother
+"""
+
+# ╔═╡ d0fe5a19-225e-4ed3-b84d-eaa87618e594
+function backward_svd(A::Array{Float64, 2}, μ_f::Array{Float64, 2}, Us_C, Ss_C, Vs_C, A_s, Us_R, Ss_R, Vs_R)
+    K, T = size(A_s)
+    μ_s = zeros(K, T+1)
+    
+    # Initialize SVD components for Σ_s and Σ_s_cross
+    Us_S = Array{Array{Float64,2},1}(undef, T+1)
+    Ss_S = Array{Array{Float64,1},1}(undef, T+1)
+    Vs_S = Array{Array{Float64,2},1}(undef, T+1)
+    Σ_s_cross = Array{Array{Float64,2},1}(undef, T)
+    
+    # Set the final (t=T) smoothed mean to filtered values
+    μ_s[:, end] = μ_f[:, end]
+    Us_S[end], Ss_S[end], Vs_S[end] = Us_C[end] * Diagonal(Ss_C[end]) * Vs_C[end]
+
+    for t in T:-1:1
+        Σ_f_t = Us_C[t] * Diagonal(Ss_C[t]) * Vs_C[t]
+        R_s_t = Us_R[t] * Diagonal(Ss_R[t]) * Vs_R[t]
+
+        # Kalman Smoother Gain
+        K_t = Σ_f_t * A' * inv(R_s_t)
+		
+        μ_s[:, t] = μ_f[:, t] + K_t * (μ_s[:, t+1] - A_s[:, t])
+        Σ_s_t = Σ_f_t - K_t * (R_s_t - Us_S[t+1] * Diagonal(Ss_S[t+1]) * Vs_S[t+1]) * K_t'
+		F = svd(Σ_s_t)
+        Us_S[t], Ss_S[t], Vs_S[t] = F.U, F.S, F.Vt
+
+        Σ_s_cross_t = inv(inv(Σ_f_t) + A'*A) * A' * (Us_S[t+1] * Diagonal(Ss_S[t+1]) * Vs_S[t+1])
+        Σ_s_cross[t] = Σ_s_cross_t 
+    end
+
+    return μ_s, Us_S, Ss_S, Vs_S, Σ_s_cross
+end
+
 
 # ╔═╡ 098bc646-7300-4ac6-88af-08a599ba774a
 md"""
@@ -4305,6 +4472,12 @@ version = "1.4.1+0"
 # ╟─8c9357c8-8339-4889-8a91-b62e542f0407
 # ╠═e870cf29-b7f1-4bae-abed-a61501ac4f59
 # ╠═a9621810-e0cb-4925-8b6a-726f78d13510
+# ╟─8bf82189-1c2e-468f-87fa-a881b3d5db92
+# ╠═739c8e87-783c-4c8d-bb5b-a003df79d05f
+# ╠═71b5aa0e-f288-4ebf-a94d-955e07ff3a8d
+# ╠═6094dd4f-91bd-4190-8a70-894c5ab2f424
+# ╠═31b9e521-bdce-4d89-bdd3-47ed5b63bda3
+# ╠═da86cb64-730d-4742-bd77-66ca2327f520
 # ╠═36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
 # ╠═a95ed94c-5fe2-4c31-a7a6-e45e841af528
 # ╟─0450364a-bef2-425f-b610-b6088f2888f6
@@ -4351,11 +4524,17 @@ version = "1.4.1+0"
 # ╟─c096bbab-4009-4995-8f45-dc7ffab7ccfa
 # ╟─63bc1239-1a6a-4f3b-9d2c-9b904aec573c
 # ╠═2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
+# ╟─5a0e86f3-a97c-4f3a-9cc5-4d6cd48b80b7
+# ╠═6a9af65b-7384-4c6a-b025-9d577db2b3d1
+# ╟─0d35590c-4f96-4aa4-a587-cbc9b0bca377
+# ╠═5f92ab95-278a-4a79-b061-5fb36ac5c75e
 # ╟─1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
 # ╟─3100b411-e2de-4a43-be80-bcfcb42cef40
 # ╟─ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
 # ╟─1edc58de-db69-4dbd-bcc5-c72a07e841be
 # ╠═9ca2a2bf-27a9-461b-ae74-1c28ac883168
+# ╟─4c4b9817-e137-4468-b364-34e791f5e26c
+# ╠═d0fe5a19-225e-4ed3-b84d-eaa87618e594
 # ╟─098bc646-7300-4ac6-88af-08a599ba774a
 # ╟─11796ca9-30e2-4ba7-b8dc-9a0eda90e14e
 # ╠═e68dbe27-95ea-4710-9999-d2c4de0db914

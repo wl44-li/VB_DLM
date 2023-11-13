@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.26
+# v0.19.29
 
 using Markdown
 using InteractiveUtils
@@ -118,6 +118,52 @@ begin
 	Random.seed!(111)
 	T = 1000
 	y, x_true = gen_data(A_lg, C_lg, Q_lg, R_lg, μ_0, Σ_0, T)
+end
+
+# ╔═╡ 7f7b78b8-de47-4f02-b75a-4f1a53accd5b
+begin
+	A = [-1.0 -1.0 -1.0; 1.0 0.0 0.0; 0.0 1.0 0.0]
+	C = [1.0 0.0 0.0]
+	Q = Diagonal([2.5, 0.0, 0.0])
+	R = [0.2]
+	μ_ = [0.0, 0.0, 0.0]
+	Σ_ = Diagonal([1.0, 1.0, 1.0])
+	Random.seed!(123)
+	y_s, x_true_s = gen_data(A, C, Q, R, μ_, Σ_, T)
+end
+
+# ╔═╡ 47880f8f-80fd-4461-83f9-9eb74322eb1f
+size(C)
+
+# ╔═╡ 38cf7c69-fab1-44d4-95c0-f11320158814
+function vb_m_s(y, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float64, 2})
+    D, T = size(y)
+    K = size(A, 1)
+	
+	G = y*y' - 2 * C * hss.S_C + C * hss.W_C * C'
+    a_ = hpp.a + 0.5 * T
+	a_s = a_ * ones(D)
+    b_s = [hpp.b + 0.5 * G[i, i] for i in 1:D]
+	q_ρ = Gamma.(a_s, 1 ./ b_s)
+	Exp_R⁻¹ = diagm(mean.(q_ρ))
+
+	
+	return Exp_R⁻¹
+end
+
+# ╔═╡ ad218921-9fe5-4cea-a890-4a791a8200cc
+let
+	W_A = sum(x_true_s[:, t-1] * x_true_s[:, t-1]' for t in 2:T)
+	S_A = sum(x_true_s[:, t-1] * x_true_s[:, t]' for t in 2:T)
+	W_C = sum(x_true_s[:, t] * x_true_s[:, t]' for t in 1:T)
+	S_C = sum(x_true_s[:, t] * y_s[:, t]' for t in 1:T)
+
+	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(3), Matrix{Float64}(I, 3, 3))
+	hss = HSS(W_C, W_A, S_C, S_A)
+	
+	println("q_x ", (T/2 + 0.01)/ (0.01))
+	
+	vb_m_s(y_s, hss, prior, A, C), hss
 end
 
 # ╔═╡ 552ff579-43c5-413c-a1bc-3a0fb2b3c116
@@ -887,6 +933,12 @@ deps = ["Calculus", "NaNMath", "SpecialFunctions"]
 git-tree-sha1 = "5837a837389fccf076445fce071c8ddaea35a566"
 uuid = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
 version = "0.6.8"
+
+[[deps.EpollShim_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "8e9441ee83492030ace98f9789a654a6d0b1f643"
+uuid = "2702e6a9-849d-5ed8-8c21-79e8b8f9ee43"
+version = "0.0.20230411+0"
 
 [[deps.ExceptionUnwrapping]]
 deps = ["Test"]
@@ -1880,7 +1932,7 @@ uuid = "41fe7b60-77ed-43a1-b4f0-825fd5a5650d"
 version = "0.2.0"
 
 [[deps.Wayland_jll]]
-deps = ["Artifacts", "Expat_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg", "XML2_jll"]
+deps = ["Artifacts", "EpollShim_jll", "Expat_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg", "XML2_jll"]
 git-tree-sha1 = "ed8d92d9774b077c53e1da50fd81a36af3744c1c"
 uuid = "a2964d1f-97da-50d4-b82a-358c7fce9d89"
 version = "1.21.0+0"
@@ -2128,21 +2180,25 @@ version = "1.4.1+0"
 # ╟─8b2e4f25-3daf-4b61-99cd-cce847bb601c
 # ╟─35d519d0-690b-4850-863d-ae22edb45692
 # ╟─5c58ea90-44c6-471a-8d90-14429ac23f14
-# ╠═89eaa26c-c4d7-441e-87ec-51f70519030a
+# ╟─89eaa26c-c4d7-441e-87ec-51f70519030a
 # ╠═d3c060a3-42d0-47a7-b3d7-72efb0fd310e
 # ╠═8eaae5a9-40eb-4249-8eb8-67652eb75006
 # ╠═47f722d7-6512-4bee-9c05-878bfd886c6c
 # ╠═8d71163c-88b6-4e26-a11f-6ca03753e2d2
+# ╠═7f7b78b8-de47-4f02-b75a-4f1a53accd5b
+# ╠═47880f8f-80fd-4461-83f9-9eb74322eb1f
+# ╠═38cf7c69-fab1-44d4-95c0-f11320158814
+# ╠═ad218921-9fe5-4cea-a890-4a791a8200cc
 # ╟─552ff579-43c5-413c-a1bc-3a0fb2b3c116
 # ╠═7363c673-25ee-406d-90c2-1ebc4138621a
 # ╟─ac33edbd-fba3-45a4-9ba5-0b7e4f7a563b
-# ╠═66d58f4c-b724-4c7c-a7a3-18bd72e579d2
+# ╟─66d58f4c-b724-4c7c-a7a3-18bd72e579d2
 # ╟─f5d00b0d-87d8-4677-a1f3-fbd5b63b337d
 # ╠═db3f4331-1128-47fd-b319-a40925517bf7
 # ╠═ca6046a5-363d-4292-885b-b88fed02bc46
 # ╠═bb71b7ec-56ef-4850-8499-83fb66f5e977
 # ╟─672181cc-1d87-4130-a043-df6055d23780
-# ╟─5d3e1bea-4975-4a88-b6bb-e6ef5e5dec77
+# ╠═5d3e1bea-4975-4a88-b6bb-e6ef5e5dec77
 # ╟─499b23e4-b27c-49c2-b8e2-28549585a2b5
 # ╠═43351344-ed89-47ba-8728-b5e7aee6c202
 # ╠═325b8f6b-861e-40ea-a41d-d222f4f85fe6

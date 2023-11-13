@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.26
+# v0.19.29
 
 using Markdown
 using InteractiveUtils
@@ -71,10 +71,11 @@ Establish **ground-truth** and test data
 
 # ╔═╡ e1bd9dd3-855e-4aa6-91aa-2695da07ba48
 begin
-	A = [0.8 -0.1; 0.1 0.9]
+	A = [1.0 0.0; 0.0 1.0]
 	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([0.5, 0.5])
-	R = Diagonal([0.1, 0.1])
+	
+	Q = Diagonal([1.0, 1.0])
+	R = Diagonal([0.5, 0.5])
 	T = 1000
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
@@ -225,7 +226,7 @@ Analyse Gibbs results with Chains
 
 # ╔═╡ 0a9c1721-6901-4dc1-a93d-8d8e18f7f375
 md"""
-# Experiements:
+# Experiments:
 
 - Single-move sampler of X v.s. FFBS for latent state $x$ inference
 - Gibbs sampling for infering unknown $Q$ and $R$ with **known** A, C - cf `DLM with R`
@@ -344,62 +345,70 @@ p(x_{0: T} | y_{1:T}) &= \prod_{t=0}^T p(x_t| x_{t+1:T}, y_{1:T}) \\
 Numerical stability? - Symmetric() on co-variance matrices
 """
 
-# ╔═╡ a9621810-e0cb-4925-8b6a-726f78d13510
-function ffbs_x(Ys, A, C, R, Q, μ_0, Σ_0)
-	p, T = size(Ys)
-    d, _ = size(A)
+# ╔═╡ e870cf29-b7f1-4bae-abed-a61501ac4f59
+function forward_filter(Ys, A, C, R, Q, m_0, C_0)
+	"""
+	A : State transition (K X K)
+	C : Emission (P X K)
+	R : Observation noise (P X P)
+	Q : System noise (diagonal) (K X K)
+	"""
+	_, T = size(Ys)
+	K, _ = size(A)
 	
-    # Initialize
-    m = zeros(d, T)
-	P = zeros(d, d, T)
-	
-	a = zeros(d, T)
-	RR = zeros(d, d, T)
-	X = zeros(d, T)
+	# Initialize, using "DLM with R" notation
+	ms = zeros(K, T+1)
+	Cs = zeros(K, K, T+1)
 
-	a[:, 1] = A * μ_0
-	P_1 = A * Σ_0 * A' + Q
-	RR[:, :, 1] = P_1
-	f_1 = C * a[:, 1]
-    S_1 = C * P_1 * C' + R
-    m[:, 1] = a[:, 1] + RR[:, :, 1] * C' * inv(S_1) * (Ys[:, 1] - f_1)
-    P[:, :, 1] = RR[:, :, 1] - RR[:, :, 1] * C' * inv(S_1) * C * RR[:, :, 1]
-		
-		# Kalman filter (Prep 4.1)
-    for t in 2:T
-        # Prediction
-        a[:, t] = A * m[:, t-1]
-        P_t = A * P[:, :, t-1] * A' + Q
-		RR[:, :, t] = P_t
+	ms[:, 1] = m_0
+	Cs[:, :, 1] = C_0
+	
+	# one-step ahead latent distribution, used in backward sampling
+	a_s = zeros(K, T)
+	Rs = zeros(K, K, T)
+
+	for t in 1:T
+		# Prediction
+		a_s[:, t] = a_t = A * ms[:, t]
+		Rs[:, :, t] = R_t = A * Cs[:, :, t] * A' + Q #W
 		
 		# Update
-        f_t = C * a[:, t]
-        S_t = C * P_t * C' + R
+		f_t = C * a_t
+		S_t = C * R_t * C' + R #V
 
 		# filter 
-        m[:, t] = a[:, t] + RR[:, :, t] * C' * inv(S_t) * (Ys[:, t] - f_t)
-
-       	Σ_t = RR[:, :, t] - RR[:, :, t] * C' * inv(S_t) * C * RR[:, :, t]
-		P[:, :, t] = Σ_t
+		ms[:, t+1] = a_t + R_t * C' * inv(S_t) * (Ys[:, t] - f_t)
+		Cs[:, :, t+1]= R_t - R_t * C' * inv(S_t) * C * R_t
 	end
-	
-		X[:, T] = rand(MvNormal(m[:, T], Symmetric(P[:, :, T])))
-	
+	return ms, Cs, a_s, Rs
+end
+
+# ╔═╡ a9621810-e0cb-4925-8b6a-726f78d13510
+function ffbs_x(Ys, A, C, R, Q, m_0, P_0)
+	K, _ = size(A)
+	_, T = size(Ys)
+
+	ms, Cs, a_s, Rs = forward_filter(Ys, A, C, R, Q, m_0, P_0)
+	X = zeros(K, T+1)
+
+	# DEBUG FFBS
+	try
+		X[:, end] = rand(MvNormal(ms[:, end], Symmetric(Cs[:, :, end])))
+	catch PosDefException
+		println("Pathology case encountered at iteration $n: ")
+		println("C_end: ")
+		println(Cs[:, :, end])
+		println("Y_end:")
+		println(Ys[:, end])
+	end
+
 	# backward sampling
-	for t in (T-1):-1:1
-		h_t = m[:, t] +  P[:, :, t] * A' * inv(RR[:, :, t+1])*(X[:, t+1] - a[:, t+1])
-		H_t = P[:, :, t] - P[:, :, t] * A' * inv(RR[:, :, t+1]) * A * P[:, :, t]
-	
+	for t in T:-1:1
+		h_t = ms[:, t] + Cs[:, :, t] * A' * inv(Rs[:, :, t])*(X[:, t+1] - a_s[:, t])
+		H_t = Cs[:, :, t] - Cs[:, :, t] * A' * inv(Rs[:, :, t]) * A * Cs[:, :, t]
 		X[:, t] = rand(MvNormal(h_t, Symmetric(H_t)))
 	end
-
-	# sample initial x_0
-	h_0 = μ_0 + Σ_0 * A' * inv(RR[:, :, 1])*(X[:, 1] - a[:, 1])
-	H_0 = Σ_0 - Σ_0 * A' * inv(RR[:, :, 1]) * A * Σ_0
-
-	x_0 = rand((MvNormal(h_0, Symmetric(H_0))))
-
-	return X, x_0
+	return X[:, 2:end], X[:, 1]
 end
 
 # ╔═╡ 36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
@@ -429,7 +438,6 @@ let
 	
 	println("Mean ESS: $mean_ess")
 	println("Mean Rhat: $mean_rhat")
-
 end
 
 # ╔═╡ a95ed94c-5fe2-4c31-a7a6-e45e841af528
@@ -446,6 +454,51 @@ let
 	# Select the first 50 time steps
 	true_latent_50 = x_true[:, 1:50]
 	sampled_latent_50 = xss[:, 1:50, :]
+	
+	# Create a new plot
+	p = plot()
+	
+	# Plot the true latent states with a thick line
+	plot!(p, true_latent_50[1, :], linewidth=1.5, alpha=5, label="True x_d1", color=:blue)
+	plot!(p, true_latent_50[2, :], linewidth=1.5, alpha=5, label="True x_d2", color=:red)
+	
+	# Plot the sampled latent states with a thin line
+	for i in 1:size(sampled_latent_50, 3)
+	    plot!(p, sampled_latent_50[1, :, i], linewidth=0.1, alpha=0.1, label=false, color=:violet)
+	    plot!(p, sampled_latent_50[2, :, i], linewidth=0.1, alpha=0.1, label=false, color=:orange)
+	end
+	p
+end
+
+# ╔═╡ 0450364a-bef2-425f-b610-b6088f2888f6
+md"""
+case: linear growth
+"""
+
+# ╔═╡ adb927f2-be55-4034-a573-bf4f3a36f867
+let
+	A_lg = [1.0 1.0; 0.0 1.0]
+    C_lg = [1.0 0.0]
+	Q_lg = Diagonal([0.05, 0.03])
+	R_lg = [0.1]
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	Random.seed!(111)
+	T = 500
+	y, x_true = gen_data(A_lg, C_lg, Q_lg, R_lg, μ_0, Σ_0, T)
+
+	mcmc = 1000
+	xss = zeros(2, T, mcmc)
+	x_0s = zeros(2, mcmc)
+	for i in 1:mcmc
+		x_ffbs, x_0 = ffbs_x(y, A_lg, C_lg, R_lg, Q_lg, zeros(2), Matrix{Float64}(I, 2, 2))
+		xss[:, :, i] = x_ffbs
+	end
+	
+	# Select the first 50 time steps
+	n_graph = 20
+	true_latent_50 = x_true[:, 1:n_graph]
+	sampled_latent_50 = xss[:, 1:n_graph, :]
 	
 	# Create a new plot
 	p = plot()
@@ -587,7 +640,7 @@ end
 begin
 	Random.seed!(199)
 	A_samples, C_samples, R_samples, X_samples = gibbs_dlm(y, 2)
-end
+end;
 
 # ╔═╡ af9c5548-14f2-4771-84cf-bf93eebcd3f2
  chn_A = Chains(reshape(A_samples, 4, 3000)');
@@ -713,6 +766,20 @@ let
 	sample_R_(y, x_true, C, 3, Matrix{Float64}(0.01 * I, 2, 2)), R
 end
 
+# ╔═╡ 167de353-9a63-43cf-9168-994d218fb7d5
+let
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([10.0, 5.0])
+	R = [25.0 2; 2 15.0]
+	T = 3000
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	sample_R_(y, x_true, C, 3, Matrix{Float64}(0.01 * I, 2, 2)), R
+end
+
 # ╔═╡ 425782f9-4764-4880-ab72-3b481a2cf55a
 md"""
 Assume the $K \times K$ system precision matrix $Φ_1 = Q^{-1}$ is also Wishart distributed with prior:
@@ -745,6 +812,30 @@ end
 # ╔═╡ 7dfa5042-227b-43aa-a55c-30decee08413
 let
 	sample_Q_(x_true, A, 3, Matrix{Float64}(0.01 * I, 2, 2), μ_0), Q
+end
+
+# ╔═╡ b6bb2fef-d56d-4139-88b0-d1f006d2e6fa
+md"""
+Case: Diagonal co-variance
+"""
+
+# ╔═╡ 06512a6c-836d-4512-9949-46526248364f
+function sample_Q_diag(Xs, A, α_q, β_q)
+    K, T = size(Xs)
+    q_sampled = zeros(K)
+    for i in 1:K
+        X_diff = Xs[i, 2:end] - (A * Xs[:, 1:end-1])[i, :]
+        α_post = α_q + T / 2 - 1 
+        β_post = β_q + 0.5 * sum(X_diff.^2)
+        
+        q_sampled[i] = rand(Gamma(α_post, 1 / β_post))
+    end
+    return diagm(1 ./ q_sampled)
+end
+
+# ╔═╡ 79dbd6b0-aecb-4c71-8f41-47d47ec242d1
+let
+	sample_Q_diag(x_true, A, 0.01, 0.01), Q
 end
 
 # ╔═╡ 68c26d99-8f54-4580-8357-5598eb1c8cdf
@@ -808,7 +899,7 @@ Q, R sample means
 
 # ╔═╡ 282b71f4-4848-426d-b8fc-0e3656d01767
 md"""
-FFBS Sample Quality in Gibbs
+**FFBS** Sample Quality in Gibbs
 """
 
 # ╔═╡ 0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
@@ -1747,7 +1838,6 @@ end
 # ╔═╡ b337a706-cbbf-4acd-8a8f-26fdbc137e8e
 begin
 	Q_m = mean(Qs_samples, dims=1)[1, :, :]
-
 	R_m = mean(Rs_samples, dims=1)[1, :, :]
 
 	Q_m, R_m
@@ -2872,6 +2962,12 @@ git-tree-sha1 = "5837a837389fccf076445fce071c8ddaea35a566"
 uuid = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
 version = "0.6.8"
 
+[[deps.EpollShim_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "8e9441ee83492030ace98f9789a654a6d0b1f643"
+uuid = "2702e6a9-849d-5ed8-8c21-79e8b8f9ee43"
+version = "0.0.20230411+0"
+
 [[deps.ExceptionUnwrapping]]
 deps = ["Test"]
 git-tree-sha1 = "e90caa41f5a86296e014e148ee061bd6c3edec96"
@@ -3925,7 +4021,7 @@ uuid = "41fe7b60-77ed-43a1-b4f0-825fd5a5650d"
 version = "0.2.0"
 
 [[deps.Wayland_jll]]
-deps = ["Artifacts", "Expat_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg", "XML2_jll"]
+deps = ["Artifacts", "EpollShim_jll", "Expat_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg", "XML2_jll"]
 git-tree-sha1 = "ed8d92d9774b077c53e1da50fd81a36af3744c1c"
 uuid = "a2964d1f-97da-50d4-b82a-358c7fce9d89"
 version = "1.21.0+0"
@@ -4182,7 +4278,7 @@ version = "1.4.1+0"
 # ╠═e9318f52-e918-42c6-9aa9-45a39ad73ec7
 # ╟─bb13a886-0877-42fb-876e-38709f041d65
 # ╟─3308752f-d770-4951-9a21-73f1c3886df4
-# ╟─4b9cad0a-7ec4-4a58-bf4c-4f103371de33
+# ╠═4b9cad0a-7ec4-4a58-bf4c-4f103371de33
 # ╟─9e73e982-a4ae-4e9b-9650-3cf7c519657c
 # ╟─a41bd4a5-a7be-48fe-a222-6e8b3cf98dec
 # ╠═d8c05722-a79b-4132-b1c2-982ef39af257
@@ -4192,10 +4288,10 @@ version = "1.4.1+0"
 # ╠═120d3c31-bba9-476d-8a63-95cdf2457a1b
 # ╠═df166b81-a6c3-490b-8cbc-4061f19b750b
 # ╟─56cad0cb-352b-4612-b3a3-ddb34de607ad
-# ╟─af9c5548-14f2-4771-84cf-bf93eebcd3f2
+# ╠═af9c5548-14f2-4771-84cf-bf93eebcd3f2
 # ╟─779e0cef-0865-4087-b3d1-563aec15a734
-# ╟─611e868a-e808-4a1f-8dd3-2d7ef64e2984
-# ╟─69efb78d-1297-46b4-a6bb-218c07c9b2af
+# ╠═611e868a-e808-4a1f-8dd3-2d7ef64e2984
+# ╠═69efb78d-1297-46b4-a6bb-218c07c9b2af
 # ╠═9f1a120d-80ac-46e0-ae7c-949d2f571b98
 # ╟─f08a6391-24da-4d3e-8a3e-55806bb9efbb
 # ╟─39ecddfa-89a0-49ec-86f1-4794336215d0
@@ -4207,11 +4303,14 @@ version = "1.4.1+0"
 # ╟─57c87102-04bc-4414-9258-e2220f9d2e22
 # ╟─11700202-40fe-408b-a8b8-5c073daec12d
 # ╟─8c9357c8-8339-4889-8a91-b62e542f0407
+# ╠═e870cf29-b7f1-4bae-abed-a61501ac4f59
 # ╠═a9621810-e0cb-4925-8b6a-726f78d13510
 # ╠═36cb2dd6-19af-4a1f-aa19-7646c2c9cbab
-# ╟─a95ed94c-5fe2-4c31-a7a6-e45e841af528
+# ╠═a95ed94c-5fe2-4c31-a7a6-e45e841af528
+# ╟─0450364a-bef2-425f-b610-b6088f2888f6
+# ╠═adb927f2-be55-4034-a573-bf4f3a36f867
 # ╟─fa0dd0fd-7b8a-47a4-bb22-c05c9b70bff3
-# ╟─ad1eab82-0fa5-462e-ad17-8cb3b787aaf0
+# ╠═ad1eab82-0fa5-462e-ad17-8cb3b787aaf0
 # ╟─13007ba3-7ce2-4201-aa93-559fcbf9d12f
 # ╟─e9f3b9e2-5689-40ce-b5b5-bc571ba35c10
 # ╠═c9f6fad7-518c-442b-a385-e3fa74431cb1
@@ -4220,17 +4319,21 @@ version = "1.4.1+0"
 # ╠═a8971bb3-cf38-4445-b66e-65ff35ca13ca
 # ╟─b4c11a46-438d-4653-89e7-bc2b99e84f48
 # ╠═494eed09-a6e8-488b-bea2-55b7ddb37082
-# ╟─060ae93d-12fe-47c6-abe1-ff7728bda572
+# ╠═060ae93d-12fe-47c6-abe1-ff7728bda572
+# ╠═167de353-9a63-43cf-9168-994d218fb7d5
 # ╟─425782f9-4764-4880-ab72-3b481a2cf55a
 # ╠═cc216d03-956c-45bb-a6ef-38bf79d6a597
-# ╟─7dfa5042-227b-43aa-a55c-30decee08413
+# ╠═7dfa5042-227b-43aa-a55c-30decee08413
+# ╟─b6bb2fef-d56d-4139-88b0-d1f006d2e6fa
+# ╠═06512a6c-836d-4512-9949-46526248364f
+# ╠═79dbd6b0-aecb-4c71-8f41-47d47ec242d1
 # ╟─68c26d99-8f54-4580-8357-5598eb1c8cdf
 # ╠═f0dc526c-b221-4652-a877-58a959d97019
 # ╟─f0551220-d7c1-4312-b6c5-e0c432889494
 # ╟─0b4d5ac8-5a7b-4363-9dbe-2edc517708a0
-# ╟─b337a706-cbbf-4acd-8a8f-26fdbc137e8e
+# ╠═b337a706-cbbf-4acd-8a8f-26fdbc137e8e
 # ╟─282b71f4-4848-426d-b8fc-0e3656d01767
-# ╟─2837effd-25f2-4f49-829e-8fc191db8460
+# ╠═2837effd-25f2-4f49-829e-8fc191db8460
 # ╟─0d8327f7-beb8-42de-ad0a-d7e2ebae81ac
 # ╟─05828da6-bc3c-45de-b059-310159038d5d
 # ╟─6bea5f44-2abd-47b9-9db5-c5f70dd12c4f
@@ -4259,7 +4362,7 @@ version = "1.4.1+0"
 # ╟─488d1200-1ddf-4f06-9643-2eecb2072263
 # ╠═0591883c-49af-4201-b2f1-49f208506ece
 # ╠═0dfa4d60-577a-4631-bd24-c05aee2969d0
-# ╠═5e10db40-5c2e-41c3-a431-e0a4c81d2718
+# ╟─5e10db40-5c2e-41c3-a431-e0a4c81d2718
 # ╟─bb26ac74-da64-47be-a49a-4519101cffce
 # ╟─dd8f1c15-8915-4503-85f0-d3378f8e4751
 # ╠═85edba6b-d971-43bb-a74b-83a08cb055d8

@@ -4,26 +4,289 @@
 using Markdown
 using InteractiveUtils
 
-# ╔═╡ eaa545cc-5312-11ee-1998-0b3161d803eb
+# ╔═╡ cc904ce6-21bd-11ee-11da-ad91a6b43e16
 begin
-	using Distributions, Plots, Random
-	plotly()
+	using Distributions, Random
 	using LinearAlgebra
 	using StatsFuns
-	using PlutoUI
-	using MCMCChains
-	using Statistics
-	using DataFrames
-	using StatsPlots
 	using SpecialFunctions
-	using PDMats
-	using StatsBase
+	using PlutoUI
+	using StatsPlots
+	using MultivariateStats
+	using MCMCChains
 end
 
-# ╔═╡ d98925a3-49a7-436b-8a48-02cb872d9fb9
+# ╔═╡ 38cfa6e8-8e34-425b-90f7-ef53b6b189df
 TableOfContents()
 
-# ╔═╡ 8b2e4f25-3daf-4b61-99cd-cce847bb601c
+# ╔═╡ 5763062a-e218-4420-a767-bcf85c19839d
+md"""
+# Probabilistic PCA
+
+Adapted from VBEM_DLM (Beale)
+
+$$x \sim \mathcal N(0, Q)$$ 
+
+$$y = Cx + v, \ v \sim \mathcal N(0, R)$$ 
+
+Where $A$ is fixed to the zero matrix, $Q$ is fixed as the identity matrix. $R$ is an **isotropic** diagonal matrix, $C$ is the matrix of **factor loadings**.
+"""
+
+# ╔═╡ 9a7d917d-be50-4946-bb0a-b77062819064
+begin
+	struct HSS
+	    W_C::Matrix{Float64}
+	    S_C::Matrix{Float64}
+	end
+
+	struct Exp_ϕ
+		C
+		R⁻¹
+		CᵀR⁻¹C
+		R⁻¹C
+		CᵀR⁻¹
+		log_ρ
+	end
+
+	struct HPP
+	    γ::Vector{Float64}  # precision vector for emission C
+	    a::Float64 # gamma rate of ρ
+	    b::Float64 # gamma inverse scale of ρ
+	    μ_0::Vector{Float64} # auxiliary hidden state mean
+	    Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
+	end
+
+	struct Qθ
+		Σ_C # q(C)
+		μ_C # q(C)
+		a_s # q(ρ)
+		b_s # q(ρ)
+	end
+end
+
+# ╔═╡ 2e28c276-b93e-4358-839b-2f562a511db5
+function gen_sea(A, C, R, Q, T, x_1)
+    K = size(A, 1)
+    D = size(R, 1)
+    x = zeros(K, T)
+    y = zeros(D, T)
+
+    x[:, 1] = x_1  
+
+    if D == 1
+        y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), sqrt.(R)))
+    else
+        y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
+    end
+
+    for t in 2:T
+        x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
+
+		# Make sure the seasonal factors sum to 1
+	    # alpha_2 = 1.0 - sum(x[2:3, t])
+	    # x[1, t] = alpha_2
+    
+        if D == 1
+            y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), sqrt.(R))) # linear growth 
+        else
+            y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
+        end
+    end
+
+    return y, x
+end
+
+# ╔═╡ 9024aaad-b1fe-4311-9693-7652b8252d8f
+md"""
+## VBM-step
+"""
+
+# ╔═╡ e835abae-6496-4638-a990-f008ce5286cf
+# input: data, hyperprior, and e-step suff stats
+# infer parameter posterior q_θ(θ)
+function vb_m(ys, hps::HPP, ss::HSS)
+	D, T = size(ys)
+	W_C = ss.W_C
+	S_C = ss.S_C
+	γ = hps.γ
+	a = hps.a
+	b = hps.b
+	K = length(γ)
+	
+	# q(ρ), q(C|ρ)
+	Σ_C = inv(diagm(γ) + W_C)
+	μ_C = [Σ_C * S_C[:, s] for s in 1:D]
+	
+	G = ys * ys' - S_C' * Σ_C * S_C
+	a_ = a + 0.5 * T
+	a_s = a_ * ones(D)
+    b_s = [b + 0.5 * G[i, i] for i in 1:D]
+	
+	q_ρ = missing
+	
+	try
+	    q_ρ = Gamma.(a_s, 1 ./ b_s)
+	catch err
+	    if isa(err, DomainError)
+	        println("DomainError occurred: check that a_s and b_s are positive values")
+			println("a_s: ", a_s)
+			println("b_s: ", b_s)
+			b_s = abs.(b_s)
+			println("Temporal fix: ", b_s)
+			println("Consider adjusting hyperparameters α, γ, a, b")
+			q_ρ = Gamma.(a_s, 1 ./ b_s)
+	    else
+	        rethrow(err)
+	    end
+	end
+	ρ̄ = mean.(q_ρ)
+	
+	# Exp_ϕ 
+	Exp_C = S_C'*Σ_C
+	Exp_R⁻¹ = diagm(ρ̄)
+	Exp_CᵀR⁻¹C = Exp_C'*Exp_R⁻¹*Exp_C + D*Σ_C
+	Exp_R⁻¹C = Exp_R⁻¹*Exp_C
+	Exp_CᵀR⁻¹ = Exp_C'*Exp_R⁻¹
+
+	# update hyperparameter (after m-step)
+	γ_n = [D/((D*Σ_C + Σ_C*S_C*Exp_R⁻¹*S_C'*Σ_C)[j, j]) for j in 1:K]
+
+	# for updating gamma hyperparam a, b       
+	exp_ρ = a_s ./ b_s
+	exp_log_ρ = [(digamma(a_) - log(b_s[i])) for i in 1:D]
+	
+	# return expected natural parameters :: Exp_ϕ (for e-step)
+	return Exp_ϕ(Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹, exp_log_ρ), γ_n, exp_ρ, exp_log_ρ, Qθ(Σ_C, μ_C, a_, b_s)
+end
+
+# ╔═╡ 361256a9-67ff-4800-baea-06eb6f2347ff
+md"""
+### Test M-Step
+"""
+
+# ╔═╡ 9ab66239-2b93-4ded-8ef0-761e10b7e69e
+md"""
+## VBE-step
+"""
+
+# ╔═╡ c9f2a88e-da48-49ff-b987-02fa2231548e
+function v_forward(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP)
+    D, T = size(ys)
+    K = length(hpp.γ)
+
+    μs = zeros(K, T)
+    Σs = zeros(K, K, T)
+	Σs_ = zeros(K, K, T)
+	
+	Qs = zeros(D, D, T)
+	fs = zeros(D, T)
+
+	# Extract μ_0 and Σ_0 from the HPP struct
+    μ_0 = hpp.μ_0
+    Σ_0 = hpp.Σ_0
+
+	# initialise for t = 1
+	Σ₀_ = Σ_0
+	Σs_[:, :, 1] = Σ₀_
+	
+    Σs[:, :, 1] = inv(I + exp_np.CᵀR⁻¹C)
+    μs[:, 1] = Σs[:, :, 1]*(exp_np.CᵀR⁻¹*ys[:, 1])
+		
+	# iterate over T
+	for t in 2:T
+		Σₜ₋₁_ = Σs[:, :, t-1]
+		Σs_[:, :, t] = Σₜ₋₁_
+		
+		Σs[:, :, t] = inv(I + exp_np.CᵀR⁻¹C)
+    	μs[:, t] = Σs[:, :, t]*(exp_np.CᵀR⁻¹*ys[:, t])
+	end
+
+	return μs, Σs, Σs_
+end
+
+# ╔═╡ 9be0a627-7d71-4b83-9758-20149b1c8eee
+md"""
+Given $A$ is fixed to zero matrix, backward, and smoother are no longer necessary, since they eventually just recover the forward results.
+"""
+
+# ╔═╡ 3f01c2c3-8d79-4e22-a367-49f5c31785af
+function log_Z(ys, μs, Σs, Σs_, exp_np::Exp_ϕ, hpp::HPP)
+	D, T = size(ys)
+	log_Z = 0
+	log_det_R = D*log(2π) - sum(exp_np.log_ρ)
+
+	# t = 1
+	log_Z += -0.5*(log_det_R - logdet(inv(hpp.Σ_0)*Σs_[:, :, 1]*Σs[:, :, 1]) + hpp.μ_0'*inv(hpp.Σ_0)*hpp.μ_0 - μs[:, 1]'*inv(Σs[:, :, 1])*μs[:, 1] + ys[:, 1]'*exp_np.R⁻¹*ys[:, 1] - transpose(inv(hpp.Σ_0)*hpp.μ_0)*Σs_[:, :, 1]*inv(hpp.Σ_0)*hpp.μ_0)
+	
+	for t in 2:T
+		log_det_Σ = logdet(inv(Σs[:, :, t-1])*Σs_[:, :, t]*Σs[:, :, t])
+		μ_t_ = μs[:, t-1]'*inv(Σs[:, :, t-1])*μs[:, t-1]
+		μ_t = μs[:, t]'*inv(Σs[:, :, t])*μs[:, t]
+		y_t = ys[:, t]'*exp_np.R⁻¹*ys[:, t]
+		Σ_μ_t = transpose(inv(Σs[:, :, t-1])*μs[:, t-1])*Σs_[:, :, t]*inv(Σs[:, :, t-1])*μs[:, t-1]
+
+		log_Z += -0.5 * (log_det_R - log_det_Σ + μ_t_ - μ_t + y_t - Σ_μ_t)
+	end
+
+	return log_Z
+end
+
+# ╔═╡ 0e7e482f-deb7-4947-95bf-0854b0129086
+function vb_e(ys::Matrix{Float64}, exp_np::Exp_ϕ, hpp::HPP, smooth_out=false)
+    _, T = size(ys)
+	K = length(hpp.γ)
+	# forward pass α_t(x_t)
+	ωs, Υs, Σs_ = v_forward(ys, exp_np, hpp)
+	
+	# hidden state sufficient stats 	
+	W_C = sum(Υs[:, :, t] + ωs[:, t] * ωs[:, t]' for t in 1:T)
+	S_C = sum(ωs[:, t] * ys[:, t]' for t in 1:T)
+
+	if (smooth_out) # return variational smoothed mean, cov of xs, ys after completing VBEM iterations
+		return ωs, Υs
+	end
+
+	# compute log partition ln Z' (ELBO and convergence check)
+	log_Z_ = log_Z(ys, ωs, Υs, Σs_, exp_np, hpp)
+	
+	return HSS(W_C, S_C), log_Z_
+end
+
+# ╔═╡ 03e29b61-f940-4759-b09b-be4be824c4e1
+md"""
+### Test E-Step
+"""
+
+# ╔═╡ 41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
+function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64})
+    D = length(exp_ρ)
+    d = mean(exp_ρ)
+    c = mean(exp_log_ρ)
+    
+    # Update `a` using fixed point iteration
+	a = hpp.a		
+
+    for _ in 1:1000
+        ψ_a = digamma(a)
+        ψ_a_p = trigamma(a)
+        
+        a_new = a * exp(-(ψ_a - log(a) + log(d) - c) / (a * ψ_a_p - 1))
+		a = a_new
+
+		# check convergence
+        if abs(a_new - a) < 1e-4
+            break
+        end
+    end
+    
+    # Update `b` using the converged value of `a`
+    b = a/d
+
+	return a, b
+end
+
+# ╔═╡ 4fe90ccd-e064-44e7-a1bd-25d6734645ea
+# A -> transition matrix, C -> emission matrix, Q -> process noise, R -> observation noise, μ_0, Σ_0 -> auxiliary hidden state x_0
 function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	K, _ = size(A)
 	D, _ = size(C)
@@ -34,547 +297,561 @@ function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
 
 	for t in 2:T
-		x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
-
-		if D == 1
-			y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), sqrt.(R))) 
+		if (tr(Q) != 0)
+			x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
 		else
-			y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
+			x[:, t] = A * x[:, t-1] # Q zero matrix special case
 		end
+		y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
 	end
 
 	return y, x
 end
 
-# ╔═╡ 35d519d0-690b-4850-863d-ae22edb45692
+# ╔═╡ 5e02e5a8-c783-4f94-8fc1-2ec7de4bc5a6
 md"""
-# Linear growth model
+### ground-truth
 """
 
-# ╔═╡ 5c58ea90-44c6-471a-8d90-14429ac23f14
-md"""
-## VB-M step
-"""
-
-# ╔═╡ 89eaa26c-c4d7-441e-87ec-51f70519030a
-struct Q_Gamma
-	a
-	b
-	α
-	β
-end
-
-# ╔═╡ d3c060a3-42d0-47a7-b3d7-72efb0fd310e
-# hyper-prior parameters
-struct HPP_D
-    α::Float64
-    β::Float64 
-	a::Float64 
-    b::Float64 
-    μ_0::Vector{Float64} # auxiliary hidden state mean
-    Σ_0::Matrix{Float64} # auxiliary hidden state co-variance
-end
-
-# ╔═╡ 8eaae5a9-40eb-4249-8eb8-67652eb75006
-struct HSS
-	W_C::Array{Float64, 2}
-	W_A::Array{Float64, 2}
-	S_C::Array{Float64, 2}
-	S_A::Array{Float64, 2}
-end
-
-# ╔═╡ 47f722d7-6512-4bee-9c05-878bfd886c6c
-function vb_m_step(y, hss::HSS, hpp::HPP_D, A::Array{Float64, 2}, C::Array{Float64, 2})
-    D, T = size(y)
-    K = size(A, 1)
-	
-	G = y*y' - 2 * C * hss.S_C + C * hss.W_C * C'
-    a_ = hpp.a + 0.5 * T
-	a_s = a_ * ones(D)
-    b_s = [hpp.b + 0.5 * G[i, i] for i in 1:D]
-	q_ρ = Gamma.(a_s, 1 ./ b_s)
-	Exp_R⁻¹ = diagm(mean.(q_ρ))
-	
-	α_ = hpp.α + 0.5 * T
-	α_s = α_ * ones(K)
-	H_22 = hss.W_C[2, 2] + hss.W_A[2, 2] - 2*hss.S_A[2, 2]
-	H_11 = hss.W_C[1, 1] - 2*hss.S_A[1, 1] + hss.W_A[1, 1] - 2*hss.S_A[2, 1] + 2*hss.W_A[1, 2] + hss.W_A[2, 2]
-
-	H = Diagonal([H_11, H_22])
-	β_s = [hpp.β + 0.5 * H[i, i] for i in 1:K]
-	q_𝛐 = Gamma.(α_s, 1 ./ β_s)	
-	Exp_Q⁻¹= diagm(mean.(q_𝛐))
-	return Exp_R⁻¹, Exp_Q⁻¹, Q_Gamma(a_, b_s, α_, β_s)
-end
-
-# ╔═╡ 8d71163c-88b6-4e26-a11f-6ca03753e2d2
+# ╔═╡ 9d880af9-d64f-4d1f-9603-48fb5410d1c7
 begin
-	A_lg = [1.0 1.0; 0.0 1.0]
-    C_lg = [1.0 0.0]
-	Q_lg = Diagonal([5.0, 3.0])
-	R_lg = [10.0]
+	Random.seed!(103)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
-	Random.seed!(111)
-	T = 1000
-	y, x_true = gen_data(A_lg, C_lg, Q_lg, R_lg, μ_0, Σ_0, T)
-end
+	C_d3k2 = [1.0 0.0; 0.1 0.8; 0.9 0.2] 
+	R = Diagonal([0.5, 0.5, 0.5])
+	T = 2000
+	y_pca, x_true = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, T)
+end;
 
-# ╔═╡ 552ff579-43c5-413c-a1bc-3a0fb2b3c116
-md"""
-Local Linear Model
-
-y: uni-var
-
-x: 2-d
-"""
-
-# ╔═╡ 7363c673-25ee-406d-90c2-1ebc4138621a
+# ╔═╡ 1b0973cd-e4ff-4f13-af91-bbc981802a10
 let
-    y = vec(y)
-	w_c_x = sum(x_true[1, t] * x_true[1, t] for t in 1:T)
-	s_c = sum(x_true[1, t] * y[t] for t in 1:T)
-	G_11 = y' * y - 2 * s_c + w_c_x
-	println("G_11: ", G_11)
-	println()
-	w_a_s = sum(x_true[2, t-1] * x_true[2, t-1] for t in 2:T)
-	s_a_s = sum(x_true[2, t-1] * x_true[2, t] for t in 2:T)
-	w_c_s = sum(x_true[2, t] * x_true[2, t] for t in 1:T)
-
-	H_22 = w_a_s + w_c_s - 2*s_a_s
-	println("H_22: ", H_22)
-	println("q_s ", (T/2 + 2)/(0.5*H_22 + 0.01))
-
-	s_a_x = sum(x_true[1, t-1] * x_true[1, t] for t in 2:T)
-	w_a_x = sum(x_true[1, t-1] * x_true[1, t-1] for t in 2:T)
-
-	s_a_sx = sum(x_true[2, t-1] * x_true[1, t] for t in 2:T)
-	w_a_sx = sum(x_true[1, t-1] * x_true[2, t-1] for t in 2:T)
+	D, T = size(y_pca)
+	K = 2
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
 	
-	H_11 = w_c_x - 2*s_a_x + w_a_x - 2*s_a_sx + 2*w_a_sx + w_a_s
-	println("H_11: ", H_11)
-	println("q_x ", (T/2 + 2)/(0.5*H_11 + 0.01))
-
-	(w_c_x, s_a_x, w_a_x, s_a_sx, w_a_sx, w_a_s, w_c_s, s_a_s)
-end
-
-# ╔═╡ ac33edbd-fba3-45a4-9ba5-0b7e4f7a563b
-md"""
-
-### Test M-step
-ground-truth precisions
-
-R⁻¹ = 0.1
-
-Q⁻¹[1, 1] = 0.2
-
-Q⁻¹[2, 2] = 0.33
-"""
-
-# ╔═╡ 66d58f4c-b724-4c7c-a7a3-18bd72e579d2
-let
-	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
-	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
 	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
-	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y_pca[:, t]' for t in 1:T)
 
-	G = y*y' - 2 * C_lg * S_C + C_lg * W_C * C_lg'
-	# println("G: ", G)
+	hss = HSS(W_C, S_C)
 
-	# DEBUG: H matrix form
-	H = W_C - S_A * A_lg' - A_lg * S_A' + A_lg * W_A * A_lg'
-	
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(2), Matrix{Float64}(I, 2, 2))
-	hss = HSS(W_C, W_A, S_C, S_A)
-	R_inv, Q_inv, _ = vb_m_step(y, hss, prior, A_lg, C_lg)
+	# should recover values of C, R close to ground truth
+	exp_np = vb_m(y_pca, hpp, hss)[1]
+	exp_np.C, inv(exp_np.R⁻¹)
 end
 
-# ╔═╡ f5d00b0d-87d8-4677-a1f3-fbd5b63b337d
-md"""
-## VB-E step
-"""
-
-# ╔═╡ db3f4331-1128-47fd-b319-a40925517bf7
-function forward_(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q::Array{Float64, 2}, prior::HPP_D)
-    P, T = size(y)
-    K = size(A, 1)
-    μ_0, Σ_0 = prior.μ_0, prior.Σ_0
-    
-    # Initialize the filtered means and covariances
-    μ_f = zeros(K, T)
-    Σ_f = zeros(K, K, T)
-    f_s = zeros(P, T)
-	S_s = zeros(P, P, T)
-    # Set the initial filtered mean and covariance to their prior values
-	A_1 = A * μ_0
-	R_1 = A * Σ_0 * A' + E_Q
-	
-	f_1 = C * A_1
-	S_1 = C * R_1 * C' + E_R
-	f_s[:, 1] = f_1
-	S_s[:, :, 1] = S_1
-	
-    μ_f[:, 1] = A_1 + R_1 * C'* inv(S_1) * (y[:, 1] - f_1)
-    Σ_f[:, :, 1] = R_1 - R_1*C'*inv(S_1)*C*R_1 
-    
-    # Forward pass (kalman filter)
-    for t = 2:T
-        μ_p = A * μ_f[:, t-1]
-        Σ_p = A * Σ_f[:, :, t-1] * A' + E_Q
-		f_t = C * μ_p
-		S_t = C * Σ_p * C' + E_R
-		f_s[:, t] = f_t
-		S_s[:, :, t] = S_t
-		μ_f[:, t] = μ_p + Σ_p * C' * inv(S_t) * (y[:, t] - f_t)
-		Σ_f[:, :, t] = Σ_p - Σ_p * C' * inv(S_t) * C * Σ_p
-    end
-	
-    log_z = sum(logpdf(MvNormal(f_s[:, i], Symmetric(S_s[:, :, i])), y[:, i]) for i in 1:T)
-    return μ_f, Σ_f, log_z
-end
-
-# ╔═╡ ca6046a5-363d-4292-885b-b88fed02bc46
-function backward_(μ_f::Array{Float64, 2}, Σ_f::Array{Float64, 3}, A::Array{Float64, 2}, E_Q::Array{Float64, 2}, prior)
-    K, T = size(μ_f)
-    
-    μ_s = zeros(K, T)
-    Σ_s = zeros(K, K, T)
-    Σ_s_cross = zeros(K, K, T)
-    
-    μ_s[:, T] = μ_f[:, T]
-    Σ_s[:, :, T] = Σ_f[:, :, T]
-    
-    # Backward pass
-    for t = T-1:-1:1
-        J_t = Σ_f[:, :, t] * A' / (A * Σ_f[:, :, t] * A' + E_Q)
-
-        μ_s[:, t] = μ_f[:, t] + J_t * (μ_s[:, t+1] - A * μ_f[:, t])
-        Σ_s[:, :, t] = Σ_f[:, :, t] + J_t * (Σ_s[:, :, t+1] - A * Σ_f[:, :, t] * A' - E_Q) * J_t'
-
-		Σ_s_cross[:, :, t+1] = J_t * Σ_s[:, :, t+1]
-    end
-	Σ_s_cross[:, :, 1] = inv(I + A'*A) * A' * Σ_s[:, :, 1]
-
-	J_0 = prior.Σ_0 * A' / (A * prior.Σ_0 * A' + E_Q)
-	μ_s0 = prior.μ_0 + J_0 * (μ_s[:, 1] -  A * prior.μ_0)
-	Σ_s0 = prior.Σ_0 + J_0 * (Σ_s[:, :, 1] - A * prior.Σ_0 * A' - E_Q) * J_0'
-	
-    return μ_s, Σ_s, μ_s0, Σ_s0, Σ_s_cross
-end
-
-# ╔═╡ bb71b7ec-56ef-4850-8499-83fb66f5e977
-function vb_e_step(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q::Array{Float64, 2}, prior::HPP_D)
-    # Run the forward pass
-    μ_f, Σ_f, log_Z = forward_(y, A, C, E_R, E_Q, prior)
-
-    # Run the backward pass
-    μ_s, Σ_s, μ_s0, Σ_s0, Σ_s_cross = backward_(μ_f, Σ_f, A, E_Q, prior)
-
-    # Compute the hidden state sufficient statistics
-    W_C = sum(Σ_s, dims=3)[:, :, 1] + μ_s * μ_s'
-    W_A = sum(Σ_s[:, :, 1:end-1], dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 1:end-1]'
-    S_C = μ_s * y'
-    S_A = sum(Σ_s_cross, dims=3)[:, :, 1] + μ_s[:, 1:end-1] * μ_s[:, 2:end]'
-    W_Y = y * y'
-
-	# Return the hidden state sufficient statistics
-    return HSS(W_C, W_A, S_C, S_A), μ_s0, Σ_s0, log_Z
-end
-
-# ╔═╡ 672181cc-1d87-4130-a043-df6055d23780
-md"""
-### Test E-step
-"""
-
-# ╔═╡ 5d3e1bea-4975-4a88-b6bb-e6ef5e5dec77
+# ╔═╡ 51aef7a8-4693-40df-8643-d77c67eafa37
 let
-	K = size(A_lg, 1)
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	D, T = size(y_pca)
+	K = 2
 
-	hss_e, _ = vb_e_step(y, A_lg, C_lg, [0.1], [0.02 0.0; 0.0 0.01], prior)
+	e_C = C_d3k2
+	e_R⁻¹ = inv(R)
+	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
+	e_R⁻¹C = e_R⁻¹*e_C
+	e_CᵀR⁻¹ = e_C'*e_R⁻¹
+	e_log_ρ = log.(1 ./ diag(R))
+	
+	exp_np = Exp_ϕ(e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹, e_log_ρ)
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
 
-	W_A = sum(x_true[:, t-1] * x_true[:, t-1]' for t in 2:T)
-	S_A = sum(x_true[:, t-1] * x_true[:, t]' for t in 2:T)
-	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
-	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
-	hss_t = HSS(W_C, W_A, S_C, S_A)
-	hss_t, hss_e
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	
+	vb_e(y_pca, exp_np, hpp)[1]
 end
 
-# ╔═╡ 499b23e4-b27c-49c2-b8e2-28549585a2b5
-md"""
-## VBEM
-"""
+# ╔═╡ 947f80a7-e19c-4d54-80cc-f5269dde0c9d
+let
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y_pca[:, t]' for t in 1:T)
+	hss = HSS(W_C, S_C) #HSS computed using ground-truth xs
+end
 
-# ╔═╡ 43351344-ed89-47ba-8728-b5e7aee6c202
-function vbem_lg(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::HPP_D, max_iter=100)
+# ╔═╡ b21b7e93-16d6-493b-9fda-3831c003a3cc
+function vb_ppca(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=300)
+	D, T = size(ys)
+	K = length(hpp.γ)
 	
-	hss = HSS(ones(size(A)), ones(size(A)), ones(size(C')), ones(size(A)))
-	E_R_inv, E_Q_inv = missing, missing
+	# no random initialistion
+	W_C = Matrix{Float64}(T*I, K, K)
+	S_C = Matrix{Float64}(T*I, K, D)
+	
+	hss = HSS(W_C, S_C)
+	exp_np = missing
 
 	for i in 1:max_iter
-		E_R_inv, E_Q_inv, _ = vb_m_step(y, hss, prior, A, C)
-				
-		hss, _ = vb_e_step(y, A, C, inv(E_R_inv), inv(E_Q_inv), prior)
+		exp_np, γ_n, exp_ρ, exp_log_ρ, _ = vb_m(ys, hpp, hss)
+		
+		hss, _ = vb_e(ys, exp_np, hpp)
+
+		if (hpp_learn)
+			if (i%5 == 0) # update hyperparam every 5 iterations
+				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+				hpp = HPP(γ_n, a, b, μ_0, Σ_0)
+			end
+		end
 	end
-	
-	return E_R_inv, E_Q_inv
+		
+	return exp_np
 end
 
-# ╔═╡ 325b8f6b-861e-40ea-a41d-d222f4f85fe6
-function vbem_his_plot(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, prior::HPP_D, max_iter=100)
-    P, T = size(y)
-    K, _ = size(A)
-
-    W_C = zeros(K, K)
-    W_A = zeros(K, K)
-    S_C = zeros(K, P)
-    S_A = zeros(K, K)
-    hss = HSS(W_C, W_A, S_C, S_A)
-	
-    # Initialize the history of E_R and E_Q
-    E_R_history = zeros(P, max_iter)
-    E_Q_history = zeros(K, K, max_iter)
-
-    # Repeat until convergence
-    for iter in 1:max_iter
-		E_R_inv, E_Q_inv = vb_m_step(y, hss, prior, A, C)
-				
-		hss, _ = vb_e_step(y, A, C, inv(E_R_inv), inv(E_Q_inv), prior)
-
-        # Store the history of E_R and E_Q
-        E_R_history[:, iter] = E_R_inv
-        E_Q_history[:, :, iter] = E_Q_inv
-    end
-
-	p1 = plot(title = "Learning of R")
-    for i in 1:P
-        plot!(5:max_iter, [E_R_history[i, t] for t in 5:max_iter], label = "E_R[$i]")
-    end
-
-    p2 = plot(title = "Learning of Q")
-    for i in 1:K
-        plot!(5:max_iter, [E_Q_history[i, i, t] for t in 5:max_iter], label = "E_Q[$i, $i]")
-    end
-	
-	plot(p1, p2, layout = (1, 2))
+# ╔═╡ c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
+begin
+	K = 2
+	γ = ones(K) .* 100
+	a = 0.01
+	b = 0.01
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f = vb_ppca(y_pca, hpp, true)
+	exp_f.C, inv(exp_f.R⁻¹)
 end
 
-# ╔═╡ fcf3fe2d-4954-4c67-9439-f3907264d9dd
-let
-	K = size(A_lg, 1)
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
-	vbem_his_plot(y, A_lg, C_lg, prior)
+# ╔═╡ ff9a0bfc-bbea-411b-9508-4ee2e08974a0
+function test_trivial(n)
+	C_d2k1 = reshape([0.9, 0.5], 2, 1)
+	R_2 = Diagonal([0.5, 0.5])
+	D = 2
+	x = zeros(n)
+	y = zeros(D, n)
+	for t in 1:n
+		x[t] = randn()
+		y[:, t] = C_d2k1 * x[t] + rand(MvNormal(zeros(D), R_2)) 
+	end
+	return y, x
 end
 
-# ╔═╡ 46dfaa18-367b-467a-b345-bc892e8926bf
-let
-	K = size(A_lg, 1)
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
-	vbem_lg(y, A_lg, C_lg, prior, 20)
-end
-
-# ╔═╡ bfb12482-859e-412d-b647-d0824cb42b4c
+# ╔═╡ ad62682b-2479-483e-80bc-c7381b5f06d6
 md"""
-## Convergence and Hyperparam Update
+Make a trivial test
 """
 
-# ╔═╡ f928d8a9-46d2-47ac-8ec4-a06fab255257
-function update_hyp(hpp, Q_gam)
-	b_s = Q_gam.b
-	D = length(b_s)
-	a_s = Q_gam.a * ones(D)
-	exp_ρ = a_s ./ b_s 
-	exp_log_ρ = [(digamma(Q_gam.a) - log(b_s[i])) for i in 1:D]
-    d = mean(exp_ρ)
-    c = mean(exp_log_ρ)
-    
-    # Update using fixed point equations
-	a = hpp.a		
-	α = hpp.α
-    for _ in 1:100
-        ψ_a = digamma(a)
-        ψ_a_p = trigamma(a)
-        
-        a_new = a * exp(-(ψ_a - log(a) + log(d) - c) / (a * ψ_a_p - 1))
-		a = a_new
-
-		# check convergence
-        if abs(a_new - a) < 1e-5
-            break
-        end
-    end
-    
-    # Update `b` using the converged value of `a`
-    b = a/d
-
-	β_s = Q_gam.β
-	K = length(β_s)
-	α_s = Q_gam.α * ones(K)
-	exp_𝛐 = α_s ./ β_s 
-	exp_log_𝛐 = [(digamma(Q_gam.α) - log(β_s[i])) for i in 1:K]
-    d_ = mean(exp_𝛐)
-    c_ = mean(exp_log_𝛐)
-
-	for _ in 1:100
-        ψ_α = digamma(α)
-        ψ_α_p = trigamma(α)
-        
-        α_new = α * exp(-(ψ_α - log(α) + log(d_) - c_) / (α * ψ_α_p - 1))
-		α = α_new
-
-		# check convergence
-        if abs(α_new - α) < 1e-5
-            break
-        end
-    end
-	β = α/d_
-	
-	return a, b, α, β
+# ╔═╡ b6219371-4672-4f18-bd51-fc2ddf3854a6
+begin
+	Random.seed!(123)
+	y_2, x_1 = test_trivial(1000)
 end
 
-# ╔═╡ b1200f96-ad6b-4579-8708-94d3a1960f29
-function kl_gamma(a_0, b_0, a_s, b_s)
+# ╔═╡ 09422a70-f43c-4b6b-9093-c1f0e5e1887f
+md"""
+## Convergence test
+"""
+
+# ╔═╡ 4d73650c-cd93-4bb4-827e-f0a2edef17f1
+# a_0, b_0 -> p(ρ); a_s, b_s -> q(ρ)
+function kl_ρ(a_0, b_0, a_s, b_s)
 	kl = a_s*log(b_s) - a_0*log(b_0) - loggamma(a_s) + loggamma(a_0)
 	kl += (a_s - a_0)*(digamma(a_s) - log(b_s))
 	kl -= a_s*(1 - b_0/b_s)
 	return kl
 end
 
-# ╔═╡ fa6e2b54-246c-4353-a1ac-11e41fe69c99
-function vbem_lg_c(y, A::Array{Float64, 2}, C::Array{Float64, 2}, prior, hp_learn=false, max_iter=200, tol=5e-3)
+# ╔═╡ 50fde0ff-9da7-49fb-b060-508cca6e9709
+function kl_C(μ_0, γ, μ_C, Σ_C, exp_ρs)
+	kl = -0.5*logdet(Σ_C*Diagonal(γ))
+	kl -= 0.5*tr(I - (Σ_C*Diagonal(γ) + (μ_C - μ_0)*(μ_C - μ_0)')*exp_ρs*Diagonal(γ))
+	return kl
+end
 
-	D, _ = size(y)
-	K = size(A, 1)
-	hss = HSS(ones(size(A)), ones(size(A)), ones(size(C')), ones(size(A)))
-	E_R_inv, E_Q_inv = missing, missing
-	elbo_prev = -Inf
-	el_s = zeros(max_iter)
+# ╔═╡ 43095945-3a72-4153-bd9b-c36a910a3826
+function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000, tol=1e-4)
+	D, T = size(ys)
+	K = length(hpp.γ)
 	
+	W_C = Matrix{Float64}(T*I, K, K)
+	S_C = Matrix{Float64}(T*I, K, D)
+
+	hss = HSS(W_C, S_C)
+	exp_np = missing
+	elbo_prev = -Inf
+
+	# cf. Beal Algorithm 5.3
 	for i in 1:max_iter
-		E_R_inv, E_Q_inv, Q_gam = vb_m_step(y, hss, prior, A, C)
-		hss, μ_s0, Σ_s0, log_Z = vb_e_step(y, A, C, inv(E_R_inv), inv(E_Q_inv), prior)
-		
-		kl_ρ = sum([kl_gamma(prior.a, prior.b, Q_gam.a, (Q_gam.b)[s]) for s in 1:D])
-		kl_𝛐 = sum([kl_gamma(prior.α, prior.β, Q_gam.α, (Q_gam.β)[s]) for s in 1:K])
-		
-		elbo = log_Z - kl_ρ - kl_𝛐
-		el_s[i] = elbo
-		
-		if (hp_learn)
+		exp_np, γ_n, exp_ρ, exp_log_ρ, qθ = vb_m(ys, hpp, hss)
+		hss, log_Z_ = vb_e(ys, exp_np, hpp)
+
+		# Convergence check
+		kl_ρ_ = sum([kl_ρ(hpp.a, hpp.b, qθ.a_s, (qθ.b_s)[s]) for s in 1:D])
+		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
+			
+		elbo = log_Z_ - kl_ρ_ - kl_C_
+
+		# Hyper-param learning 
+		if (hpp_learn)
 			if (i%5 == 0) 
-				a_, b_, α_, β_ = update_hyp(prior, Q_gam)
-				prior = HPP_D(α_, β_, a_, b_, μ_s0, Σ_s0)
+				a, b = update_ab(hpp, exp_ρ, exp_log_ρ)
+				hpp = HPP(γ_n, a, b, zeros(K), Matrix{Float64}(I, K, K))
 			end
 		end
-		
+
 		if abs(elbo - elbo_prev) < tol
 			println("Stopped at iteration: $i")
-			el_s = el_s[1:i]
             break
 		end
 		
         elbo_prev = elbo
 
 		if (i == max_iter)
-			println("Warning: VB have not necessarily converged at $max_iter iterations with tolerance $tol")
+			println("Warning: VB have not necessarily converged at $max_iter iterations")
 		end
 	end
+		
+	return exp_np, elbo_prev
+end
+
+# ╔═╡ 673f5967-8b97-429b-83d7-8503599af710
+let
+	K = 1
+	γ = ones(K)
+	a = 0.01
+	b = 0.01
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_2, hpp, true)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ fe415c83-2ca5-432b-80b9-3ec89718a7e7
+md"""
+inferring loading matrix $C$ and **isotropic** noise $σ^2$
+"""
+
+# ╔═╡ 74604b66-071b-42b4-b039-d3e484c89603
+md"""
+VBEM procedure is able to converge to results competitive to PPCA packages (ML, EM, Bayes) shown below, and ELBO computation can be used for model selection with the most appropriate $k$ being the highest ELBO, and predicative likelihood approximation (**mention in thesis**)
+"""
+
+# ╔═╡ 3d55a597-b5d0-4e9d-9b05-71aa166b9d93
+md"""
+Compare with existing PCA package
+"""
+
+# ╔═╡ 491489f9-373f-44ab-a6b7-c3714017536c
+let
+	M = fit(PCA, y_pca; maxoutdim=2)
+	loadings(M), tresidualvar(M)
+end
+
+# ╔═╡ ca26f018-b8d3-4a99-97e4-deff6f1e9bf0
+let
+	M = fit(PPCA, y_pca; maxoutdim=2) # default MLE
+	loadings(M), M
+end
+
+# ╔═╡ 0c2becba-7a86-4b1f-a742-8b663b821997
+let
+	M = fit(PPCA, y_pca; method=(:em), maxoutdim=2)
+	loadings(M), M
+end
+
+# ╔═╡ e63dfbf4-6481-46ab-ab6d-51cd337b5e3b
+let
+	M = fit(PPCA, y_pca; method=(:bayes), maxoutdim=2)
+	loadings(M), M
+end
+
+# ╔═╡ d619fca8-b264-4b38-8bb7-84141a7697db
+md"""
+## Further testing
+"""
+
+# ╔═╡ b87c1604-79df-4665-8e85-528f7ed16d72
+md"""
+x: 2-d
+
+y: 10-d
+"""
+
+# ╔═╡ fde9b49e-801a-434b-8c30-e79fdbbc39b0
+begin
+	Random.seed!(121)
+	μ_0_t = zeros(2)
+	Σ_0_t = Diagonal(ones(2))
+	C_ = [1.0 0.0; 0.6 1.0; 0.3 0.2; 0.5 0.1; 0.1 0.3; 0.4 0.1; 0.8 0.2; 0.3 0.3; 0.4 0.6; 0.1 0.4] 
+	R_ = Diagonal(ones(10) .* 0.1)
+	y_10, x_2 = gen_data(zeros(2, 2), C_, Diagonal([1.0, 1.0]), R_, μ_0_t, Σ_0_t, T)
+end;
+
+# ╔═╡ 31a9fbed-db80-46b3-978a-5033c5607457
+let
+	K = 1
+	γ = ones(K)
+	a = 0.01
+	b = 0.01
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_10, hpp, true)
+	println("elbo, k=1 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 4be24344-04e5-4717-8d00-ef65250ccc3a
+let
+	K = 2
+	γ = ones(K)
+	a = 0.01
+	b = 0.01
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_10, hpp, true)
+	println("elbo, k=2 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 5c60da7f-04ca-4ceb-ab08-939933080a9f
+let
+	K = 3
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_10, hpp, true)
+	println("elbo, k=3 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 88bbd6b3-f60e-4667-bdb0-34f060e9bfe1
+let
+	K = 4
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_10, hpp, true)
+	println("elbo, k=4 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 36ad43a3-336e-4974-a1c3-130f22527733
+md"""
+## Gibbs Sampling alter.
+"""
+
+# ╔═╡ 17d2e734-ece9-4aa9-8419-014052f79d38
+function error_metrics(true_means, smoothed_means)
+    T = size(true_means)[2]
+    mse = sum((true_means .- smoothed_means).^2) / T
+    mad = sum(abs.(true_means .- smoothed_means)) / T
+
+	# mean squared error (MSE), mean absolute deviation (MAD)
+    return mse, mad
+end
+
+# ╔═╡ 9072572f-dc8d-4ec0-aa76-d25f2acab027
+let
+	K = 2
+	γ = ones(K) .* 100
+	a = 0.01
+	b = 0.01
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_pca, hpp, true)
+
+	Xs, _, _ = v_forward(y_pca, exp_f, hpp)
+	println("latent x error: ", error_metrics(x_true, Xs))
+	println("elbo, k=2 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 8c11535b-feab-4833-8aff-3814bafed090
+let
+	K = 1
+	γ = ones(K) .* 100
+	a = 0.01
+	b = 0.01
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_pca, hpp, true)
+	Xs, _, _ = v_forward(y_pca, exp_f, hpp)
+	println("latent x error: ", error_metrics(x_true, Xs))
+	println("elbo, k=1 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 93d5a737-ddee-4ce3-8072-b9c3a8d1b057
+md"""
+Sample C, matrix of factor loadings
+"""
+
+# ╔═╡ 1bd6d913-987e-4274-ad93-48fcc88fa66b
+function sample_C(Xs, Ys, μ_C, Σ_C, R)
+    P, T = size(Ys)
+	K, _ = size(Xs)
+    C_sampled = zeros(P, K)
 	
-	return inv(E_R_inv), inv(E_Q_inv), el_s
+    for i in 1:P
+        Y = Ys[i, :]
+        Σ_C_inv = inv(Σ_C)
+        Σ_post = inv(Σ_C_inv + (Xs * Xs') ./ R[i, i])
+        μ_post = Σ_post * (Σ_C_inv * μ_C + Xs * Y / R[i, i])
+        C_sampled[i, :] = rand(MvNormal(μ_post, Symmetric(Σ_post)))
+    end
+    return C_sampled
 end
 
-# ╔═╡ 0234e5f1-90f4-4e6f-8e58-1ea46e2d09bb
+# ╔═╡ 92f8fb55-c972-4ca8-bc0c-21464f730ad2
 let
-	D, _ = size(y)
-	K = size(A_lg, 1)
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
+	sample_C(x_true, y_pca, zeros(2), Matrix{Float64}(I, 2, 2), R), C_d3k2
+end
+
+# ╔═╡ 252d7f91-d673-4973-8548-f32f88c0153c
+md"""
+Sample R, isotropic noise matrix
+"""
+
+# ╔═╡ 8b33b599-8be8-4974-b231-2d46e8d5675f
+function sample_R(Xs, Ys, C, α_ρ, β_ρ)
+    P, T = size(Ys)
+    ρ_sampled = zeros(P)
+    for i in 1:P
+        Y = Ys[i, :]
+        α_post = α_ρ + T / 2
+        β_post = β_ρ + 0.5 * sum((Y' - C[i, :]' * Xs).^2)
+		
+        ρ_sampled[i] = rand(Gamma(α_post, 1 / β_post))
+    end
+    return diagm(ones(P) ./ mean(ρ_sampled))
+end
+
+# ╔═╡ 6eb1c173-6353-4901-8a37-e903c4a6f877
+let
+	sample_R(x_true, y_pca, C_d3k2, 0.01, 0.01), R
+end
+
+# ╔═╡ 5ec130a6-e7bb-4958-9935-c820cf20d643
+md"""
+Sample x, i.i.d latent state
+"""
+
+# ╔═╡ 3e47d037-284b-4e83-ad1c-6f3c2e37a782
+function sample_X(Ys, C, R, m_0, C_0)
+	_, T = size(Ys)
+	d, _ = size(C_0)
 	
-	R, Q, elbos = vbem_lg_c(y, A_lg, C_lg, prior)
-	p = plot(elbos, label = "elbo", title = "ElBO progression")
-	p, R, Q
-end
+	ms = zeros(d, T+1)
+	Cs = zeros(d, d, T+1)
 
-# ╔═╡ 87d7e601-6508-4636-9356-220a738a9406
-let
-	K = size(A_lg, 1)
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
-	vbem_lg_c(y, A_lg, C_lg, prior, true, 15)
-end
+	ms[:, 1] = m_0
+	Cs[:, :, 1] = C_0
+	X = zeros(d, T)
+	for t in 1:T
+		R_t = I #W, Q
+		
+		S_t = C * R_t * C' + R #V, R
 
-# ╔═╡ 9789edc5-83fa-4398-b323-1ed43fae518b
-let
-	K = size(A_lg, 1)
-	prior = HPP_D(0.01, 0.01, 0.01, 0.01, zeros(K), Matrix{Float64}(I, K, K))
-	vbem_lg_c(y, A_lg, C_lg, prior, true, 10)
-end
-
-# ╔═╡ 299e6072-e261-4bd1-b5a7-e16454f42429
-md"""
-# Aside
-"""
-
-# ╔═╡ f0302ce8-e5ec-4336-966c-062de4a1e937
-md"""
-## debugging notes
-"""
-
-# ╔═╡ 5fb46b76-a90b-4d34-a7c1-ec5f47c5fe09
-md"""
-
-MvNormal behaviour 1-d is the same as Normal
-"""
-
-# ╔═╡ 885536c6-1531-4fa5-b191-41b890ab2e9e
-let
-	Random.seed!(133)
-	ss = zeros(1, 1000)
-	for i in 1:1000
-		ss[:, i] = rand(MvNormal(zeros(1), [2])) 
+		ms[:, t+1] = m_t = R_t * C' * inv(S_t) * (Ys[:, t])
+		Cs[:, :, t+1]= C_t = R_t - R_t * C' * inv(S_t) * C * R_t
+		if d == 1
+			X[:, t] = rand(MvNormal(m_t, sqrt(C_t)))
+		else
+			X[:, t] = rand(MvNormal(m_t, Symmetric(C_t)))
+		end
 	end
 
-	plot(ss'), summarystats(ss)
+	return X
 end
 
-# ╔═╡ 7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
+# ╔═╡ fefb6196-dc71-471d-9df0-174d939aac3a
+md"""
+Test x sample
+"""
+
+# ╔═╡ 30f40475-a31d-48f8-82e9-6901039edcc0
 let
-	Random.seed!(133)
-	ss = zeros(1000)
-	for i in 1:1000
-		ss[i] = rand(Normal(0, 2)) 
+	Random.seed!(177)
+	xss = zeros(2, T, 3000)
+	for i in 1:3000
+		x_ = sample_X(y_pca, C_d3k2, R, zeros(2), Matrix{Float64}(I, 2, 2))
+		xss[:, :, i] = x_
 	end
-
-	plot(ss), summarystats(ss)
+	xs_m = mean(xss, dims=3)[:, :, 1]
+	println("MSE, MAD of MCMC x mean: ", error_metrics(x_true, xs_m))
 end
+
+# ╔═╡ 9e8ec936-0290-4f73-9c99-8e00e73cbfef
+struct G_Prior
+	μ_C
+	Σ_C
+	α
+	β
+	m_0
+	C_0
+end
+
+# ╔═╡ dd406b8b-eeea-4518-a51c-41860cfa8780
+function gibbs_ppca(y, prior::G_Prior, mcmc=20000, burn_in=10000, thinning=1)
+	P, T = size(y)
+	K = length(prior.m_0)
+	
+	n_samples = Int.(mcmc/thinning)
+    C_samples = zeros(P, K, n_samples)
+    R_samples = zeros(P, P, n_samples)
+    Xs_samples = zeros(K, T, n_samples)
+	
+ 	C = rand(MvNormal(prior.μ_C, prior.Σ_C), P)'
+	ρ = rand(Gamma(prior.α, prior.β), P)
+    R = Diagonal(1 ./ ρ)
+	
+	for iter in 1:(mcmc+burn_in)
+        Xs = sample_X(y, C, R, prior.m_0, prior.C_0)
+        C = sample_C(Xs, y, prior.μ_C, prior.Σ_C, R)
+        R = sample_R(Xs, y, C, prior.α, prior.β)
+		
+        # Store samples after burn-in
+        if iter > burn_in && mod(iter - burn_in, thinning) == 0
+			index = div(iter - burn_in, thinning)
+            C_samples[:, :, index] = C
+            R_samples[:, :, index] = R
+            Xs_samples[:, :, index] = Xs
+        end
+    end
+    return C_samples, R_samples, Xs_samples
+end
+
+# ╔═╡ 905a9e1a-1a4e-4c6c-b5ea-3c3e161ee6c5
+begin
+	prior = G_Prior(zeros(1), Matrix{Float64}(I, 1, 1), 0.01, 0.01, zeros(1),  Matrix{Float64}(I, 1, 1))
+	Cs_samples, Rs_samples, Xs_samples = gibbs_ppca(y_2, prior, 100000, 5000, 10)
+	Cs_samples, Rs_samples
+end
+
+# ╔═╡ c3a44ca3-8166-4511-aa0f-1dbc568db45f
+mean(Rs_samples, dims=3)[:, :, 1], mean(Cs_samples, dims=3)[:, :, 1]
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
-DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MCMCChains = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
-PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"
-Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+MultivariateStats = "6f286f6a-111f-5878-ab1e-185364afe411"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
-Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
-StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 
 [compat]
-DataFrames = "~1.5.0"
 Distributions = "~0.25.96"
 MCMCChains = "~6.0.3"
-PDMats = "~0.11.17"
-Plots = "~1.38.16"
+MultivariateStats = "~0.10.2"
 PlutoUI = "~0.7.51"
 SpecialFunctions = "~2.2.0"
-StatsBase = "~0.34.0"
 StatsFuns = "~1.3.0"
-StatsPlots = "~0.15.5"
+StatsPlots = "~0.15.6"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -583,17 +860,18 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.3"
 manifest_format = "2.0"
-project_hash = "b4496579d6776b919200d593849930309c483152"
+project_hash = "90e29373c9a64d9c8f22753c8ad30c575be16a1d"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
-git-tree-sha1 = "16b6dbc4cf7caee4e1e75c49485ec67b667098a0"
+git-tree-sha1 = "d92ad398961a3ed262d8bf04a1a2b8340f915fef"
 uuid = "621f4979-c628-5d54-868e-fcf4e3e8185c"
-version = "1.3.1"
-weakdeps = ["ChainRulesCore"]
+version = "1.5.0"
+weakdeps = ["ChainRulesCore", "Test"]
 
     [deps.AbstractFFTs.extensions]
     AbstractFFTsChainRulesCoreExt = "ChainRulesCore"
+    AbstractFFTsTestExt = "Test"
 
 [[deps.AbstractMCMC]]
 deps = ["BangBang", "ConsoleProgressMonitor", "Distributed", "LogDensityProblems", "Logging", "LoggingExtras", "ProgressLogging", "Random", "StatsBase", "TerminalLoggers", "Transducers"]
@@ -654,9 +932,9 @@ version = "1.0.1"
 
 [[deps.AxisArrays]]
 deps = ["Dates", "IntervalSets", "IterTools", "RangeArrays"]
-git-tree-sha1 = "1dd4d9f5beebac0c03446918741b1a03dc5e5788"
+git-tree-sha1 = "16351be62963a67ac4083f748fdb3cca58bfd52f"
 uuid = "39de3d68-74b9-583c-8d2d-e117c070f3a9"
-version = "0.4.6"
+version = "0.4.7"
 
 [[deps.BangBang]]
 deps = ["Compat", "ConstructionBase", "InitialValues", "LinearAlgebra", "Requires", "Setfield", "Tables"]
@@ -710,28 +988,32 @@ uuid = "49dc2e85-a5d0-5ad3-a950-438e2897f1b9"
 version = "0.5.1"
 
 [[deps.ChainRulesCore]]
-deps = ["Compat", "LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "e30f2f4e20f7f186dc36529910beaedc60cfa644"
+deps = ["Compat", "LinearAlgebra"]
+git-tree-sha1 = "e0af648f0692ec1691b5d094b8724ba1346281cf"
 uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-version = "1.16.0"
+version = "1.18.0"
+weakdeps = ["SparseArrays"]
+
+    [deps.ChainRulesCore.extensions]
+    ChainRulesCoreSparseArraysExt = "SparseArrays"
 
 [[deps.Clustering]]
 deps = ["Distances", "LinearAlgebra", "NearestNeighbors", "Printf", "Random", "SparseArrays", "Statistics", "StatsBase"]
-git-tree-sha1 = "42fe66dbc8f1d09a44aa87f18d26926d06a35f84"
+git-tree-sha1 = "05f9816a77231b07e634ab8715ba50e5249d6f76"
 uuid = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
-version = "0.15.3"
+version = "0.15.5"
 
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
-git-tree-sha1 = "9c209fb7536406834aa938fb149964b985de6c83"
+git-tree-sha1 = "cd67fc487743b2f0fd4380d4cbd3a24660d0eec8"
 uuid = "944b1d66-785c-5afd-91f1-9de20f533193"
-version = "0.7.1"
+version = "0.7.3"
 
 [[deps.ColorSchemes]]
 deps = ["ColorTypes", "ColorVectorSpace", "Colors", "FixedPointNumbers", "PrecompileTools", "Random"]
-git-tree-sha1 = "be6ab11021cd29f0344d5c4357b163af05a48cba"
+git-tree-sha1 = "67c1f244b991cad9b0aa4b7540fb758c2488b129"
 uuid = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
-version = "3.21.0"
+version = "3.24.0"
 
 [[deps.ColorTypes]]
 deps = ["FixedPointNumbers", "Random"]
@@ -740,10 +1022,14 @@ uuid = "3da002f7-5984-5a60-b8a6-cbb66c0b333f"
 version = "0.11.4"
 
 [[deps.ColorVectorSpace]]
-deps = ["ColorTypes", "FixedPointNumbers", "LinearAlgebra", "SpecialFunctions", "Statistics", "TensorCore"]
-git-tree-sha1 = "600cc5508d66b78aae350f7accdb58763ac18589"
+deps = ["ColorTypes", "FixedPointNumbers", "LinearAlgebra", "Requires", "Statistics", "TensorCore"]
+git-tree-sha1 = "a1f44953f2382ebb937d60dafbe2deea4bd23249"
 uuid = "c3611d14-8923-5661-9e6a-0046d554d3a4"
-version = "0.9.10"
+version = "0.10.0"
+weakdeps = ["SpecialFunctions"]
+
+    [deps.ColorVectorSpace.extensions]
+    SpecialFunctionsExt = "SpecialFunctions"
 
 [[deps.Colors]]
 deps = ["ColorTypes", "FixedPointNumbers", "Reexport"]
@@ -779,9 +1065,9 @@ version = "0.1.2"
 
 [[deps.ConcurrentUtilities]]
 deps = ["Serialization", "Sockets"]
-git-tree-sha1 = "96d823b94ba8d187a6d8f0826e731195a74b90e9"
+git-tree-sha1 = "5372dbbf8f0bdb8c700db5367132925c0771ef7e"
 uuid = "f0e56b4a-5159-44fe-b623-3e5288b988bb"
-version = "2.2.0"
+version = "2.2.1"
 
 [[deps.ConsoleProgressMonitor]]
 deps = ["Logging", "ProgressMeter"]
@@ -791,9 +1077,9 @@ version = "0.1.2"
 
 [[deps.ConstructionBase]]
 deps = ["LinearAlgebra"]
-git-tree-sha1 = "738fec4d684a9a6ee9598a8bfee305b26831f28c"
+git-tree-sha1 = "c53fc348ca4d40d7b371e71fd52251839080cbc9"
 uuid = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
-version = "1.5.2"
+version = "1.5.4"
 weakdeps = ["IntervalSets", "StaticArrays"]
 
     [deps.ConstructionBase.extensions]
@@ -814,12 +1100,6 @@ version = "4.1.1"
 git-tree-sha1 = "8da84edb865b0b5b0100c0666a9bc9a0b71c553c"
 uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.15.0"
-
-[[deps.DataFrames]]
-deps = ["Compat", "DataAPI", "Future", "InlineStrings", "InvertedIndices", "IteratorInterfaceExtensions", "LinearAlgebra", "Markdown", "Missings", "PooledArrays", "PrettyTables", "Printf", "REPL", "Random", "Reexport", "SentinelArrays", "SnoopPrecompile", "SortingAlgorithms", "Statistics", "TableTraits", "Tables", "Unicode"]
-git-tree-sha1 = "aa51303df86f8626a962fccb878430cdb0a97eee"
-uuid = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-version = "1.5.0"
 
 [[deps.DataStructures]]
 deps = ["Compat", "InteractiveUtils", "OrderedCollections"]
@@ -848,10 +1128,15 @@ uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 version = "1.9.1"
 
 [[deps.Distances]]
-deps = ["LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI"]
-git-tree-sha1 = "49eba9ad9f7ead780bfb7ee319f962c811c6d3b2"
+deps = ["LinearAlgebra", "Statistics", "StatsAPI"]
+git-tree-sha1 = "5225c965635d8c21168e32a12954675e7bea1151"
 uuid = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
-version = "0.10.8"
+version = "0.10.10"
+weakdeps = ["ChainRulesCore", "SparseArrays"]
+
+    [deps.Distances.extensions]
+    DistancesChainRulesCoreExt = "ChainRulesCore"
+    DistancesSparseArraysExt = "SparseArrays"
 
 [[deps.Distributed]]
 deps = ["Random", "Serialization", "Sockets"]
@@ -958,10 +1243,10 @@ uuid = "59287772-0a20-5a39-b81b-1366585eb4c0"
 version = "0.4.2"
 
 [[deps.FreeType2_jll]]
-deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
-git-tree-sha1 = "87eb71354d8ec1a96d4a7636bd57a7347dde3ef9"
+deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "Libdl", "Zlib_jll"]
+git-tree-sha1 = "d8db6a5a2fe1381c1ea4ef2cab7c69c2de7f9ea0"
 uuid = "d7e528f0-a631-5988-bf34-fe36492bcfd7"
-version = "2.10.4+0"
+version = "2.13.1+0"
 
 [[deps.FriBidi_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -981,15 +1266,15 @@ version = "3.3.8+0"
 
 [[deps.GR]]
 deps = ["Artifacts", "Base64", "DelimitedFiles", "Downloads", "GR_jll", "HTTP", "JSON", "Libdl", "LinearAlgebra", "Pkg", "Preferences", "Printf", "Random", "Serialization", "Sockets", "TOML", "Tar", "Test", "UUIDs", "p7zip_jll"]
-git-tree-sha1 = "8b8a2fd4536ece6e554168c21860b6820a8a83db"
+git-tree-sha1 = "27442171f28c952804dede8ff72828a96f2bfc1f"
 uuid = "28b8d3ca-fb5f-59d9-8090-bfdbd6d07a71"
-version = "0.72.7"
+version = "0.72.10"
 
 [[deps.GR_jll]]
-deps = ["Artifacts", "Bzip2_jll", "Cairo_jll", "FFMPEG_jll", "Fontconfig_jll", "GLFW_jll", "JLLWrappers", "JpegTurbo_jll", "Libdl", "Libtiff_jll", "Pixman_jll", "Qt5Base_jll", "Zlib_jll", "libpng_jll"]
-git-tree-sha1 = "19fad9cd9ae44847fe842558a744748084a722d1"
+deps = ["Artifacts", "Bzip2_jll", "Cairo_jll", "FFMPEG_jll", "Fontconfig_jll", "FreeType2_jll", "GLFW_jll", "JLLWrappers", "JpegTurbo_jll", "Libdl", "Libtiff_jll", "Pixman_jll", "Qt6Base_jll", "Zlib_jll", "libpng_jll"]
+git-tree-sha1 = "025d171a2847f616becc0f84c8dc62fe18f0f6dd"
 uuid = "d2c73de3-f751-5644-a686-071e5b155ba9"
-version = "0.72.7+0"
+version = "0.72.10+0"
 
 [[deps.Gettext_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Libiconv_jll", "Pkg", "XML2_jll"]
@@ -998,10 +1283,10 @@ uuid = "78b55507-aeef-58d4-861c-77aaff3498b1"
 version = "0.21.0+0"
 
 [[deps.Glib_jll]]
-deps = ["Artifacts", "Gettext_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Libiconv_jll", "Libmount_jll", "PCRE2_jll", "Pkg", "Zlib_jll"]
-git-tree-sha1 = "d3b3624125c1474292d0d8ed0f65554ac37ddb23"
+deps = ["Artifacts", "Gettext_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Libiconv_jll", "Libmount_jll", "PCRE2_jll", "Zlib_jll"]
+git-tree-sha1 = "e94c92c7bf4819685eb80186d51c43e71d4afa17"
 uuid = "7746bdde-850d-59dc-9ae8-88ece973131d"
-version = "2.74.0+2"
+version = "2.76.5+0"
 
 [[deps.Graphite2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1016,9 +1301,9 @@ version = "1.0.2"
 
 [[deps.HTTP]]
 deps = ["Base64", "CodecZlib", "ConcurrentUtilities", "Dates", "ExceptionUnwrapping", "Logging", "LoggingExtras", "MbedTLS", "NetworkOptions", "OpenSSL", "Random", "SimpleBufferStream", "Sockets", "URIs", "UUIDs"]
-git-tree-sha1 = "2613d054b0e18a3dea99ca1594e9a3960e025da4"
+git-tree-sha1 = "5eab648309e2e060198b45820af1a37182de3cce"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-version = "1.9.7"
+version = "1.10.0"
 
 [[deps.HarfBuzz_jll]]
 deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll", "Graphite2_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg"]
@@ -1055,17 +1340,11 @@ git-tree-sha1 = "4da0f88e9a39111c2fa3add390ab15f3a44f3ca3"
 uuid = "22cec73e-a1b8-11e9-2c92-598750a2cf9c"
 version = "0.3.1"
 
-[[deps.InlineStrings]]
-deps = ["Parsers"]
-git-tree-sha1 = "9cc2baf75c6d09f9da536ddf58eb2f29dedaf461"
-uuid = "842dd82b-1e85-43dc-bf29-5d0ee9dffc48"
-version = "1.4.0"
-
 [[deps.IntelOpenMP_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "0cb9352ef2e01574eeebdb102948a58740dcaf83"
+git-tree-sha1 = "ad37c091f7d7daf900963171600d7c1c5c3ede32"
 uuid = "1d5cc7b8-4909-519e-a0f8-d0f5ad9712d0"
-version = "2023.1.0+0"
+version = "2023.2.0+0"
 
 [[deps.InteractiveUtils]]
 deps = ["Markdown"]
@@ -1078,15 +1357,14 @@ uuid = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 version = "0.14.7"
 
 [[deps.IntervalSets]]
-deps = ["Dates", "Random", "Statistics"]
-git-tree-sha1 = "16c0cc91853084cb5f58a78bd209513900206ce6"
+deps = ["Dates", "Random"]
+git-tree-sha1 = "3d8866c029dd6b16e69e0d4a939c4dfcb98fac47"
 uuid = "8197267c-284f-5f27-9208-e0e47529a953"
-version = "0.7.4"
+version = "0.7.8"
+weakdeps = ["Statistics"]
 
-[[deps.InvertedIndices]]
-git-tree-sha1 = "0dc7b50b8d436461be01300fd8cd45aa0274b038"
-uuid = "41ab1584-1d38-5bbf-9106-f11c6c58b48f"
-version = "1.3.0"
+    [deps.IntervalSets.extensions]
+    IntervalSetsStatisticsExt = "Statistics"
 
 [[deps.IrrationalConstants]]
 git-tree-sha1 = "630b497eafcc20001bba38a4651b327dcfc491d2"
@@ -1105,9 +1383,9 @@ version = "1.0.0"
 
 [[deps.JLFzf]]
 deps = ["Pipe", "REPL", "Random", "fzf_jll"]
-git-tree-sha1 = "f377670cda23b6b7c1c0b3893e37451c5c1a2185"
+git-tree-sha1 = "9fb0b890adab1c0a4a475d4210d51f228bfc250d"
 uuid = "1019f520-868f-41f5-a6de-eb00f4b6a39c"
-version = "0.1.5"
+version = "0.1.6"
 
 [[deps.JLLWrappers]]
 deps = ["Preferences"]
@@ -1233,10 +1511,10 @@ uuid = "7add5ba3-2f88-524e-9cd5-f83b8a55f7b8"
 version = "1.42.0+0"
 
 [[deps.Libiconv_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "c7cb1f5d892775ba13767a87c7ada0b980ea0a71"
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "f9557a255370125b405568f9767d6d195822a175"
 uuid = "94ce4f54-9a6c-5748-9c1c-f9c7231a4531"
-version = "1.16.1+2"
+version = "1.17.0+0"
 
 [[deps.Libmount_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1245,10 +1523,10 @@ uuid = "4b2f31a3-9ecc-558c-b454-b3730dcb73e9"
 version = "2.35.0+0"
 
 [[deps.Libtiff_jll]]
-deps = ["Artifacts", "JLLWrappers", "JpegTurbo_jll", "LERC_jll", "Libdl", "Pkg", "Zlib_jll", "Zstd_jll"]
-git-tree-sha1 = "3eb79b0ca5764d4799c06699573fd8f533259713"
+deps = ["Artifacts", "JLLWrappers", "JpegTurbo_jll", "LERC_jll", "Libdl", "XZ_jll", "Zlib_jll", "Zstd_jll"]
+git-tree-sha1 = "2da088d113af58221c52828a80378e16be7d037a"
 uuid = "89763e89-9b03-5906-acba-b20f662cd828"
-version = "4.4.0+0"
+version = "4.5.1+1"
 
 [[deps.Libuuid_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1287,9 +1565,9 @@ uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
 [[deps.LoggingExtras]]
 deps = ["Dates", "Logging"]
-git-tree-sha1 = "cedb76b37bc5a6c702ade66be44f831fa23c681e"
+git-tree-sha1 = "c1dd6d7978c12545b4179fb6153b9250c96b0075"
 uuid = "e6f89c97-d47a-5376-807f-9c37f3926c36"
-version = "1.0.0"
+version = "1.0.3"
 
 [[deps.MCMCChains]]
 deps = ["AbstractMCMC", "AxisArrays", "Dates", "Distributions", "Formatting", "IteratorInterfaceExtensions", "KernelDensity", "LinearAlgebra", "MCMCDiagnosticTools", "MLJModelInterface", "NaturalSort", "OrderedCollections", "PrettyTables", "Random", "RecipesBase", "Statistics", "StatsBase", "StatsFuns", "TableTraits", "Tables"]
@@ -1299,9 +1577,9 @@ version = "6.0.3"
 
 [[deps.MCMCDiagnosticTools]]
 deps = ["AbstractFFTs", "DataAPI", "DataStructures", "Distributions", "LinearAlgebra", "MLJModelInterface", "Random", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns", "Tables"]
-git-tree-sha1 = "695e91605361d1932c3e89a812be78480a4a4595"
+git-tree-sha1 = "56c61163890d15d45901de423be0ad91855a2cd7"
 uuid = "be115224-59cd-429b-ad48-344e309966f0"
-version = "0.3.4"
+version = "0.3.7"
 
 [[deps.MIMEs]]
 git-tree-sha1 = "65f28ad4b594aebe22157d6fac869786a255b7eb"
@@ -1310,21 +1588,21 @@ version = "0.1.4"
 
 [[deps.MKL_jll]]
 deps = ["Artifacts", "IntelOpenMP_jll", "JLLWrappers", "LazyArtifacts", "Libdl", "Pkg"]
-git-tree-sha1 = "154d7aaa82d24db6d8f7e4ffcfe596f40bff214b"
+git-tree-sha1 = "eb006abbd7041c28e0d16260e50a24f8f9104913"
 uuid = "856f044c-d86e-5d09-b602-aeab76dc8ba7"
-version = "2023.1.0+0"
+version = "2023.2.0+0"
 
 [[deps.MLJModelInterface]]
 deps = ["Random", "ScientificTypesBase", "StatisticalTraits"]
-git-tree-sha1 = "c8b7e632d6754a5e36c0d94a4b466a5ba3a30128"
+git-tree-sha1 = "381d99f0af76d98f50bd5512dcf96a99c13f8223"
 uuid = "e80e1ace-859a-464e-9ed9-23947d8ae3ea"
-version = "1.8.0"
+version = "1.9.3"
 
 [[deps.MacroTools]]
 deps = ["Markdown", "Random"]
-git-tree-sha1 = "42324d08725e200c23d4dfb549e0d5d89dede2d2"
+git-tree-sha1 = "9ee1618cbf5240e6d4e0371d6f24065083f60c48"
 uuid = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
-version = "0.5.10"
+version = "0.5.11"
 
 [[deps.Markdown]]
 deps = ["Base64"]
@@ -1399,9 +1677,9 @@ version = "0.5.4"
 
 [[deps.OffsetArrays]]
 deps = ["Adapt"]
-git-tree-sha1 = "82d7c9e310fe55aa54996e6f7f94674e2a38fcb4"
+git-tree-sha1 = "2ac17d29c523ce1cd38e27785a7d23024853a4bb"
 uuid = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
-version = "1.12.9"
+version = "1.12.10"
 
 [[deps.Ogg_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1427,9 +1705,9 @@ version = "1.4.1"
 
 [[deps.OpenSSL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "1aa4b74f80b01c6bc2b89992b861b5f210e665b5"
+git-tree-sha1 = "a12e56c72edee3ce6b96667745e6cbbe5498f200"
 uuid = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
-version = "1.1.21+0"
+version = "1.1.23+0"
 
 [[deps.OpenSpecFun_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Pkg"]
@@ -1495,9 +1773,9 @@ version = "1.3.5"
 
 [[deps.Plots]]
 deps = ["Base64", "Contour", "Dates", "Downloads", "FFMPEG", "FixedPointNumbers", "GR", "JLFzf", "JSON", "LaTeXStrings", "Latexify", "LinearAlgebra", "Measures", "NaNMath", "Pkg", "PlotThemes", "PlotUtils", "PrecompileTools", "Preferences", "Printf", "REPL", "Random", "RecipesBase", "RecipesPipeline", "Reexport", "RelocatableFolders", "Requires", "Scratch", "Showoff", "SparseArrays", "Statistics", "StatsBase", "UUIDs", "UnicodeFun", "UnitfulLatexify", "Unzip"]
-git-tree-sha1 = "75ca67b2c6512ad2d0c767a7cfc55e75075f8bbc"
+git-tree-sha1 = "ccee59c6e48e6f2edf8a5b64dc817b6729f99eb5"
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-version = "1.38.16"
+version = "1.39.0"
 
     [deps.Plots.extensions]
     FileIOExt = "FileIO"
@@ -1519,12 +1797,6 @@ git-tree-sha1 = "b478a748be27bd2f2c73a7690da219d0844db305"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 version = "0.7.51"
 
-[[deps.PooledArrays]]
-deps = ["DataAPI", "Future"]
-git-tree-sha1 = "a6062fe4063cdafe78f4a0a81cfffb89721b30e7"
-uuid = "2dfb63ee-cc39-5dd5-95bd-886bf059d720"
-version = "1.4.2"
-
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
 git-tree-sha1 = "9673d39decc5feece56ef3940e5dafba15ba0f81"
@@ -1538,10 +1810,10 @@ uuid = "21216c6a-2e73-6563-6e65-726566657250"
 version = "1.4.0"
 
 [[deps.PrettyTables]]
-deps = ["Crayons", "Formatting", "LaTeXStrings", "Markdown", "Reexport", "StringManipulation", "Tables"]
-git-tree-sha1 = "213579618ec1f42dea7dd637a42785a608b1ea9c"
+deps = ["Crayons", "LaTeXStrings", "Markdown", "Printf", "Reexport", "StringManipulation", "Tables"]
+git-tree-sha1 = "6842ce83a836fbbc0cfeca0b5a4de1a4dcbdb8d1"
 uuid = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
-version = "2.2.4"
+version = "2.2.8"
 
 [[deps.Printf]]
 deps = ["Unicode"]
@@ -1555,15 +1827,15 @@ version = "0.1.4"
 
 [[deps.ProgressMeter]]
 deps = ["Distributed", "Printf"]
-git-tree-sha1 = "d7a7aef8f8f2d537104f170139553b14dfe39fe9"
+git-tree-sha1 = "00099623ffee15972c16111bcf84c58a0051257c"
 uuid = "92933f4c-e287-5a05-a399-4b506db050ca"
-version = "1.7.2"
+version = "1.9.0"
 
-[[deps.Qt5Base_jll]]
-deps = ["Artifacts", "CompilerSupportLibraries_jll", "Fontconfig_jll", "Glib_jll", "JLLWrappers", "Libdl", "Libglvnd_jll", "OpenSSL_jll", "Pkg", "Xorg_libXext_jll", "Xorg_libxcb_jll", "Xorg_xcb_util_image_jll", "Xorg_xcb_util_keysyms_jll", "Xorg_xcb_util_renderutil_jll", "Xorg_xcb_util_wm_jll", "Zlib_jll", "xkbcommon_jll"]
-git-tree-sha1 = "0c03844e2231e12fda4d0086fd7cbe4098ee8dc5"
-uuid = "ea2cea3b-5b76-57ae-a6ef-0a8af62496e1"
-version = "5.15.3+2"
+[[deps.Qt6Base_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "Fontconfig_jll", "Glib_jll", "JLLWrappers", "Libdl", "Libglvnd_jll", "OpenSSL_jll", "Vulkan_Loader_jll", "Xorg_libSM_jll", "Xorg_libXext_jll", "Xorg_libXrender_jll", "Xorg_libxcb_jll", "Xorg_xcb_util_cursor_jll", "Xorg_xcb_util_image_jll", "Xorg_xcb_util_keysyms_jll", "Xorg_xcb_util_renderutil_jll", "Xorg_xcb_util_wm_jll", "Zlib_jll", "libinput_jll", "xkbcommon_jll"]
+git-tree-sha1 = "7c29f0e8c575428bd84dc3c72ece5178caa67336"
+uuid = "c0090381-4147-56d7-9ebc-da0b1113ec56"
+version = "6.5.2+2"
 
 [[deps.QuadGK]]
 deps = ["DataStructures", "LinearAlgebra"]
@@ -1613,9 +1885,9 @@ version = "1.2.2"
 
 [[deps.RelocatableFolders]]
 deps = ["SHA", "Scratch"]
-git-tree-sha1 = "90bc7a7c96410424509e4263e277e43250c05691"
+git-tree-sha1 = "ffdaf70d81cf6ff22c2b6e733c900c3321cab864"
 uuid = "05181044-ff0b-4ac5-8273-598c1e38db00"
-version = "1.0.0"
+version = "1.0.1"
 
 [[deps.Requires]]
 deps = ["UUIDs"]
@@ -1680,12 +1952,6 @@ git-tree-sha1 = "874e8867b33a00e784c8a7e4b60afe9e037b74e1"
 uuid = "777ac1f9-54b0-4bf8-805c-2214025038e7"
 version = "1.1.0"
 
-[[deps.SnoopPrecompile]]
-deps = ["Preferences"]
-git-tree-sha1 = "e760a70afdcd461cf01a575947738d359234665c"
-uuid = "66db9d55-30c0-4569-8b51-7e840670fc0c"
-version = "1.0.3"
-
 [[deps.Sockets]]
 uuid = "6462fe0b-24de-5631-8697-dd941f90decc"
 
@@ -1716,15 +1982,19 @@ uuid = "171d559e-b47b-412a-8079-5efa626c420e"
 version = "0.1.15"
 
 [[deps.StaticArrays]]
-deps = ["LinearAlgebra", "Random", "StaticArraysCore", "Statistics"]
-git-tree-sha1 = "832afbae2a45b4ae7e831f86965469a24d1d8a83"
+deps = ["LinearAlgebra", "Random", "StaticArraysCore"]
+git-tree-sha1 = "0adf069a2a490c47273727e029371b31d44b72b2"
 uuid = "90137ffa-7385-5640-81b9-e52037218182"
-version = "1.5.26"
+version = "1.6.5"
+weakdeps = ["Statistics"]
+
+    [deps.StaticArrays.extensions]
+    StaticArraysStatisticsExt = "Statistics"
 
 [[deps.StaticArraysCore]]
-git-tree-sha1 = "6b7ba252635a5eff6a0b0664a41ee140a1c9e72a"
+git-tree-sha1 = "36b3d696ce6366023a0ea192b4cd442268995a0d"
 uuid = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
-version = "1.4.0"
+version = "1.4.2"
 
 [[deps.StatisticalTraits]]
 deps = ["ScientificTypesBase"]
@@ -1765,14 +2035,15 @@ version = "1.3.0"
 
 [[deps.StatsPlots]]
 deps = ["AbstractFFTs", "Clustering", "DataStructures", "Distributions", "Interpolations", "KernelDensity", "LinearAlgebra", "MultivariateStats", "NaNMath", "Observables", "Plots", "RecipesBase", "RecipesPipeline", "Reexport", "StatsBase", "TableOperations", "Tables", "Widgets"]
-git-tree-sha1 = "14ef622cf28b05e38f8af1de57bc9142b03fbfe3"
+git-tree-sha1 = "9115a29e6c2cf66cf213ccc17ffd61e27e743b24"
 uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
-version = "0.15.5"
+version = "0.15.6"
 
 [[deps.StringManipulation]]
-git-tree-sha1 = "46da2434b41f41ac3594ee9816ce5541c6096123"
+deps = ["PrecompileTools"]
+git-tree-sha1 = "a04cabe79c5f01f4d723cc6704070ada0b9d46d5"
 uuid = "892a3eda-7b42-436c-8928-eab12a02cf0e"
-version = "0.3.0"
+version = "0.3.4"
 
 [[deps.SuiteSparse]]
 deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
@@ -1801,10 +2072,10 @@ uuid = "3783bdb8-4a98-5b6b-af9a-565f29a5fe9c"
 version = "1.0.1"
 
 [[deps.Tables]]
-deps = ["DataAPI", "DataValueInterfaces", "IteratorInterfaceExtensions", "LinearAlgebra", "OrderedCollections", "TableTraits", "Test"]
-git-tree-sha1 = "1544b926975372da01227b382066ab70e574a3ec"
+deps = ["DataAPI", "DataValueInterfaces", "IteratorInterfaceExtensions", "LinearAlgebra", "OrderedCollections", "TableTraits"]
+git-tree-sha1 = "cb76cf677714c095e535e3501ac7954732aeea2d"
 uuid = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
-version = "1.10.1"
+version = "1.11.1"
 
 [[deps.Tar]]
 deps = ["ArgTools", "SHA"]
@@ -1828,16 +2099,33 @@ deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [[deps.TranscodingStreams]]
-deps = ["Random", "Test"]
-git-tree-sha1 = "9a6ae7ed916312b41236fcef7e0af564ef934769"
+git-tree-sha1 = "49cbf7c74fafaed4c529d47d48c8f7da6a19eb75"
 uuid = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
-version = "0.9.13"
+version = "0.10.1"
+weakdeps = ["Random", "Test"]
+
+    [deps.TranscodingStreams.extensions]
+    TestExt = ["Test", "Random"]
 
 [[deps.Transducers]]
-deps = ["Adapt", "ArgCheck", "BangBang", "Baselet", "CompositionsBase", "DefineSingletons", "Distributed", "InitialValues", "Logging", "Markdown", "MicroCollections", "Requires", "Setfield", "SplittablesBase", "Tables"]
-git-tree-sha1 = "25358a5f2384c490e98abd565ed321ffae2cbb37"
+deps = ["Adapt", "ArgCheck", "BangBang", "Baselet", "CompositionsBase", "ConstructionBase", "DefineSingletons", "Distributed", "InitialValues", "Logging", "Markdown", "MicroCollections", "Requires", "Setfield", "SplittablesBase", "Tables"]
+git-tree-sha1 = "53bd5978b182fa7c57577bdb452c35e5b4fb73a5"
 uuid = "28d57a85-8fef-5791-bfe6-a80928e7c999"
-version = "0.4.76"
+version = "0.4.78"
+
+    [deps.Transducers.extensions]
+    TransducersBlockArraysExt = "BlockArrays"
+    TransducersDataFramesExt = "DataFrames"
+    TransducersLazyArraysExt = "LazyArrays"
+    TransducersOnlineStatsBaseExt = "OnlineStatsBase"
+    TransducersReferenceablesExt = "Referenceables"
+
+    [deps.Transducers.weakdeps]
+    BlockArrays = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
+    DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+    LazyArrays = "5078a376-72f3-5289-bfd5-ec5146d43c02"
+    OnlineStatsBase = "925886fa-5bf2-5e8e-b522-a9147a512338"
+    Referenceables = "42d2dcc6-99eb-4e98-b66c-637b7d73030e"
 
 [[deps.Tricks]]
 git-tree-sha1 = "aadb748be58b492045b4f56166b5188aa63ce549"
@@ -1863,15 +2151,17 @@ uuid = "1cfade01-22cf-5700-b092-accc4b62d6e1"
 version = "0.4.1"
 
 [[deps.Unitful]]
-deps = ["ConstructionBase", "Dates", "LinearAlgebra", "Random"]
-git-tree-sha1 = "ba4aa36b2d5c98d6ed1f149da916b3ba46527b2b"
+deps = ["Dates", "LinearAlgebra", "Random"]
+git-tree-sha1 = "a72d22c7e13fe2de562feda8645aa134712a87ee"
 uuid = "1986cc42-f94f-5a68-af5c-568840ba703d"
-version = "1.14.0"
+version = "1.17.0"
 
     [deps.Unitful.extensions]
+    ConstructionBaseUnitfulExt = "ConstructionBase"
     InverseFunctionsUnitfulExt = "InverseFunctions"
 
     [deps.Unitful.weakdeps]
+    ConstructionBase = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
     InverseFunctions = "3587e190-3f89-42d0-90ee-14403ec27112"
 
 [[deps.UnitfulLatexify]]
@@ -1885,11 +2175,17 @@ git-tree-sha1 = "ca0969166a028236229f63514992fc073799bb78"
 uuid = "41fe7b60-77ed-43a1-b4f0-825fd5a5650d"
 version = "0.2.0"
 
+[[deps.Vulkan_Loader_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Wayland_jll", "Xorg_libX11_jll", "Xorg_libXrandr_jll", "xkbcommon_jll"]
+git-tree-sha1 = "2f0486047a07670caad3a81a075d2e518acc5c59"
+uuid = "a44049a8-05dd-5a78-86c9-5fde0876e88c"
+version = "1.3.243+0"
+
 [[deps.Wayland_jll]]
 deps = ["Artifacts", "EpollShim_jll", "Expat_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg", "XML2_jll"]
-git-tree-sha1 = "ed8d92d9774b077c53e1da50fd81a36af3744c1c"
+git-tree-sha1 = "7558e29847e99bc3f04d6569e82d0f5c54460703"
 uuid = "a2964d1f-97da-50d4-b82a-358c7fce9d89"
-version = "1.21.0+0"
+version = "1.21.0+1"
 
 [[deps.Wayland_protocols_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1910,10 +2206,10 @@ uuid = "efce3f68-66dc-5838-9240-27a6d6f5f9b6"
 version = "0.5.5"
 
 [[deps.XML2_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Libiconv_jll", "Pkg", "Zlib_jll"]
-git-tree-sha1 = "93c41695bc1c08c46c5899f4fe06d6ead504bb73"
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Libiconv_jll", "Zlib_jll"]
+git-tree-sha1 = "24b81b59bd35b3c42ab84fa589086e19be919916"
 uuid = "02c8fc9c-b97f-50b9-bbe4-9be30ff0a78a"
-version = "2.10.3+0"
+version = "2.11.5+0"
 
 [[deps.XSLT_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Libgcrypt_jll", "Libgpg_error_jll", "Libiconv_jll", "Pkg", "XML2_jll", "Zlib_jll"]
@@ -1921,17 +2217,35 @@ git-tree-sha1 = "91844873c4085240b95e795f692c4cec4d805f8a"
 uuid = "aed1982a-8fda-507f-9586-7b0439959a61"
 version = "1.1.34+0"
 
+[[deps.XZ_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "cf2c7de82431ca6f39250d2fc4aacd0daa1675c0"
+uuid = "ffd25f8a-64ca-5728-b0f7-c24cf3aae800"
+version = "5.4.4+0"
+
+[[deps.Xorg_libICE_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "e5becd4411063bdcac16be8b66fc2f9f6f1e8fe5"
+uuid = "f67eecfb-183a-506d-b269-f58e52b52d7c"
+version = "1.0.10+1"
+
+[[deps.Xorg_libSM_jll]]
+deps = ["Libdl", "Pkg", "Xorg_libICE_jll"]
+git-tree-sha1 = "4a9d9e4c180e1e8119b5ffc224a7b59d3a7f7e18"
+uuid = "c834827a-8449-5923-a945-d239c165b7dd"
+version = "1.2.3+0"
+
 [[deps.Xorg_libX11_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Xorg_libxcb_jll", "Xorg_xtrans_jll"]
-git-tree-sha1 = "5be649d550f3f4b95308bf0183b82e2582876527"
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libxcb_jll", "Xorg_xtrans_jll"]
+git-tree-sha1 = "afead5aba5aa507ad5a3bf01f58f82c8d1403495"
 uuid = "4f6342f7-b3d2-589e-9d20-edeb45f2b2bc"
-version = "1.6.9+4"
+version = "1.8.6+0"
 
 [[deps.Xorg_libXau_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "4e490d5c960c314f33885790ed410ff3a94ce67e"
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "6035850dcc70518ca32f012e46015b9beeda49d8"
 uuid = "0c0b7dd1-d40b-584c-a123-a41640f87eec"
-version = "1.0.9+4"
+version = "1.0.11+0"
 
 [[deps.Xorg_libXcursor_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Xorg_libXfixes_jll", "Xorg_libXrender_jll"]
@@ -1940,10 +2254,10 @@ uuid = "935fb764-8cf2-53bf-bb30-45bb1f8bf724"
 version = "1.2.0+4"
 
 [[deps.Xorg_libXdmcp_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "4fe47bd2247248125c428978740e18a681372dd4"
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "34d526d318358a859d7de23da945578e8e8727b7"
 uuid = "a3789734-cfe1-5b06-b2d0-1dd0d9d62d05"
-version = "1.1.3+4"
+version = "1.1.4+0"
 
 [[deps.Xorg_libXext_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Xorg_libX11_jll"]
@@ -1982,22 +2296,28 @@ uuid = "ea2f1a96-1ddc-540d-b46f-429655e07cfa"
 version = "0.9.10+4"
 
 [[deps.Xorg_libpthread_stubs_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "6783737e45d3c59a4a4c4091f5f88cdcf0908cbb"
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "8fdda4c692503d44d04a0603d9ac0982054635f9"
 uuid = "14d82f49-176c-5ed1-bb49-ad3f5cbd8c74"
-version = "0.1.0+3"
+version = "0.1.1+0"
 
 [[deps.Xorg_libxcb_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "XSLT_jll", "Xorg_libXau_jll", "Xorg_libXdmcp_jll", "Xorg_libpthread_stubs_jll"]
-git-tree-sha1 = "daf17f441228e7a3833846cd048892861cff16d6"
+deps = ["Artifacts", "JLLWrappers", "Libdl", "XSLT_jll", "Xorg_libXau_jll", "Xorg_libXdmcp_jll", "Xorg_libpthread_stubs_jll"]
+git-tree-sha1 = "b4bfde5d5b652e22b9c790ad00af08b6d042b97d"
 uuid = "c7cfdc94-dc32-55de-ac96-5a1b8d977c5b"
-version = "1.13.0+3"
+version = "1.15.0+0"
 
 [[deps.Xorg_libxkbfile_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Xorg_libX11_jll"]
-git-tree-sha1 = "926af861744212db0eb001d9e40b5d16292080b2"
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libX11_jll"]
+git-tree-sha1 = "730eeca102434283c50ccf7d1ecdadf521a765a4"
 uuid = "cc61e674-0454-545c-8b26-ed2c68acab7a"
-version = "1.1.0+4"
+version = "1.1.2+0"
+
+[[deps.Xorg_xcb_util_cursor_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_xcb_util_image_jll", "Xorg_xcb_util_jll", "Xorg_xcb_util_renderutil_jll"]
+git-tree-sha1 = "04341cb870f29dcd5e39055f895c39d016e18ccd"
+uuid = "e920d4aa-a673-5f3a-b3d7-f755a4d47c43"
+version = "0.1.4+0"
 
 [[deps.Xorg_xcb_util_image_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Xorg_xcb_util_jll"]
@@ -2030,22 +2350,22 @@ uuid = "c22f9ab0-d5fe-5066-847c-f4bb1cd4e361"
 version = "0.4.1+1"
 
 [[deps.Xorg_xkbcomp_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Xorg_libxkbfile_jll"]
-git-tree-sha1 = "4bcbf660f6c2e714f87e960a171b119d06ee163b"
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libxkbfile_jll"]
+git-tree-sha1 = "330f955bc41bb8f5270a369c473fc4a5a4e4d3cb"
 uuid = "35661453-b289-5fab-8a00-3d9160c6a3a4"
-version = "1.4.2+4"
+version = "1.4.6+0"
 
 [[deps.Xorg_xkeyboard_config_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Xorg_xkbcomp_jll"]
-git-tree-sha1 = "5c8424f8a67c3f2209646d4425f3d415fee5931d"
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_xkbcomp_jll"]
+git-tree-sha1 = "691634e5453ad362044e2ad653e79f3ee3bb98c3"
 uuid = "33bec58e-1273-512f-9401-5d533626f822"
-version = "2.27.0+4"
+version = "2.39.0+0"
 
 [[deps.Xorg_xtrans_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "79c31e7844f6ecf779705fbc12146eb190b7d845"
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "e92a1a012a10506618f10b7047e478403a046c77"
 uuid = "c5fb5394-a638-5e4d-96e5-b29de1b5cf10"
-version = "1.4.0+3"
+version = "1.5.0+0"
 
 [[deps.Zlib_jll]]
 deps = ["Libdl"]
@@ -2058,11 +2378,23 @@ git-tree-sha1 = "49ce682769cd5de6c72dcf1b94ed7790cd08974c"
 uuid = "3161d3a3-bdf6-5164-811a-617609db77b4"
 version = "1.5.5+0"
 
+[[deps.eudev_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "gperf_jll"]
+git-tree-sha1 = "431b678a28ebb559d224c0b6b6d01afce87c51ba"
+uuid = "35ca27e7-8b34-5b7f-bca9-bdc33f59eb06"
+version = "3.2.9+0"
+
 [[deps.fzf_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
-git-tree-sha1 = "868e669ccb12ba16eaf50cb2957ee2ff61261c56"
+git-tree-sha1 = "47cf33e62e138b920039e8ff9f9841aafe1b733e"
 uuid = "214eeab7-80f7-51ab-84ad-2988db7cef09"
-version = "0.29.0+0"
+version = "0.35.1+0"
+
+[[deps.gperf_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "3516a5630f741c9eecb3720b1ec9d8edc3ecc033"
+uuid = "1a1c6b14-54f6-533d-8383-74cd7377aa70"
+version = "3.1.1+0"
 
 [[deps.libaom_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -2081,11 +2413,23 @@ deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
 version = "5.8.0+0"
 
+[[deps.libevdev_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "141fe65dc3efabb0b1d5ba74e91f6ad26f84cc22"
+uuid = "2db6ffa8-e38f-5e21-84af-90c45d0032cc"
+version = "1.11.0+0"
+
 [[deps.libfdk_aac_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "daacc84a041563f965be61859a36e17c4e4fcd55"
 uuid = "f638f0a6-7fb0-5443-88ba-1cc74229b280"
 version = "2.0.2+0"
+
+[[deps.libinput_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "eudev_jll", "libevdev_jll", "mtdev_jll"]
+git-tree-sha1 = "ad50e5b90f222cfe78aa3d5183a20a12de1322ce"
+uuid = "36db933b-70db-51c0-b978-0f229ee0e533"
+version = "1.18.0+0"
 
 [[deps.libpng_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
@@ -2098,6 +2442,12 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Ogg_jll", "Pkg"]
 git-tree-sha1 = "b910cb81ef3fe6e78bf6acee440bda86fd6ae00c"
 uuid = "f27f6e37-5d2b-51aa-960f-b287f2bc3b7a"
 version = "1.3.7+1"
+
+[[deps.mtdev_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "814e154bdb7be91d78b6802843f76b6ece642f11"
+uuid = "009596ad-96f7-51b1-9f1b-5ce2d5e8a71e"
+version = "1.1.6+0"
 
 [[deps.nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
@@ -2123,48 +2473,76 @@ version = "3.5.0+0"
 
 [[deps.xkbcommon_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg", "Wayland_jll", "Wayland_protocols_jll", "Xorg_libxcb_jll", "Xorg_xkeyboard_config_jll"]
-git-tree-sha1 = "9ebfc140cc56e8c2156a15ceac2f0302e327ac0a"
+git-tree-sha1 = "9c304562909ab2bab0262639bd4f444d7bc2be37"
 uuid = "d8fb68d0-12a3-5cfd-a85a-d49703b185fd"
-version = "1.4.1+0"
+version = "1.4.1+1"
 """
 
 # ╔═╡ Cell order:
-# ╠═eaa545cc-5312-11ee-1998-0b3161d803eb
-# ╟─d98925a3-49a7-436b-8a48-02cb872d9fb9
-# ╠═8b2e4f25-3daf-4b61-99cd-cce847bb601c
-# ╟─35d519d0-690b-4850-863d-ae22edb45692
-# ╟─5c58ea90-44c6-471a-8d90-14429ac23f14
-# ╟─89eaa26c-c4d7-441e-87ec-51f70519030a
-# ╟─d3c060a3-42d0-47a7-b3d7-72efb0fd310e
-# ╟─8eaae5a9-40eb-4249-8eb8-67652eb75006
-# ╠═47f722d7-6512-4bee-9c05-878bfd886c6c
-# ╠═8d71163c-88b6-4e26-a11f-6ca03753e2d2
-# ╟─552ff579-43c5-413c-a1bc-3a0fb2b3c116
-# ╠═7363c673-25ee-406d-90c2-1ebc4138621a
-# ╟─ac33edbd-fba3-45a4-9ba5-0b7e4f7a563b
-# ╠═66d58f4c-b724-4c7c-a7a3-18bd72e579d2
-# ╟─f5d00b0d-87d8-4677-a1f3-fbd5b63b337d
-# ╠═db3f4331-1128-47fd-b319-a40925517bf7
-# ╠═ca6046a5-363d-4292-885b-b88fed02bc46
-# ╠═bb71b7ec-56ef-4850-8499-83fb66f5e977
-# ╟─672181cc-1d87-4130-a043-df6055d23780
-# ╠═5d3e1bea-4975-4a88-b6bb-e6ef5e5dec77
-# ╟─499b23e4-b27c-49c2-b8e2-28549585a2b5
-# ╠═43351344-ed89-47ba-8728-b5e7aee6c202
-# ╠═325b8f6b-861e-40ea-a41d-d222f4f85fe6
-# ╟─fcf3fe2d-4954-4c67-9439-f3907264d9dd
-# ╠═46dfaa18-367b-467a-b345-bc892e8926bf
-# ╟─bfb12482-859e-412d-b647-d0824cb42b4c
-# ╠═f928d8a9-46d2-47ac-8ec4-a06fab255257
-# ╠═b1200f96-ad6b-4579-8708-94d3a1960f29
-# ╠═fa6e2b54-246c-4353-a1ac-11e41fe69c99
-# ╠═0234e5f1-90f4-4e6f-8e58-1ea46e2d09bb
-# ╠═87d7e601-6508-4636-9356-220a738a9406
-# ╠═9789edc5-83fa-4398-b323-1ed43fae518b
-# ╟─299e6072-e261-4bd1-b5a7-e16454f42429
-# ╟─f0302ce8-e5ec-4336-966c-062de4a1e937
-# ╟─5fb46b76-a90b-4d34-a7c1-ec5f47c5fe09
-# ╟─885536c6-1531-4fa5-b191-41b890ab2e9e
-# ╟─7c0de0ba-bf71-4aae-9c22-8ca4c3d0805d
+# ╠═cc904ce6-21bd-11ee-11da-ad91a6b43e16
+# ╟─38cfa6e8-8e34-425b-90f7-ef53b6b189df
+# ╟─5763062a-e218-4420-a767-bcf85c19839d
+# ╟─9a7d917d-be50-4946-bb0a-b77062819064
+# ╟─2e28c276-b93e-4358-839b-2f562a511db5
+# ╟─9024aaad-b1fe-4311-9693-7652b8252d8f
+# ╟─e835abae-6496-4638-a990-f008ce5286cf
+# ╟─361256a9-67ff-4800-baea-06eb6f2347ff
+# ╟─1b0973cd-e4ff-4f13-af91-bbc981802a10
+# ╟─9ab66239-2b93-4ded-8ef0-761e10b7e69e
+# ╟─c9f2a88e-da48-49ff-b987-02fa2231548e
+# ╟─9be0a627-7d71-4b83-9758-20149b1c8eee
+# ╟─3f01c2c3-8d79-4e22-a367-49f5c31785af
+# ╟─0e7e482f-deb7-4947-95bf-0854b0129086
+# ╟─03e29b61-f940-4759-b09b-be4be824c4e1
+# ╟─51aef7a8-4693-40df-8643-d77c67eafa37
+# ╟─947f80a7-e19c-4d54-80cc-f5269dde0c9d
+# ╠═41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
+# ╠═b21b7e93-16d6-493b-9fda-3831c003a3cc
+# ╠═c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
+# ╠═4fe90ccd-e064-44e7-a1bd-25d6734645ea
+# ╟─5e02e5a8-c783-4f94-8fc1-2ec7de4bc5a6
+# ╠═9d880af9-d64f-4d1f-9603-48fb5410d1c7
+# ╟─ff9a0bfc-bbea-411b-9508-4ee2e08974a0
+# ╟─ad62682b-2479-483e-80bc-c7381b5f06d6
+# ╠═b6219371-4672-4f18-bd51-fc2ddf3854a6
+# ╠═673f5967-8b97-429b-83d7-8503599af710
+# ╠═905a9e1a-1a4e-4c6c-b5ea-3c3e161ee6c5
+# ╠═c3a44ca3-8166-4511-aa0f-1dbc568db45f
+# ╟─09422a70-f43c-4b6b-9093-c1f0e5e1887f
+# ╟─4d73650c-cd93-4bb4-827e-f0a2edef17f1
+# ╟─50fde0ff-9da7-49fb-b060-508cca6e9709
+# ╟─43095945-3a72-4153-bd9b-c36a910a3826
+# ╟─fe415c83-2ca5-432b-80b9-3ec89718a7e7
+# ╟─9072572f-dc8d-4ec0-aa76-d25f2acab027
+# ╟─8c11535b-feab-4833-8aff-3814bafed090
+# ╟─74604b66-071b-42b4-b039-d3e484c89603
+# ╟─3d55a597-b5d0-4e9d-9b05-71aa166b9d93
+# ╠═491489f9-373f-44ab-a6b7-c3714017536c
+# ╠═ca26f018-b8d3-4a99-97e4-deff6f1e9bf0
+# ╠═0c2becba-7a86-4b1f-a742-8b663b821997
+# ╠═e63dfbf4-6481-46ab-ab6d-51cd337b5e3b
+# ╟─d619fca8-b264-4b38-8bb7-84141a7697db
+# ╟─b87c1604-79df-4665-8e85-528f7ed16d72
+# ╠═fde9b49e-801a-434b-8c30-e79fdbbc39b0
+# ╠═31a9fbed-db80-46b3-978a-5033c5607457
+# ╠═4be24344-04e5-4717-8d00-ef65250ccc3a
+# ╠═5c60da7f-04ca-4ceb-ab08-939933080a9f
+# ╠═88bbd6b3-f60e-4667-bdb0-34f060e9bfe1
+# ╟─36ad43a3-336e-4974-a1c3-130f22527733
+# ╟─17d2e734-ece9-4aa9-8419-014052f79d38
+# ╟─93d5a737-ddee-4ce3-8072-b9c3a8d1b057
+# ╠═1bd6d913-987e-4274-ad93-48fcc88fa66b
+# ╠═92f8fb55-c972-4ca8-bc0c-21464f730ad2
+# ╟─252d7f91-d673-4973-8548-f32f88c0153c
+# ╠═8b33b599-8be8-4974-b231-2d46e8d5675f
+# ╠═6eb1c173-6353-4901-8a37-e903c4a6f877
+# ╟─5ec130a6-e7bb-4958-9935-c820cf20d643
+# ╠═3e47d037-284b-4e83-ad1c-6f3c2e37a782
+# ╟─fefb6196-dc71-471d-9df0-174d939aac3a
+# ╠═30f40475-a31d-48f8-82e9-6901039edcc0
+# ╟─9e8ec936-0290-4f73-9c99-8e00e73cbfef
+# ╠═dd406b8b-eeea-4518-a51c-41860cfa8780
+# ╠═05990b06-648d-4cab-86e1-3de48fe05ce9
+# ╠═699f2927-acfe-4d77-bccd-859707f34414
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

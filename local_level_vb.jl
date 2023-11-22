@@ -20,38 +20,18 @@ TableOfContents()
 
 # ╔═╡ e56e975c-ccdd-40c1-8c32-30cab01fe5ce
 function gen_data(A, C, Q, R, μ_0, Σ_0, T)
-
-	if length(A) == 1 && length(C) == 1 # univariate
-		x = zeros(T)
-		y = zeros(T)
-		
-		for t in 1:T
-		    if t == 1
-		        x[t] = μ_0 + sqrt(Q) * randn()
-		    else
-		        x[t] = A * x[t-1] + sqrt(Q) * randn()
-		    end
-		    	y[t] = C * x[t] + sqrt(R) * randn()
-		end
-		return y, x
-
-	else
-		K, _ = size(A)
-	    D, _ = size(C)
-
-		x = zeros(K, T)
-		y = zeros(D, T)
-
-		x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + Q))
-		y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
+	x = zeros(T)
+	y = zeros(T)
 	
-		for t in 2:T
-			x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
-			y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R))
+	for t in 1:T
+		if t == 1
+			x[t] = μ_0 + sqrt(Q) * randn()
+		else
+			x[t] = A * x[t-1] + sqrt(Q) * randn()
 		end
-
-		return y, x
+			y[t] = C * x[t] + sqrt(R) * randn()
 	end
+	return y, x
 end
 
 # ╔═╡ ab8b0d77-9eb0-4eb7-b047-737fec53bc39
@@ -65,9 +45,9 @@ begin
 	T = 200
 	A = 1.0
 	C = 1.0
-	R = 0.2
-	Q = 1.0 # assume fixed in Beale
-	y, x_true = gen_data(A, C, Q, R, 0.0, 1.0, T)
+	R = 10.0
+	Q = 10.0 # assume fixed in Beale
+	y, x_true = gen_data(A, C, Q, R, 0.0, 1e3, T)
 end
 
 # ╔═╡ d1ab75c8-5d7e-4d42-9b54-c48cd0e61e90
@@ -926,10 +906,10 @@ function vb_m_ll(y, hss::HSS_ll, priors::Priors_ll)
 
     # Update parameters for τ_r
     α_r_p = priors.α_r + T / 2
-    β_r_p = priors.β_r + 0.5 * (y' * y - 2 * hss.s_c + hss.w_c)
+    β_r_p = priors.β_r + 0.5 * (y' * y - hss.s_c^2/hss.w_c)
 
     # Update parameters for τ_q
-    α_q_p = priors.α_q + T / 2
+    α_q_p = priors.α_q + (T-1)/2
     β_q_p = priors.β_q + 0.5 * (hss.w_a + hss.w_c - 2 * hss.s_a)
 
     # Compute expectations
@@ -946,36 +926,79 @@ Test vb m-step, given ground-truth hidden states
 
 # ╔═╡ 2308aa4c-bb99-4546-a108-9fa88fca130b
 let
-	T = length(y)
-	w_a = sum(x_true[t-1] * x_true[t-1] for t in 2:T)
+	function gen_data_vsc(A, C, Q, R, m_0, C_0, T)
+		x = zeros(T+1)
+		y = zeros(T)
+		
+		x[1] = m_0 
+		x[2] = rand(Normal(A*m_0, sqrt(A*C_0*A + Q)))
+		y[1] = rand(Normal(C*x[2], sqrt(R)))
+	
+		for t in 2:T
+			x[t+1] = A * x[t] + sqrt(Q) * randn()
+			y[t] = C * x[t+1] + sqrt(R) * randn()
+		end
+		return y, x
+	end
+	
+	Random.seed!(10)
+	T = 500000
+	A = 1.0
+	C = 1.0
+	R = 10.0
+	Q = 10.0
+	
+	y, x_true = gen_data_vsc(A, C, Q, R, 0.0, 1.0, T)
+	
+	w_a = sum(x_true[t] * x_true[t] for t in 1:T-1)
 	s_a = sum(x_true[t-1] * x_true[t] for t in 2:T)
-	w_c = sum(x_true[t] * x_true[t] for t in 1:T)
-	s_c = sum(x_true[t] * y[t] for t in 1:T)
+	w_c = sum(x_true[t] * x_true[t] for t in 2:T+1)
+	s_c = sum(x_true[t+1] * y[t] for t in 1:T)
+	
 	hss = HSS_ll(w_c, w_a, s_c, s_a)
-	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
-
-	r⁻¹, q⁻¹, _ = vb_m_ll(y, hss, hpp)
-	println("r ", (1 / r⁻¹)) # ground-truth: r = 0.2, q = 1.0
+	
+	hpp = Priors_ll(2, 1e-3, 2, 1e-3, 0.0, 1.0)
+	r⁻¹, q⁻¹, qθ = vb_m_ll(y, hss, hpp)
+	println("r ", (1 / r⁻¹))
 	println("q ", (1 / q⁻¹))
+	r⁻¹, q⁻¹, qθ
 end
 
 # ╔═╡ 4dcb2ee0-fcec-4e1e-99ce-b93044ddcd6d
 let
+	function gen_data_(A, C, Q, R, μ_0, Σ_0, T)
+		x = zeros(T)
+		y = zeros(T)
+		
+		for t in 1:T
+			if t == 1
+				x[t] = μ_0 + sqrt(Σ_0) * randn()
+			else
+				x[t] = A * x[t-1] + sqrt(Q) * randn()
+			end
+				y[t] = C * x[t] + sqrt(R) * randn()
+		end
+		return y, x
+	end
+	
 	Random.seed!(111)
-	T = 200
+	T = 1000000
 	A = 1.0
 	C = 1.0
-	R = 0.05
-	Q = 0.5 
-	y, x_true = gen_data(A, C, Q, R, 0.0, 1.0, T)
+	R = 100.0
+	Q = 10.0 
+	y, x_true = gen_data_(A, C, Q, R, 0.0, 1e6, T)
 	w_a = sum(x_true[t-1] * x_true[t-1] for t in 2:T)
 	s_a = sum(x_true[t-1] * x_true[t] for t in 2:T)
 	w_c = sum(x_true[t] * x_true[t] for t in 1:T)
 	s_c = sum(x_true[t] * y[t] for t in 1:T)
 	hss = HSS_ll(w_c, w_a, s_c, s_a)
-	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	hpp = Priors_ll(2, 1e-3, 2, 1e-3, 0.0, 1.0)
 
-	r⁻¹, q⁻¹, _ = vb_m_ll(y, hss, hpp)
+	r⁻¹, q⁻¹, qθ = vb_m_ll(y, hss, hpp)
+	println("r ", (1 / r⁻¹))
+	println("q ", (1 / q⁻¹))
+	r⁻¹, q⁻¹, qθ, hss
 end
 
 # ╔═╡ 1adc874e-e024-464a-80d5-5ded04f62f24
@@ -1141,56 +1164,6 @@ function backward_ll(μ_f, σ_f2, E_τ_q, priors::Priors_ll)
     return μ_s, σ_s2, μ_s0, σ_s0, σ_s2_cross
 end
 
-# ╔═╡ 6004abb0-7c5b-4a5e-8fc9-1ba4eb3be2a5
-function backward_dlm(a, μ_f, σ_f, a_s, rs)
-    T = length(μ_f) - 1
-	
-    μ_s = similar(μ_f)
-    σ_s = similar(σ_f)
-    σ_s_cross = zeros(T)
-
-    μ_s[end] = μ_f[end]
-    σ_s[end] = σ_f[end]
-
-    for t in T:-1:1 #s_t, S_t, Kalman Smoother
-		μ_s[t] = μ_f[t] + σ_f[t] * a * (1/rs[t]) * (μ_s[t+1] - a_s[t])
-		σ_s[t] = σ_f[t] - σ_f[t] * a * (1/rs[t]) * (rs[t] - σ_s[t+1]) * (1/rs[t]) * a * σ_f[t]
-
-		# possible debug cross_var
-		σ_s_cross[t] = 1/((1/σ_f[t]) + a*a) * σ_s[t+1]
-    end
-	
-    return μ_s, σ_s, σ_s_cross
-end
-
-# ╔═╡ 135c6b95-c440-45ed-bade-0327bf1e142a
-md"""
-Test backward
-"""
-
-# ╔═╡ 8e98a3b4-bc92-43ad-9da3-1323e06cfce6
-let
-	true_exp_np = Exp_ϕ_uni(1.0, 1.0, 5.0, 1.0, 5.0, 5.0, 5.0)
-	μs, σs, _ =  v_forward(y, true_exp_np, 0.0, 1.0)
-	ηs, Ψs, η_0, Ψ_0 = v_backward(y, true_exp_np)
-	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, σs, ηs, Ψs, η_0, Ψ_0, 0.0, 1.0)
-
-	E_τ_r = 5.0
-	E_τ_q = 1.0
-	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
-	μ_f, σ_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
-	
-	b_ll, σ_ll, _, _, s_cr = backward_ll(μ_f, σ_f2, E_τ_q, hpp)
-
-	mm, cc, aa, rr, zz = forward_dlm(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
-	ss, SS, s_cros = backward_dlm(1.0, mm, cc, aa, rr)
-	
-	#ωs, b_ll, ss
-	#Υs, σ_ll, SS
-
-	s_cr, s_cros
-end
-
 # ╔═╡ aa5caae7-638d-441f-a306-5442a5c8f75f
 md"""
 #### Cross-variance
@@ -1202,6 +1175,11 @@ The term $\sigma_{t-1,t}^2$ represents the cross-variance between the latent sta
 # ╔═╡ faed4326-5ee6-41da-9ba4-297e965c242e
 md"""
 test cross-variance
+"""
+
+# ╔═╡ 135c6b95-c440-45ed-bade-0327bf1e142a
+md"""
+Test backward
 """
 
 # ╔═╡ 17136b27-9463-4e5f-a943-d78297f28be7
@@ -1217,7 +1195,7 @@ let
 	μ_f, σ_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
 	_ , _ , _, _, css = backward_ll(μ_f, σ_f2, E_τ_q, hpp)
 
-	Υ_ₜ₋ₜ₊₁, css
+	sum(Υ_ₜ₋ₜ₊₁), sum(css)
 end
 
 # ╔═╡ bee6469f-13a1-4bd8-8f14-f01e8405a949
@@ -1236,26 +1214,160 @@ function vb_e_ll(y, E_τ_r, E_τ_q, priors::Priors_ll)
     s_c = sum(y .* μs_s)
     s_a = sum(σs_s2_cross[1:end-1]) + sum(μs_s[1:end-1] .* μs_s[2:end])
 	s_a += μs_0 * μs_s[1]
+	println(s_a)
+	
+	println("sum cross-cov :", sum(σs_s2_cross))
     # Return the sufficient statistics in a HSS struct
     return HSS_ll(w_c, w_a, s_c, s_a), μs_0, σs_s0, log_Z
 end
 
-# ╔═╡ 59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
+# ╔═╡ ea7d4dfc-a7e5-435b-ab81-335bd85c7440
+md"""
+## DEBUG
+"""
+
+# ╔═╡ 6004abb0-7c5b-4a5e-8fc9-1ba4eb3be2a5
+function backward_dlm(a, μ_f, σ_f, a_s, rs, E_τ_q)
+    T = length(μ_f) - 1
+	
+    μ_s = similar(μ_f)
+    σ_s = similar(σ_f)
+    σ_s_cross = zeros(T)
+
+    μ_s[end] = μ_f[end]
+    σ_s[end] = σ_f[end]
+
+    for t in T:-1:1 #s_t, S_t, Kalman Smoother
+		μ_s[t] = μ_f[t] + σ_f[t] * a * (1/rs[t]) * (μ_s[t+1] - a_s[t])
+		σ_s[t] = σ_f[t] - σ_f[t] * a * (1/rs[t]) * (rs[t] - σ_s[t+1]) * (1/rs[t]) * a * σ_f[t]
+
+		J_t = σ_f[t] / (σ_f[t] + 1/E_τ_q)
+		#J_t = inv(inv(σ_f[t]) + E_τ_q)                                                                                                                                                                                                               
+		σ_s_cross[t] = J_t * σ_s[t+1]
+    end
+	
+    return μ_s, σ_s, σ_s_cross
+end
+
+# ╔═╡ 8e98a3b4-bc92-43ad-9da3-1323e06cfce6
 let
+	true_exp_np = Exp_ϕ_uni(1.0, 1.0, 5.0, 1.0, 5.0, 5.0, 5.0)
+	μs, σs, _ =  v_forward(y, true_exp_np, 0.0, 1.0)
+	ηs, Ψs, η_0, Ψ_0 = v_backward(y, true_exp_np)
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, σs, ηs, Ψs, η_0, Ψ_0, 0.0, 1.0)
+
 	E_τ_r = 5.0
 	E_τ_q = 1.0
 	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	μ_f, σ_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
 	
+	b_ll, σ_ll, _, _, s_cr = backward_ll(μ_f, σ_f2, E_τ_q, hpp)
+
+	mm, cc, aa, rr, zz = forward_dlm(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+	ss, SS, s_cros = backward_dlm(1.0, mm, cc, aa, rr, E_τ_q)
+	
+	#ωs, b_ll, ss
+	#Υs, σ_ll, SS
+
+	s_cr, s_cros
+end
+
+# ╔═╡ b08d77b6-b685-4ff0-9204-fbd830d0feba
+let
+	true_exp_np = Exp_ϕ_uni(1.0, 1.0, 5.0, 1.0, 5.0, 5.0, 5.0)
+	μs, σs, _ =  v_forward(y, true_exp_np, 0.0, 1.0)
+	ηs, Ψs, η_0, Ψ_0 = v_backward(y, true_exp_np)
+	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, σs, ηs, Ψs, η_0, Ψ_0, 0.0, 1.0)
+
+	E_τ_r = 5.0
+	E_τ_q = 1.0
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	μ_f, σ_f2 = forward_ll(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+	
+	b_ll, σ_ll, _, _, s_cr = backward_ll(μ_f, σ_f2, E_τ_q, hpp)
+
+	mm, cc, aa, rr, zz = forward_dlm(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+	ss, SS, s_cros = backward_dlm(1.0, mm, cc, aa, rr, E_τ_q)
+	
+	#ωs, b_ll, ss[2:end]
+	Υs, σ_ll, SS[2:end]
+end
+
+# ╔═╡ fc1c069d-d2e3-4af3-ad9d-bfceaf0887e1
+function vb_e_debug(y, a, c, E_τ_r, E_τ_q, priors::Priors_ll)
+    # Forward pass (filter)
+    μs_f, σs_f, a_s, rs, log_Z = forward_dlm(y, a, c, E_τ_r, E_τ_q, priors)
+
+    # Backward pass (smoother)
+    μs_s, σs_s, σs_s_cross = backward_dlm(a, μs_f, σs_f, a_s, rs, E_τ_q)
+
+    # Compute the sufficient statistics
+    w_c = sum(σs_s[2:end] .+ μs_s[2:end].^2)
+
+    w_a = sum(σs_s[1:end-1] .+ μs_s[1:end-1].^2)
+ 
+	s_c = sum(y .* μs_s[2:end])
+
+    s_a = sum(σs_s_cross) + sum(μs_s[1:end-1] .* μs_s[2:end])
+	println(s_a)
+
+	println("sum cross-cov :", sum(σs_s_cross))
+    # Return the sufficient statistics in a HSS struct
+    return HSS_ll(w_c, w_a, s_c, s_a), μs_s[1], σs_s[1], log_Z
+end
+
+# ╔═╡ 9a090810-a65e-4fb7-a4f1-4652d3ff60a9
+let
+	E_τ_r = 5.0
+	E_τ_q = 1.0
+	
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
 	hss_e = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
 
 	w_a = sum(x_true[t-1] * x_true[t-1] for t in 2:T)
 	s_a = sum(x_true[t-1] * x_true[t] for t in 2:T)
 	w_c = sum(x_true[t] * x_true[t] for t in 1:T)
 	s_c = sum(x_true[t] * y[t] for t in 1:T)
-
 	hss_t = HSS_ll(w_c, w_a, s_c, s_a)
 
-	hss_e, hss_t
+	hss_debug = vb_e_debug(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+
+	hss_e, hss_debug
+end
+
+# ╔═╡ 59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
+let
+	function gen_data_vsc(A, C, Q, R, m_0, C_0, T)
+		x = zeros(T+1)
+		y = zeros(T)
+		
+		x[1] = m_0 
+		x[2] = rand(Normal(A*m_0, sqrt(A*C_0*A + Q)))
+		y[1] = rand(Normal(C*x[2], sqrt(R)))
+	
+		for t in 2:T
+			x[t+1] = A * x[t] + sqrt(Q) * randn()
+			y[t] = C * x[t+1] + sqrt(R) * randn()
+		end
+		return y, x
+	end
+	Random.seed!(10)
+	T = 200
+	A = 1.0
+	C = 1.0
+	R = 10.0
+	Q = 10.0
+	y, x_true = gen_data_vsc(A, C, Q, R, 0.0, 1.0, T)
+	
+	E_τ_r = 0.1
+	E_τ_q = 0.1
+	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	
+	hss_e = vb_e_ll(y, E_τ_r, E_τ_q, hpp)
+
+	hss_debug = vb_e_debug(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+
+	hss_e, hss_debug
 end
 
 # ╔═╡ 7a6940ef-56b3-4cb4-bc6b-2c97625965cc
@@ -1291,7 +1403,7 @@ function update_ab(hpp::Priors_ll, qθ)
 	a_r = hpp.α_r
 	a_q = hpp.α_q
 	
-    for _ in 1:100
+    for _ in 1:10
         ψ_a = digamma(a_r)
         ψ_a_p = trigamma(a_r)
         a_new = a_r * exp(-(ψ_a - log(a_r) + log(d_r) - c_r) / (a_r * ψ_a_p - 1))
@@ -1303,7 +1415,7 @@ function update_ab(hpp::Priors_ll, qθ)
     end
     b_r = a_r/d_r
 
-	for _ in 1:100
+	for _ in 1:10
 		ψ_a_q = digamma(a_q)
         ψ_a_q_p = trigamma(a_q)
         a_new_q= a_q * exp(-(ψ_a_q - log(a_q) + log(d_q) - c_q) / (a_q * ψ_a_q_p - 1))
@@ -1316,21 +1428,6 @@ function update_ab(hpp::Priors_ll, qθ)
 	b_q = a_q/d_q
 	
 	return a_r, b_r, a_q, b_q
-end
-
-# ╔═╡ 80566330-0650-4cb7-814d-dc09fba5aaef
-let
-	T = length(y)
-	w_a = sum(x_true[t-1] * x_true[t-1] for t in 2:T)
-	s_a = sum(x_true[t-1] * x_true[t] for t in 2:T)
-	w_c = sum(x_true[t] * x_true[t] for t in 1:T)
-	s_c = sum(x_true[t] * y[t] for t in 1:T)
-	hss = HSS_ll(w_c, w_a, s_c, s_a)
-	hpp = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
-
-	_, _, qθ = vb_m_ll(y, hss, hpp)
-
-	update_ab(hpp, qθ)
 end
 
 # ╔═╡ ee11c498-5e2a-4a37-a73b-a1ff6647d013
@@ -1384,7 +1481,7 @@ Monitor ELBO progress
 
 # ╔═╡ 11d5265e-3254-4012-a92c-a67823e1ae1c
 let
-	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
+	hpp_ll = Priors_ll(0.5, 0.5, 0.5, 0.5, 0.0, 1.0)
 	@time r, q, elbos = vb_ll_c(y, hpp_ll)
 	p = plot(elbos, label = "elbo", title = "ELBO progression")
 	println("r :", r)
@@ -1392,20 +1489,96 @@ let
 	p
 end
 
-# ╔═╡ 46dc850b-2197-491b-b729-3867ab67f0af
+# ╔═╡ 63b475e9-0706-406c-922c-4035319ee157
+function vb_ll_c_debug(y::Vector{Float64}, hpp::Priors_ll, hp_learn=false, max_iter=500, tol=5e-4)
+	hss = HSS_ll(1.0, 1.0, 1.0, 1.0)
+	E_τ_r, E_τ_q  = missing, missing
+	elbo_prev = -Inf
+	el_s = zeros(max_iter)
+	for i in 1:max_iter
+		E_τ_r, E_τ_q, qθ = vb_m_ll(y, hss, hpp)
+				
+		hss, μs_0, σs_s0, log_z = vb_e_debug(y, 1.0, 1.0, E_τ_r, E_τ_q, hpp)
+
+		kl_ga = kl_gamma(hpp.α_r, hpp.β_r, qθ.α_r_p, qθ.β_r_p) + kl_gamma(hpp.α_q, hpp.β_q, qθ.α_q_p, qθ.β_q_p)
+		
+		elbo = log_z - kl_ga
+		el_s[i] = elbo
+
+		println("\nVB iter $i: ")
+		println("\tQ: ", 1/E_τ_q)
+		println("\tR: ", 1/E_τ_r)
+		println("\tElbo $i: ", elbo)
+		
+		if (hp_learn)
+			if (i%5 == 0) 
+				a_r, b_r, a_q, b_q = update_ab(hpp, qθ)
+				hpp = Priors_ll(a_r, b_r, a_q, b_q, μs_0, σs_s0)
+			end
+		end
+		
+		if abs(elbo - elbo_prev) < tol
+			println("Stopped at iteration: $i")
+			el_s = el_s[1:i]
+            break
+		end
+		
+        elbo_prev = elbo
+
+		if (i == max_iter)
+			println("Warning: VB have not necessarily converged at $max_iter iterations")
+		end
+	end
+
+	return 1/E_τ_r, 1/E_τ_q, el_s
+end
+
+# ╔═╡ 9c600e7f-3409-4a6c-8db2-9d85592f2479
+md"""
+## DEBUGG
+"""
+
+# ╔═╡ 0fe3b5b3-0a9f-4868-8c03-bc69d510cb0d
 let
-	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
-	@time r, q, elbos = vb_ll_c(y, hpp_ll, true)
-	p = plot(elbos, label = "elbo", title = "ELBO with Hyperparam learning")
+	function gen_data_vsc(A, C, Q, R, m_0, C_0, T)
+		x = zeros(T+1)
+		y = zeros(T)
+		
+		x[1] = m_0 
+		x[2] = rand(Normal(A*m_0, sqrt(A*C_0*A + Q)))
+		y[1] = rand(Normal(C*x[2], sqrt(R)))
+	
+		for t in 2:T
+			x[t+1] = A * x[t] + sqrt(Q) * randn()
+			y[t] = C * x[t+1] + sqrt(R) * randn()
+		end
+		return y, x
+	end
+
+	Random.seed!(10)
+	T = 200
+	A = 1.0
+	C = 1.0
+	R = 10.0
+	Q = 10.0
+	y, x_true = gen_data_vsc(A, C, Q, R, 0.0, 1.0, T)
+	
+	hpp_ll = Priors_ll(0.5, 0.5, 0.5, 0.5, 0.0, 1.0)
+	@time r, q, elbos = vb_ll_c_debug(y, hpp_ll)
+	p = plot(elbos, label = "elbo", title = "ELBO gen_vsc")
 	println("r :", r)
 	println("q :", q)
 	p
 end
 
-# ╔═╡ 665c55c3-d4dc-4d13-9517-d1106ea6210f
-begin
-	hpp_ll = Priors_ll(0.01, 0.01, 0.01, 0.01, 0.0, 1.0)
-	@time vb_ll(y, hpp_ll)
+# ╔═╡ 46dc850b-2197-491b-b729-3867ab67f0af
+let
+	hpp_ll = Priors_ll(0.5, 0.5, 0.5, 0.5, 0.0, 1.0)
+	@time r, q, elbos = vb_ll_c(y, hpp_ll, true)
+	p = plot(elbos, label = "elbo", title = "ELBO with Hyperparam learning")
+	println("r :", r)
+	println("q :", q)
+	p
 end
 
 # ╔═╡ e6930d53-6652-4fea-9a01-a4c87b8058dc
@@ -3249,7 +3422,7 @@ version = "1.4.1+1"
 # ╔═╡ Cell order:
 # ╠═bd315098-f0d4-11ed-21f8-2b6e59a2ee9c
 # ╟─a4e3933c-f487-4447-8b94-dcb58eaec886
-# ╟─e56e975c-ccdd-40c1-8c32-30cab01fe5ce
+# ╠═e56e975c-ccdd-40c1-8c32-30cab01fe5ce
 # ╟─ab8b0d77-9eb0-4eb7-b047-737fec53bc39
 # ╠═a7d4f30b-d21e-400e-ba13-a58fdb424fa6
 # ╟─d1ab75c8-5d7e-4d42-9b54-c48cd0e61e90
@@ -3320,7 +3493,7 @@ version = "1.4.1+1"
 # ╠═241e587f-b3dd-4bf8-83d0-1459c389fcc0
 # ╟─168d4dbd-f0dd-433b-bb4a-e3bb918fb184
 # ╠═2308aa4c-bb99-4546-a108-9fa88fca130b
-# ╠═4dcb2ee0-fcec-4e1e-99ce-b93044ddcd6d
+# ╟─4dcb2ee0-fcec-4e1e-99ce-b93044ddcd6d
 # ╟─1adc874e-e024-464a-80d5-5ded04f62f24
 # ╟─03931d7c-e9d4-4283-96ed-d4a166d7e91f
 # ╠═d359f3aa-b238-420f-99d2-52f85ce9ff82
@@ -3329,24 +3502,30 @@ version = "1.4.1+1"
 # ╠═416a607b-26bc-4973-8c1a-489e855a06de
 # ╟─ece11b32-cc61-447b-bbcf-018829360b73
 # ╠═c29b63f3-0d32-46ad-99a4-3cae4a3f6181
-# ╠═6004abb0-7c5b-4a5e-8fc9-1ba4eb3be2a5
-# ╟─135c6b95-c440-45ed-bade-0327bf1e142a
-# ╠═8e98a3b4-bc92-43ad-9da3-1323e06cfce6
 # ╟─aa5caae7-638d-441f-a306-5442a5c8f75f
 # ╟─faed4326-5ee6-41da-9ba4-297e965c242e
+# ╠═8e98a3b4-bc92-43ad-9da3-1323e06cfce6
+# ╟─135c6b95-c440-45ed-bade-0327bf1e142a
+# ╟─b08d77b6-b685-4ff0-9204-fbd830d0feba
 # ╠═17136b27-9463-4e5f-a943-d78297f28be7
 # ╠═bee6469f-13a1-4bd8-8f14-f01e8405a949
-# ╟─59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
+# ╠═fc1c069d-d2e3-4af3-ad9d-bfceaf0887e1
+# ╟─9a090810-a65e-4fb7-a4f1-4652d3ff60a9
+# ╟─ea7d4dfc-a7e5-435b-ab81-335bd85c7440
+# ╠═6004abb0-7c5b-4a5e-8fc9-1ba4eb3be2a5
+# ╠═59554e03-ae31-4cc4-a6d1-c307f1f7bd9a
 # ╠═7a6940ef-56b3-4cb4-bc6b-2c97625965cc
 # ╟─5797581c-dd2b-49d8-ae6c-d2d8051de9ea
-# ╠═7ed909ad-55a1-42bc-931b-d96b8df58f99
-# ╟─80566330-0650-4cb7-814d-dc09fba5aaef
+# ╟─7ed909ad-55a1-42bc-931b-d96b8df58f99
 # ╟─ee11c498-5e2a-4a37-a73b-a1ff6647d013
 # ╠═316db2e3-6fd9-45a5-932d-d3465885b842
 # ╟─fb5d0c6a-f110-4688-b209-2935f92adee8
 # ╠═11d5265e-3254-4012-a92c-a67823e1ae1c
+# ╠═63b475e9-0706-406c-922c-4035319ee157
+# ╟─9c600e7f-3409-4a6c-8db2-9d85592f2479
+# ╠═0fe3b5b3-0a9f-4868-8c03-bc69d510cb0d
 # ╠═46dc850b-2197-491b-b729-3867ab67f0af
-# ╠═665c55c3-d4dc-4d13-9517-d1106ea6210f
+# ╟─665c55c3-d4dc-4d13-9517-d1106ea6210f
 # ╟─e6930d53-6652-4fea-9a01-a4c87b8058dc
 # ╟─0cce2e6d-4f19-4c50-a4b5-2835c3ed4401
 # ╠═1c023156-0634-456d-a959-65880fd60c34

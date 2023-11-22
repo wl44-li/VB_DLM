@@ -64,38 +64,6 @@ begin
 	end
 end
 
-# ╔═╡ 2e28c276-b93e-4358-839b-2f562a511db5
-function gen_sea(A, C, R, Q, T, x_1)
-    K = size(A, 1)
-    D = size(R, 1)
-    x = zeros(K, T)
-    y = zeros(D, T)
-
-    x[:, 1] = x_1  
-
-    if D == 1
-        y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), sqrt.(R)))
-    else
-        y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
-    end
-
-    for t in 2:T
-        x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
-
-		# Make sure the seasonal factors sum to 1
-	    # alpha_2 = 1.0 - sum(x[2:3, t])
-	    # x[1, t] = alpha_2
-    
-        if D == 1
-            y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), sqrt.(R))) # linear growth 
-        else
-            y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
-        end
-    end
-
-    return y, x
-end
-
 # ╔═╡ 9024aaad-b1fe-4311-9693-7652b8252d8f
 md"""
 ## VBM-step
@@ -118,32 +86,30 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	μ_C = [Σ_C * S_C[:, s] for s in 1:D]
 	
 	G = ys * ys' - S_C' * Σ_C * S_C
-	a_ = a + 0.5 * T
-	a_s = a_ * ones(D)
-    b_s = [b + 0.5 * G[i, i] for i in 1:D]
+	a_s = a + 0.5 * T * D
+    b_s = b + 0.5 * sum(G[i, i] for i in 1:D)
+	q_ρ = Gamma(a_s, 1 / b_s)
 	
-	q_ρ = missing
-	
-	try
-	    q_ρ = Gamma.(a_s, 1 ./ b_s)
-	catch err
-	    if isa(err, DomainError)
-	        println("DomainError occurred: check that a_s and b_s are positive values")
-			println("a_s: ", a_s)
-			println("b_s: ", b_s)
-			b_s = abs.(b_s)
-			println("Temporal fix: ", b_s)
-			println("Consider adjusting hyperparameters α, γ, a, b")
-			q_ρ = Gamma.(a_s, 1 ./ b_s)
-	    else
-	        rethrow(err)
-	    end
-	end
-	ρ̄ = mean.(q_ρ)
+	# try
+	#     q_ρ = Gamma.(a_s, 1 ./ b_s)
+	# catch err
+	#     if isa(err, DomainError)
+	#         println("DomainError occurred: check that a_s and b_s are positive values")
+	# 		println("a_s: ", a_s)
+	# 		println("b_s: ", b_s)
+	# 		b_s = abs.(b_s)
+	# 		println("Temporal fix: ", b_s)
+	# 		println("Consider adjusting hyperparameters α, γ, a, b")
+	# 		q_ρ = Gamma.(a_s, 1 ./ b_s)
+	#     else
+	#         rethrow(err)
+	#     end
+	# end
+	ρ̄ = mean(q_ρ)
 	
 	# Exp_ϕ 
 	Exp_C = S_C'*Σ_C
-	Exp_R⁻¹ = diagm(ρ̄)
+	Exp_R⁻¹ = diagm(ones(D) * ρ̄)
 	Exp_CᵀR⁻¹C = Exp_C'*Exp_R⁻¹*Exp_C + D*Σ_C
 	Exp_R⁻¹C = Exp_R⁻¹*Exp_C
 	Exp_CᵀR⁻¹ = Exp_C'*Exp_R⁻¹
@@ -152,11 +118,11 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	γ_n = [D/((D*Σ_C + Σ_C*S_C*Exp_R⁻¹*S_C'*Σ_C)[j, j]) for j in 1:K]
 
 	# for updating gamma hyperparam a, b       
-	exp_ρ = a_s ./ b_s
-	exp_log_ρ = [(digamma(a_) - log(b_s[i])) for i in 1:D]
+	exp_ρ = ones(D) .* (a_s / b_s)
+	exp_log_ρ = [(digamma(a_s) - log(b_s)) for i in 1:D]
 	
 	# return expected natural parameters :: Exp_ϕ (for e-step)
-	return Exp_ϕ(Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹, exp_log_ρ), γ_n, exp_ρ, exp_log_ρ, Qθ(Σ_C, μ_C, a_, b_s)
+	return Exp_ϕ(Exp_C, Exp_R⁻¹, Exp_CᵀR⁻¹C, Exp_R⁻¹C, Exp_CᵀR⁻¹, exp_log_ρ), γ_n, exp_ρ, exp_log_ρ, Qθ(Σ_C, μ_C, a_s, b_s)
 end
 
 # ╔═╡ 361256a9-67ff-4800-baea-06eb6f2347ff
@@ -342,7 +308,7 @@ let
 
 	# should recover values of C, R close to ground truth
 	exp_np = vb_m(y_pca, hpp, hss)[1]
-	exp_np.C, inv(exp_np.R⁻¹)
+	C_d3k2, exp_np.C, inv(exp_np.R⁻¹)
 end
 
 # ╔═╡ 51aef7a8-4693-40df-8643-d77c67eafa37
@@ -407,7 +373,7 @@ end
 # ╔═╡ c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
 begin
 	K = 2
-	γ = ones(K) .* 100
+	γ = ones(K) .* 1e-3
 	a = 0.01
 	b = 0.01
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
@@ -479,7 +445,7 @@ function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000
 		hss, log_Z_ = vb_e(ys, exp_np, hpp)
 
 		# Convergence check
-		kl_ρ_ = sum([kl_ρ(hpp.a, hpp.b, qθ.a_s, (qθ.b_s)[s]) for s in 1:D])
+		kl_ρ_ = sum([kl_ρ(hpp.a, hpp.b, qθ.a_s, qθ.b_s) for _ in 1:D])
 		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
 			
 		elbo = log_Z_ - kl_ρ_ - kl_C_
@@ -585,8 +551,8 @@ end;
 let
 	K = 1
 	γ = ones(K)
-	a = 0.01
-	b = 0.01
+	a = 2
+	b = 1e-4
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
@@ -599,8 +565,8 @@ end
 let
 	K = 2
 	γ = ones(K)
-	a = 0.01
-	b = 0.01
+	a = 2
+	b = 1e-4
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
 	exp_f, el = vb_ppca_c(y_10, hpp, true)
 	println("elbo, k=2 ", el)
@@ -611,8 +577,8 @@ end
 let
 	K = 3
 	γ = ones(K)
-	a = 0.1
-	b = 0.1
+	a = 2
+	b = 1e-4
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
@@ -625,8 +591,8 @@ end
 let
 	K = 4
 	γ = ones(K)
-	a = 0.1
-	b = 0.1
+	a = 2
+	b = 1e-4
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
@@ -715,20 +681,24 @@ Sample R, isotropic noise matrix
 # ╔═╡ 8b33b599-8be8-4974-b231-2d46e8d5675f
 function sample_R(Xs, Ys, C, α_ρ, β_ρ)
     P, T = size(Ys)
-    ρ_sampled = zeros(P)
-    for i in 1:P
-        Y = Ys[i, :]
-        α_post = α_ρ + T / 2
-        β_post = β_ρ + 0.5 * sum((Y' - C[i, :]' * Xs).^2)
+    ρ_sampled = missing
+	
+    # for i in 1:P
+    #     Y = Ys[i, :]
+    #     α_post = α_ρ + T / 2
+    #     β_post = β_ρ + 0.5 * sum((Y' - C[i, :]' * Xs).^2)
 		
-        ρ_sampled[i] = rand(Gamma(α_post, 1 / β_post))
-    end
-    return diagm(ones(P) ./ mean(ρ_sampled))
+    #     ρ_sampled[i] = rand(Gamma(α_post, 1 / β_post))
+    # end
+	α_post = α_ρ + T * P / 2
+	β_post = β_ρ + sum((Ys - C * Xs).^2) / 2
+	ρ_sampled = rand(Gamma(α_post, 1 / β_post))
+    return diagm(ones(P) ./ (ρ_sampled))
 end
 
 # ╔═╡ 6eb1c173-6353-4901-8a37-e903c4a6f877
 let
-	sample_R(x_true, y_pca, C_d3k2, 0.01, 0.01), R
+	sample_R(x_true, y_pca, C_d3k2, 2, 1e-4), R
 end
 
 # ╔═╡ 5ec130a6-e7bb-4958-9935-c820cf20d643
@@ -823,8 +793,8 @@ end
 
 # ╔═╡ 905a9e1a-1a4e-4c6c-b5ea-3c3e161ee6c5
 begin
-	prior = G_Prior(zeros(1), Matrix{Float64}(I, 1, 1), 0.01, 0.01, zeros(1),  Matrix{Float64}(I, 1, 1))
-	Cs_samples, Rs_samples, Xs_samples = gibbs_ppca(y_2, prior, 100000, 5000, 10)
+	prior = G_Prior(zeros(1), Matrix{Float64}(I, 1, 1), 2, 1e-4, zeros(1),  Matrix{Float64}(I * 1e7, 1, 1))
+	Cs_samples, Rs_samples, Xs_samples = gibbs_ppca(y_2, prior, 10000, 5000, 10)
 	Cs_samples, Rs_samples
 end
 
@@ -2483,18 +2453,17 @@ version = "1.4.1+1"
 # ╟─38cfa6e8-8e34-425b-90f7-ef53b6b189df
 # ╟─5763062a-e218-4420-a767-bcf85c19839d
 # ╟─9a7d917d-be50-4946-bb0a-b77062819064
-# ╟─2e28c276-b93e-4358-839b-2f562a511db5
 # ╟─9024aaad-b1fe-4311-9693-7652b8252d8f
-# ╟─e835abae-6496-4638-a990-f008ce5286cf
+# ╠═e835abae-6496-4638-a990-f008ce5286cf
 # ╟─361256a9-67ff-4800-baea-06eb6f2347ff
-# ╟─1b0973cd-e4ff-4f13-af91-bbc981802a10
+# ╠═1b0973cd-e4ff-4f13-af91-bbc981802a10
 # ╟─9ab66239-2b93-4ded-8ef0-761e10b7e69e
-# ╟─c9f2a88e-da48-49ff-b987-02fa2231548e
+# ╠═c9f2a88e-da48-49ff-b987-02fa2231548e
 # ╟─9be0a627-7d71-4b83-9758-20149b1c8eee
-# ╟─3f01c2c3-8d79-4e22-a367-49f5c31785af
-# ╟─0e7e482f-deb7-4947-95bf-0854b0129086
+# ╠═3f01c2c3-8d79-4e22-a367-49f5c31785af
+# ╠═0e7e482f-deb7-4947-95bf-0854b0129086
 # ╟─03e29b61-f940-4759-b09b-be4be824c4e1
-# ╟─51aef7a8-4693-40df-8643-d77c67eafa37
+# ╠═51aef7a8-4693-40df-8643-d77c67eafa37
 # ╟─947f80a7-e19c-4d54-80cc-f5269dde0c9d
 # ╠═41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
 # ╠═b21b7e93-16d6-493b-9fda-3831c003a3cc
@@ -2502,7 +2471,7 @@ version = "1.4.1+1"
 # ╠═4fe90ccd-e064-44e7-a1bd-25d6734645ea
 # ╟─5e02e5a8-c783-4f94-8fc1-2ec7de4bc5a6
 # ╠═9d880af9-d64f-4d1f-9603-48fb5410d1c7
-# ╟─ff9a0bfc-bbea-411b-9508-4ee2e08974a0
+# ╠═ff9a0bfc-bbea-411b-9508-4ee2e08974a0
 # ╟─ad62682b-2479-483e-80bc-c7381b5f06d6
 # ╠═b6219371-4672-4f18-bd51-fc2ddf3854a6
 # ╠═673f5967-8b97-429b-83d7-8503599af710
@@ -2511,7 +2480,7 @@ version = "1.4.1+1"
 # ╟─09422a70-f43c-4b6b-9093-c1f0e5e1887f
 # ╟─4d73650c-cd93-4bb4-827e-f0a2edef17f1
 # ╟─50fde0ff-9da7-49fb-b060-508cca6e9709
-# ╟─43095945-3a72-4153-bd9b-c36a910a3826
+# ╠═43095945-3a72-4153-bd9b-c36a910a3826
 # ╟─fe415c83-2ca5-432b-80b9-3ec89718a7e7
 # ╟─9072572f-dc8d-4ec0-aa76-d25f2acab027
 # ╟─8c11535b-feab-4833-8aff-3814bafed090
@@ -2542,7 +2511,5 @@ version = "1.4.1+1"
 # ╠═30f40475-a31d-48f8-82e9-6901039edcc0
 # ╟─9e8ec936-0290-4f73-9c99-8e00e73cbfef
 # ╠═dd406b8b-eeea-4518-a51c-41860cfa8780
-# ╠═05990b06-648d-4cab-86e1-3de48fe05ce9
-# ╠═699f2927-acfe-4d77-bccd-859707f34414
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

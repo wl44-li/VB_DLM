@@ -26,6 +26,22 @@ using Optim
 # ╔═╡ 6c0ecec8-afdc-4072-9dac-4658af3706d5
 TableOfContents()
 
+# ╔═╡ 0db6964a-6ae0-4cc3-8ee8-a2ba0d7f049f
+let
+
+	mcmc_std = [4, 1.6, 1.7, 1.5, 4.1]
+	vi_std = [3, 1.2, 1.2, 1, 3.1]
+
+	p = scatter(mcmc_std, vi_std, label="MCMC", color=:red, alpha=0.5)
+	scatter!(p, mcmc_std, vi_std, label="VI", ylabel = "VI", color=:green, alpha=0.5)
+
+	min_val = min(minimum(mcmc_std), minimum(vi_std))
+	max_val = max(maximum(mcmc_std), maximum(vi_std))
+
+	# Plot the y=x line
+	plot!(p, [min_val, max_val], [min_val, max_val], linestyle=:dash, label = "", color=:blue, linewidth=2)
+end
+
 # ╔═╡ 73e449fb-81d2-4a9e-a89d-38909093863b
 md"""
 # Gibbs sampling analog to VBEM-DLM
@@ -2294,10 +2310,10 @@ Test M-step
 let
 	A = [1.0 0.0; 0.0 1.0]
 	C = [1.0 0.0; 0.0 1.0]
-	Q = Diagonal([1.0, 1.0])
-	R = Diagonal([0.1, 0.1])
+	Q = Diagonal([10.0, 10.0])
+	R = Diagonal([3.0, 3.0])
 	T = 500
-	Random.seed!(99)
+	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
@@ -2309,12 +2325,52 @@ let
 	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
 	S_C = sum(x_true[:, t] * y[:, t]' for t in 1:T)
 	
-	W_Q = Matrix{Float64}(I, K, K)
-	W_R = Matrix{Float64}(I, D, D)
-	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+	prior = HPP_D(2, 1e-3, 2, 1e-3, zeros(K), Matrix{Float64}(I, K, K))
 	hss = HSS(W_C, W_A, S_C, S_A)
 
-	vb_m_diag(y, hss, prior, A, C)
+	vb_m_diag(y, hss, prior, A, C), hss
+end
+
+# ╔═╡ 002da06b-1c76-4b4a-a2f9-babdb0047a50
+let
+	function gen_data_vsc(A, C, Q, R, μ_0, Σ_0, T)
+		K, _ = size(A)
+		D, _ = size(C)
+		x = zeros(K, T+1)
+		y = zeros(D, T) 
+	
+		x[:, 1] = μ_0
+		x[:, 2] = rand(MvNormal(A*μ_0, A'*Σ_0*A + Q))
+		y[:, 1] = C * x[:, 2] + rand(MvNormal(zeros(D), R))
+	
+		for t in 2:T
+			x[:, t+1] = A * x[:, t] + rand(MvNormal(zeros(K), Q))
+			y[:, t] = C * x[:, t+1] + rand(MvNormal(zeros(D), R)) 
+		end
+	
+		return y, x
+	end
+
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([10.0, 10.0])
+	R = Diagonal([3.0, 3.0])
+	T = 500
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data_vsc(A, C, Q, R, μ_0, Σ_0, T)
+	D, _ = size(y)
+	K = size(A, 1)
+
+	W_A = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_A = sum(x_true[:, t] * x_true[:, t+1]' for t in 1:T)
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 2:T+1)
+	S_C = sum(x_true[:, t+1] * y[:, t]' for t in 1:T)
+	prior = HPP_D(2, 1e-3, 2, 1e-3, zeros(K), Matrix{Float64}(I, K, K))
+	hss = HSS(W_C, W_A, S_C, S_A)
+
+	vb_m_diag(y, hss, prior, A, C), hss
 end
 
 # ╔═╡ ce12a8b1-94e3-490a-b7ad-3896aa03b5ec
@@ -2348,20 +2404,15 @@ md"""
 function forward_v(y, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prior::HPP_D)
     P, T = size(y)
     K = size(A, 1)
+    μ_0, Σ_0 = prior.μ_0, prior.Σ_0
     
-    # Unpack the prior parameters
-    μ_0, Λ_0 = prior.μ_0, prior.Σ_0
-    
-    # Initialize the filtered means and covariances
     μ_f = zeros(K, T)
     Σ_f = zeros(K, K, T)
-
     f_s = zeros(P, T)
 	S_s = zeros(P, P, T)
 	
-    # Set the initial filtered mean and covariance to their prior values
 	A_1 = A * μ_0
-	R_1 = A * inv(Λ_0) * A' + E_Q
+	R_1 = A * Σ_0 * A' + E_Q
 	
 	f_1 = C * A_1
 	S_1 = C * R_1 * C' + E_R
@@ -2373,11 +2424,9 @@ function forward_v(y, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prio
     
     # Forward pass (kalman filter)
     for t = 2:T
-        # Predicted state mean and covariance
         μ_p = A * μ_f[:, t-1]
         Σ_p = A * Σ_f[:, :, t-1] * A' + E_Q
 
-		# marginal y - normalization
 		f_t = C * μ_p
 		S_t = C * Σ_p * C' + E_R
 		f_s[:, t] = f_t
@@ -2386,14 +2435,10 @@ function forward_v(y, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R, E_Q, prio
 		# Filtered state mean and covariance (2.8a - 2.8c DLM with R)
 		μ_f[:, t] = μ_p + Σ_p * C' * inv(S_t) * (y[:, t] - f_t)
 		Σ_f[:, :, t] = Σ_p - Σ_p * C' * inv(S_t) * C * Σ_p
-			
-		# Kalman gain
-        #K_t = Σ_p * C' / (C * Σ_p * C' + E_R)
-        #μ_f[:, t] = μ_p + K_t * (y[:, t] - C * μ_p)
-        #Σ_f[:, :, t] = (I - K_t * C) * Σ_p
     end
 	
     log_z = sum(logpdf(MvNormal(f_s[:, i], Symmetric(S_s[:, :, i])), y[:, i]) for i in 1:T)
+	
     return μ_f, Σ_f, log_z
 end
 
@@ -2402,26 +2447,51 @@ md"""
 Test forward
 """
 
+# ╔═╡ e39f018c-4b9f-46bd-a3e7-be8d0cbf9537
+function forward_debug(y::Array{Float64, 2}, A::Array{Float64, 2}, C::Array{Float64, 2}, E_R::Array{Float64, 2}, E_Q::Array{Float64, 2}, m_0, C_0)
+    _, T = size(y)
+    K = size(A, 1)
+        
+    μ_f = zeros(K, T+1)
+    Σ_f = zeros(K, K, T+1)
+    A_s = zeros(K, T)
+	R_s = zeros(K, K, T)
+	μ_f[:, 1], Σ_f[:, :, 1] = m_0, C_0
+
+	log_Z = 0.0
+    for t in 1:T # Forward pass (Kalman Filter)
+        A_s[:, t] = A_t = A * μ_f[:, t]
+        R_s[:, :, t] = R_t = A * Σ_f[:, :, t] * A' + E_Q
+
+		# marginal y - normalization
+		f_t = C * A_t
+		Q_t = C * R_t * C' + E_R
+		log_Z += logpdf(MvNormal(f_t, Symmetric(Q_t)), y[:, t])
+
+		μ_f[:, t+1] = A_t + R_t * C' * inv(Q_t) * (y[:, t] - f_t)
+		Σ_f[:, :, t+1] = R_t - R_t * C' * inv(Q_t) * C * R_t
+    end
+	
+    return μ_f, Σ_f, A_s, R_s, log_Z
+end
+
 # ╔═╡ 7d552dce-986f-45eb-8e8d-de848a5b3544
 let
-	A = [0.8 -0.1; 0.3 0.6]
+	A = [1.0 0.0; 0.0 1.0]
 	C = [1.0 0.0; 0.0 1.0]
 	Q = Diagonal([1.0, 1.0])
-	R = Diagonal([0.01, 0.01])
-	T = 500
-	
+	R = Diagonal([10.0, 10.0])
+	T = 100
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
 	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	D, T = size(y)
 	K = size(A, 1)
-
-	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
-
-	mean_f, cov_f, log_z = forward_v(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
 	
-	# use fixed A, C, R from ground truth for the exp_np::Exp_ϕ
+	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+	mean_f, cov_f, log_z = forward_v(y, A, C, [10.0 0.0; 0.0 10.0], [1.0 0.0; 0.0 1.0], prior)
+	
 	e_A = A
 	e_AᵀA = A'A
 	e_C = C
@@ -2439,9 +2509,12 @@ let
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	
 	m_f, c_f, _ , _, _ = v_forward(y, exp_np, hpp) #beale
 
-	mean_f, m_f, cov_f, c_f, log_z
+	μ_f, Σ_f, _, _, log_Z = forward_debug(y, A, C, [10.0 0.0; 0.0 10.0], [1.0 0.0; 0.0 1.0], zeros(K), Matrix{Float64}(I, K, K))
+	
+	mean_f, μ_f, cov_f, Σ_f, log_z, log_Z
 end
 
 # ╔═╡ 332a2888-47cc-437a-bfd1-390f5fc301d1
@@ -2479,6 +2552,26 @@ function backward_v(μ_f::Array{Float64, 2}, Σ_f::Array{Float64, 3}, A::Array{F
     return μ_s, Σ_s, μ_s0, Σ_s0, Σ_s_cross
 end
 
+# ╔═╡ a361f875-891e-4ac1-be4e-1c0f39d2b9f0
+function backward_debug(A::Array{Float64, 2}, μ_f::Array{Float64, 2}, Σ_f::Array{Float64, 3}, A_s, R_s)
+    K, T = size(A_s)
+    μ_s = zeros(K, T+1)
+    Σ_s = zeros(K, K, T+1)
+    Σ_s_cross = zeros(K, K, T)
+    
+    # Set the final (t=T) smoothed mean and co-variance to filtered values
+    μ_s[:, end], Σ_s[:, :, end] = μ_f[:, end], Σ_f[:, :, end]
+    
+    for t in T:-1:1  # Backward pass, Kalman Smoother (s_t, S_t)
+		J_t = Σ_f[:, :, t] * A' * inv(R_s[:, :, t])
+		μ_s[:, t] = μ_f[:, t] + J_t * (μ_s[:, t+1] - A_s[:, t])
+		Σ_s[:, :, t] = Σ_f[:, :, t] - J_t * (R_s[:, :, t] - Σ_s[:, :, t+1]) * inv(R_s[:, :, t]) * A * Σ_f[:, :, t]
+		Σ_s_cross[:, :, t] = J_t * Σ_s[:, :, t+1]
+    end
+	
+    return μ_s, Σ_s, Σ_s_cross
+end
+
 # ╔═╡ 6e22444a-a326-4a0d-8a41-ee8ec3efad89
 md"""
 Test backward
@@ -2486,11 +2579,61 @@ Test backward
 
 # ╔═╡ 1db2e8a1-ee66-472e-b2c5-eb14a294b426
 let
-	A = [0.8 -0.1; 0.3 0.6]
+	A = [1.0 0.0; 0.0 1.0]
+	C = [1.0 0.0; 0.0 1.0]
+	Q = Diagonal([10.0, 10.0])
+	R = Diagonal([10.0, 10.0])
+	T = 100
+	Random.seed!(111)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	y, x_true = gen_data(A, C, Q, R, μ_0, Σ_0, T)
+	D, T = size(y)
+	K = size(A, 1)
+	
+	e_A = A
+	e_AᵀA = A'A
+	e_C = C
+	e_R⁻¹ = inv(R)
+	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
+	e_R⁻¹C = e_R⁻¹*e_C
+	e_CᵀR⁻¹ = e_C'*e_R⁻¹
+	e_log_ρ = log.(1 ./ diag(R))
+	exp_np = Exp_ϕ(e_A, e_AᵀA, e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹, e_log_ρ)
+	α = ones(K)
+	γ = ones(K)
+	a = 0.1
+	b = 0.1
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(α, γ, a, b, μ_0, Σ_0)
+	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
+    
+	μ_f, Σ_f, _ = forward_v(y, A, C, [10.0 0.0; 0.0 10.0], [10.0 0.0; 0.0 10.0], prior)
+	μ_s, Σ_s, _, _, _ = backward_v(μ_f, Σ_f, A, [10.0 0.0; 0.0 10.0], prior)
+	
+	# μs, Σs, Σs_, fs, Qs = v_forward(y, exp_np, hpp)
+	# ηs, Ψs, η_0, Ψ_0 = v_backward(y, exp_np)
+	# ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
+
+	ms, Cs, As, Rs, log_Z = forward_debug(y, A, C, [10.0 0.0; 0.0 10.0], [10.0 0.0; 0.0 10.0], zeros(K), Matrix{Float64}(I, K, K))
+
+	ss, SS, _ = backward_debug(A, ms, Cs, As, Rs)
+	μ_s, ss, Σ_s, SS
+end
+
+# ╔═╡ 17f90613-6bdd-4415-bb69-a26b518d7cc8
+md"""
+cross-cov
+"""
+
+# ╔═╡ 5e432624-03c0-42ff-9f06-4d308b3c83eb
+let
+	A = [1.0 0.0; 0.0 1.0]
 	C = [1.0 0.0; 0.0 1.0]
 	Q = Diagonal([1.0, 1.0])
-	R = Diagonal([0.01, 0.01])
-	T = 500
+	R = Diagonal([10.0, 10.0])
+	T = 100
 	Random.seed!(111)
 	μ_0 = [0.0, 0.0]
 	Σ_0 = Diagonal([1.0, 1.0])
@@ -2517,14 +2660,19 @@ let
 
 	prior = HPP_D(0.1, 0.1, 0.1, 0.1, zeros(K), Matrix{Float64}(I, K, K))
     
-	μ_f, Σ_f, _ = forward_v(y, A, C, [0.01 0.0; 0.0 0.01], [1.0 0.0; 0.0 1.0], prior)
+	μ_f, Σ_f, _ = forward_v(y, A, C, [10.0 0.0; 0.0 10.0], [1.0 0.0; 0.0 1.0], prior)
 	μ_s, Σ_s, _, _, Σ_ss = backward_v(μ_f, Σ_f, A, [1.0 0.0; 0.0 1.0], prior)
 	
 	μs, Σs, Σs_, fs, Qs = v_forward(y, exp_np, hpp)
 	ηs, Ψs, η_0, Ψ_0 = v_backward(y, exp_np)
 	ωs, Υs, ω_0, Υ_0 = parallel_smoother(μs, Σs, ηs, Ψs, η_0, Ψ_0, μ_0, Σ_0)
 	Σ_cross = v_pairwise_x(Σs_, exp_np::Exp_ϕ, Ψs)
-	μ_s, ωs, Σ_s, Υs, Σ_ss, Σ_cross
+
+	ms, Cs, As, Rs, log_Z = forward_debug(y, A, C, [10.0 0.0; 0.0 10.0], [1.0 0.0; 0.0 1.0], zeros(K), Matrix{Float64}(I, K, K))
+
+	_, _, Css = backward_debug(A, ms, Cs, As, Rs)
+	
+	Σ_ss, Σ_cross, Css
 end
 
 # ╔═╡ aee774f4-5b39-4db0-b989-7a0b2fb09721
@@ -4433,6 +4581,7 @@ version = "1.4.1+0"
 # ╔═╡ Cell order:
 # ╠═ee858a0c-1414-11ee-3b47-2fb4b9112c53
 # ╟─6c0ecec8-afdc-4072-9dac-4658af3706d5
+# ╠═0db6964a-6ae0-4cc3-8ee8-a2ba0d7f049f
 # ╟─73e449fb-81d2-4a9e-a89d-38909093863b
 # ╠═e1f22c73-dee8-4507-af03-3d2d0ceb9011
 # ╟─544ac3d9-a2b8-4950-a501-40c14c84b2d8
@@ -4525,16 +4674,16 @@ version = "1.4.1+0"
 # ╟─63bc1239-1a6a-4f3b-9d2c-9b904aec573c
 # ╠═2f760ffd-1fc5-485b-8e7c-8b49ab7217e3
 # ╟─5a0e86f3-a97c-4f3a-9cc5-4d6cd48b80b7
-# ╠═6a9af65b-7384-4c6a-b025-9d577db2b3d1
+# ╟─6a9af65b-7384-4c6a-b025-9d577db2b3d1
 # ╟─0d35590c-4f96-4aa4-a587-cbc9b0bca377
-# ╠═5f92ab95-278a-4a79-b061-5fb36ac5c75e
+# ╟─5f92ab95-278a-4a79-b061-5fb36ac5c75e
 # ╟─1f5d6cbd-43a2-4a17-996e-d4d2b1a7769c
 # ╟─3100b411-e2de-4a43-be80-bcfcb42cef40
-# ╟─ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
+# ╠═ff46a86f-5c18-4d83-8f0f-4d13fe7b3df2
 # ╟─1edc58de-db69-4dbd-bcc5-c72a07e841be
 # ╠═9ca2a2bf-27a9-461b-ae74-1c28ac883168
 # ╟─4c4b9817-e137-4468-b364-34e791f5e26c
-# ╠═d0fe5a19-225e-4ed3-b84d-eaa87618e594
+# ╟─d0fe5a19-225e-4ed3-b84d-eaa87618e594
 # ╟─098bc646-7300-4ac6-88af-08a599ba774a
 # ╟─11796ca9-30e2-4ba7-b8dc-9a0eda90e14e
 # ╠═e68dbe27-95ea-4710-9999-d2c4de0db914
@@ -4574,20 +4723,25 @@ version = "1.4.1+0"
 # ╟─53e1d9d0-623a-4fae-a984-8d199078aa76
 # ╟─6d857548-11ba-4ec5-9100-c2fac6f3dcf1
 # ╟─f47d98c7-fcb3-4ac3-b5f3-c1043c8f0d03
-# ╠═2afbf400-6ecc-4284-8744-f9a20f79428c
-# ╠═abb2c6e4-73b0-4cfb-b8ea-cfeb433dad6d
+# ╟─2afbf400-6ecc-4284-8744-f9a20f79428c
+# ╟─abb2c6e4-73b0-4cfb-b8ea-cfeb433dad6d
 # ╠═d79bf5b8-089b-42b3-bbd4-4727672507f4
 # ╟─681b2040-f3e8-434f-a0b8-74efc8eb0638
-# ╠═633722b9-7f38-465a-a704-c42b432954ec
-# ╟─ce12a8b1-94e3-490a-b7ad-3896aa03b5ec
+# ╟─633722b9-7f38-465a-a704-c42b432954ec
+# ╟─002da06b-1c76-4b4a-a2f9-babdb0047a50
+# ╠═ce12a8b1-94e3-490a-b7ad-3896aa03b5ec
 # ╟─116df61f-0703-4bd2-ba4f-7c3cec18e60a
 # ╟─6de4b964-b4a0-47f1-ba62-5f7a06e164c7
 # ╠═36f77206-f82b-44a4-9df1-3bd42a60e061
 # ╟─d982670e-dbea-4e9f-9007-19c774075430
-# ╟─7d552dce-986f-45eb-8e8d-de848a5b3544
-# ╠═332a2888-47cc-437a-bfd1-390f5fc301d1
+# ╠═e39f018c-4b9f-46bd-a3e7-be8d0cbf9537
+# ╠═7d552dce-986f-45eb-8e8d-de848a5b3544
+# ╟─332a2888-47cc-437a-bfd1-390f5fc301d1
+# ╠═a361f875-891e-4ac1-be4e-1c0f39d2b9f0
 # ╟─6e22444a-a326-4a0d-8a41-ee8ec3efad89
-# ╟─1db2e8a1-ee66-472e-b2c5-eb14a294b426
+# ╠═1db2e8a1-ee66-472e-b2c5-eb14a294b426
+# ╟─17f90613-6bdd-4415-bb69-a26b518d7cc8
+# ╠═5e432624-03c0-42ff-9f06-4d308b3c83eb
 # ╠═aee774f4-5b39-4db0-b989-7a0b2fb09721
 # ╠═d41a19ee-df3f-486b-9b38-75c680f5b5bb
 # ╟─4bcd1acb-2121-4106-acbe-261c5704d2c2

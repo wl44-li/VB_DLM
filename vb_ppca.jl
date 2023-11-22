@@ -64,6 +64,13 @@ begin
 	end
 end
 
+# ╔═╡ 16b6597e-13f0-4752-ab0d-e639de1a9b0b
+let
+	Random.seed!(1)
+	cs = [rand(MvNormal(zeros(2), I)) for _ in 1:4]
+	C = (hcat(cs...))'
+end
+
 # ╔═╡ 9024aaad-b1fe-4311-9693-7652b8252d8f
 md"""
 ## VBM-step
@@ -259,7 +266,7 @@ function gen_data(A, C, Q, R, μ_0, Σ_0, T)
 	x = zeros(K, T)
 	y = zeros(D, T)
 
-	x[:, 1] = rand(MvNormal(A*μ_0, A'*Σ_0*A + Q))
+	x[:, 1] = rand(MvNormal(A*μ_0, Q))
 	y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
 
 	for t in 2:T
@@ -590,6 +597,20 @@ end
 # ╔═╡ 88bbd6b3-f60e-4667-bdb0-34f060e9bfe1
 let
 	K = 4
+	γ = ones(K)
+	a = 2
+	b = 1e-4
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_10, hpp, true)
+	println("elbo, k=4 ", el)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 6f45ed54-1c78-4e57-a17d-d50a2b9aeb93
+let
+	K = 5
 	γ = ones(K)
 	a = 2
 	b = 1e-4
@@ -2453,6 +2474,7 @@ version = "1.4.1+1"
 # ╟─38cfa6e8-8e34-425b-90f7-ef53b6b189df
 # ╟─5763062a-e218-4420-a767-bcf85c19839d
 # ╟─9a7d917d-be50-4946-bb0a-b77062819064
+# ╠═16b6597e-13f0-4752-ab0d-e639de1a9b0b
 # ╟─9024aaad-b1fe-4311-9693-7652b8252d8f
 # ╠═e835abae-6496-4638-a990-f008ce5286cf
 # ╟─361256a9-67ff-4800-baea-06eb6f2347ff
@@ -2464,7 +2486,7 @@ version = "1.4.1+1"
 # ╠═0e7e482f-deb7-4947-95bf-0854b0129086
 # ╟─03e29b61-f940-4759-b09b-be4be824c4e1
 # ╠═51aef7a8-4693-40df-8643-d77c67eafa37
-# ╟─947f80a7-e19c-4d54-80cc-f5269dde0c9d
+# ╠═947f80a7-e19c-4d54-80cc-f5269dde0c9d
 # ╠═41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
 # ╠═b21b7e93-16d6-493b-9fda-3831c003a3cc
 # ╠═c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
@@ -2497,6 +2519,7 @@ version = "1.4.1+1"
 # ╠═4be24344-04e5-4717-8d00-ef65250ccc3a
 # ╠═5c60da7f-04ca-4ceb-ab08-939933080a9f
 # ╠═88bbd6b3-f60e-4667-bdb0-34f060e9bfe1
+# ╠═6f45ed54-1c78-4e57-a17d-d50a2b9aeb93
 # ╟─36ad43a3-336e-4974-a1c3-130f22527733
 # ╟─17d2e734-ece9-4aa9-8419-014052f79d38
 # ╟─93d5a737-ddee-4ce3-8072-b9c3a8d1b057

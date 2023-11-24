@@ -64,12 +64,45 @@ begin
 	end
 end
 
-# ╔═╡ 16b6597e-13f0-4752-ab0d-e639de1a9b0b
-let
-	Random.seed!(1)
-	cs = [rand(MvNormal(zeros(2), I)) for _ in 1:4]
-	C = (hcat(cs...))'
+# ╔═╡ 3cfefd5c-6037-4984-8f1f-4aed1327b601
+md"""
+## Data Generation
+"""
+
+# ╔═╡ 4fe90ccd-e064-44e7-a1bd-25d6734645ea
+# A -> transition matrix, C -> emission matrix, Q -> process noise, R -> observation noise, μ_0, Σ_0 -> auxiliary hidden state x_0
+function gen_data(A, C, Q, R, μ_0, T)
+	K = size(A, 1)
+	D = size(C, 1)
+	x = zeros(K, T)
+	y = zeros(D, T)
+
+	# x[:, 1] = rand(MvNormal(A*μ_0, Q))
+	# y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
+
+	for t in 1:T
+		x[:, t] = rand(MvNormal(zeros(K), Q))
+		y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
+	end
+
+	return y, x
 end
+
+# ╔═╡ 2a88fc09-4c6a-4436-9d2d-fa2afd817fb6
+md"""
+Ground-truth
+"""
+
+# ╔═╡ 9d880af9-d64f-4d1f-9603-48fb5410d1c7
+begin
+	Random.seed!(10)
+	μ_0 = [0.0, 0.0]
+	Σ_0 = Diagonal([1.0, 1.0])
+	C_d3k2 = [1.0 0.0; 0.1 0.8; 0.9 0.2] 
+	R = Diagonal([0.5, 0.5, 0.5])
+	T = 500
+	y_pca, x_true = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), R, μ_0, T)
+end;
 
 # ╔═╡ 9024aaad-b1fe-4311-9693-7652b8252d8f
 md"""
@@ -96,22 +129,6 @@ function vb_m(ys, hps::HPP, ss::HSS)
 	a_s = a + 0.5 * T * D
     b_s = b + 0.5 * sum(G[i, i] for i in 1:D)
 	q_ρ = Gamma(a_s, 1 / b_s)
-	
-	# try
-	#     q_ρ = Gamma.(a_s, 1 ./ b_s)
-	# catch err
-	#     if isa(err, DomainError)
-	#         println("DomainError occurred: check that a_s and b_s are positive values")
-	# 		println("a_s: ", a_s)
-	# 		println("b_s: ", b_s)
-	# 		b_s = abs.(b_s)
-	# 		println("Temporal fix: ", b_s)
-	# 		println("Consider adjusting hyperparameters α, γ, a, b")
-	# 		q_ρ = Gamma.(a_s, 1 ./ b_s)
-	#     else
-	#         rethrow(err)
-	#     end
-	# end
 	ρ̄ = mean(q_ρ)
 	
 	# Exp_ϕ 
@@ -136,6 +153,32 @@ end
 md"""
 ### Test M-Step
 """
+
+# ╔═╡ a3041cf3-c997-497a-9d99-602ec527985c
+md"""
+Using ground-truth x as hss
+"""
+
+# ╔═╡ 1b0973cd-e4ff-4f13-af91-bbc981802a10
+let
+	D, T = size(y_pca)
+	K = 2
+	γ = ones(K)
+	a = 1.1 #2
+	b = 20 #1e-3
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y_pca[:, t]' for t in 1:T)
+
+	hss = HSS(W_C, S_C)
+
+	# should recover values of C, R close to ground truth
+	exp_np, _, _, _, qθ = vb_m(y_pca, hpp, hss)
+	C_d3k2, exp_np.C, qθ.μ_C, qθ.Σ_C, inv(exp_np.R⁻¹)
+end
 
 # ╔═╡ 9ab66239-2b93-4ded-8ef0-761e10b7e69e
 md"""
@@ -230,6 +273,47 @@ md"""
 ### Test E-Step
 """
 
+# ╔═╡ 51aef7a8-4693-40df-8643-d77c67eafa37
+let
+	D, T = size(y_pca)
+	K = 2
+
+	e_C = C_d3k2
+	e_R⁻¹ = inv(R)
+	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
+	e_R⁻¹C = e_R⁻¹*e_C
+	e_CᵀR⁻¹ = e_C'*e_R⁻¹
+	e_log_ρ = log.(1 ./ diag(R))
+	
+	exp_np = Exp_ϕ(e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹, e_log_ρ)
+	γ = ones(K)
+	a = 1.1
+	b = 20
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	
+	vb_e(y_pca, exp_np, hpp)[1]
+end
+
+# ╔═╡ 674b8de2-bc4f-4f6d-b4b9-e5c69f14928c
+md"""
+#### ground-truth hss
+"""
+
+# ╔═╡ 947f80a7-e19c-4d54-80cc-f5269dde0c9d
+let
+	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
+	S_C = sum(x_true[:, t] * y_pca[:, t]' for t in 1:T)
+	hss = HSS(W_C, S_C) #HSS computed using ground-truth xs
+end
+
+# ╔═╡ bb55b3fe-41cc-4a81-84b9-a3b8ba6b1e1f
+md"""
+## Update Hyper-param
+"""
+
 # ╔═╡ 41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
 function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64})
     D = length(exp_ρ)
@@ -239,7 +323,7 @@ function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64
     # Update `a` using fixed point iteration
 	a = hpp.a		
 
-    for _ in 1:1000
+    for _ in 1:10
         ψ_a = digamma(a)
         ψ_a_p = trigamma(a)
         
@@ -256,97 +340,6 @@ function update_ab(hpp::HPP, exp_ρ::Vector{Float64}, exp_log_ρ::Vector{Float64
     b = a/d
 
 	return a, b
-end
-
-# ╔═╡ 4fe90ccd-e064-44e7-a1bd-25d6734645ea
-# A -> transition matrix, C -> emission matrix, Q -> process noise, R -> observation noise, μ_0, Σ_0 -> auxiliary hidden state x_0
-function gen_data(A, C, Q, R, μ_0, Σ_0, T)
-	K, _ = size(A)
-	D, _ = size(C)
-	x = zeros(K, T)
-	y = zeros(D, T)
-
-	x[:, 1] = rand(MvNormal(A*μ_0, Q))
-	y[:, 1] = C * x[:, 1] + rand(MvNormal(zeros(D), R))
-
-	for t in 2:T
-		if (tr(Q) != 0)
-			x[:, t] = A * x[:, t-1] + rand(MvNormal(zeros(K), Q))
-		else
-			x[:, t] = A * x[:, t-1] # Q zero matrix special case
-		end
-		y[:, t] = C * x[:, t] + rand(MvNormal(zeros(D), R)) 
-	end
-
-	return y, x
-end
-
-# ╔═╡ 5e02e5a8-c783-4f94-8fc1-2ec7de4bc5a6
-md"""
-### ground-truth
-"""
-
-# ╔═╡ 9d880af9-d64f-4d1f-9603-48fb5410d1c7
-begin
-	Random.seed!(103)
-	μ_0 = [0.0, 0.0]
-	Σ_0 = Diagonal([1.0, 1.0])
-	C_d3k2 = [1.0 0.0; 0.1 0.8; 0.9 0.2] 
-	R = Diagonal([0.5, 0.5, 0.5])
-	T = 2000
-	y_pca, x_true = gen_data(zeros(2, 2), C_d3k2, Diagonal([1.0, 1.0]), R, μ_0, Σ_0, T)
-end;
-
-# ╔═╡ 1b0973cd-e4ff-4f13-af91-bbc981802a10
-let
-	D, T = size(y_pca)
-	K = 2
-	γ = ones(K)
-	a = 0.1
-	b = 0.1
-	μ_0 = zeros(K)
-	Σ_0 = Matrix{Float64}(I, K, K)
-	hpp = HPP(γ, a, b, μ_0, Σ_0)
-	
-	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
-	S_C = sum(x_true[:, t] * y_pca[:, t]' for t in 1:T)
-
-	hss = HSS(W_C, S_C)
-
-	# should recover values of C, R close to ground truth
-	exp_np = vb_m(y_pca, hpp, hss)[1]
-	C_d3k2, exp_np.C, inv(exp_np.R⁻¹)
-end
-
-# ╔═╡ 51aef7a8-4693-40df-8643-d77c67eafa37
-let
-	D, T = size(y_pca)
-	K = 2
-
-	e_C = C_d3k2
-	e_R⁻¹ = inv(R)
-	e_CᵀR⁻¹C = e_C'*e_R⁻¹*e_C
-	e_R⁻¹C = e_R⁻¹*e_C
-	e_CᵀR⁻¹ = e_C'*e_R⁻¹
-	e_log_ρ = log.(1 ./ diag(R))
-	
-	exp_np = Exp_ϕ(e_C, e_R⁻¹, e_CᵀR⁻¹C, e_R⁻¹C, e_CᵀR⁻¹, e_log_ρ)
-	γ = ones(K)
-	a = 0.1
-	b = 0.1
-	μ_0 = zeros(K)
-	Σ_0 = Matrix{Float64}(I, K, K)
-
-	hpp = HPP(γ, a, b, μ_0, Σ_0)
-	
-	vb_e(y_pca, exp_np, hpp)[1]
-end
-
-# ╔═╡ 947f80a7-e19c-4d54-80cc-f5269dde0c9d
-let
-	W_C = sum(x_true[:, t] * x_true[:, t]' for t in 1:T)
-	S_C = sum(x_true[:, t] * y_pca[:, t]' for t in 1:T)
-	hss = HSS(W_C, S_C) #HSS computed using ground-truth xs
 end
 
 # ╔═╡ b21b7e93-16d6-493b-9fda-3831c003a3cc
@@ -377,41 +370,66 @@ function vb_ppca(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=300)
 	return exp_np
 end
 
+# ╔═╡ aab8513f-a9ef-4104-89d2-a7df1a873dac
+md"""
+### No hyper-param update
+"""
+
+# ╔═╡ f7e1aa8c-8c36-43ee-9b62-e67fb7170766
+let
+	K = 2
+	γ = ones(K)
+	a = 2
+	b = 1e-3
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f = vb_ppca(y_pca, hpp, false)
+	C_d3k2, exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ 1de7febb-bf90-4230-888a-655bf2ed4ace
+md"""
+### With Hyper-param update
+"""
+
 # ╔═╡ c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
 begin
 	K = 2
-	γ = ones(K) .* 1e-3
-	a = 0.01
-	b = 0.01
+	γ = ones(K)
+	a = 2
+	b = 1e-3
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
 	exp_f = vb_ppca(y_pca, hpp, true)
-	exp_f.C, inv(exp_f.R⁻¹)
-end
-
-# ╔═╡ ff9a0bfc-bbea-411b-9508-4ee2e08974a0
-function test_trivial(n)
-	C_d2k1 = reshape([0.9, 0.5], 2, 1)
-	R_2 = Diagonal([0.5, 0.5])
-	D = 2
-	x = zeros(n)
-	y = zeros(D, n)
-	for t in 1:n
-		x[t] = randn()
-		y[:, t] = C_d2k1 * x[t] + rand(MvNormal(zeros(D), R_2)) 
-	end
-	return y, x
+	C_d3k2, exp_f.C, inv(exp_f.R⁻¹)
 end
 
 # ╔═╡ ad62682b-2479-483e-80bc-c7381b5f06d6
 md"""
-Make a trivial test
+## Make a trivial test
 """
+
+# ╔═╡ ff9a0bfc-bbea-411b-9508-4ee2e08974a0
+function test_trivial(n)
+	C_d2k1 = reshape([1.0, 0.5], 2, 1)
+	R_2 = Diagonal([1.0, 1.0])
+	D = 2
+	return gen_data([0.0], C_d2k1, [1.0], R_2, 0.0, n)
+end
 
 # ╔═╡ b6219371-4672-4f18-bd51-fc2ddf3854a6
 begin
-	Random.seed!(123)
-	y_2, x_1 = test_trivial(1000)
-end
+	Random.seed!(10)
+	y_2, x_1 = test_trivial(500)
+end;
+
+# ╔═╡ 6cd05f72-efa8-4365-94a7-240b5d662fe6
+md"""
+no hyper-param update
+""" 
+
+# ╔═╡ d3581922-e492-49a6-a8be-74b3881d0791
+md"""
+with hyper-param update
+""" 
 
 # ╔═╡ 09422a70-f43c-4b6b-9093-c1f0e5e1887f
 md"""
@@ -484,8 +502,21 @@ end
 let
 	K = 1
 	γ = ones(K)
-	a = 0.01
-	b = 0.01
+	a = 2
+	b = 1e-4
+	μ_0 = zeros(K)
+	Σ_0 = Matrix{Float64}(I, K, K)
+	hpp = HPP(γ, a, b, μ_0, Σ_0)
+	exp_f, el = vb_ppca_c(y_2, hpp, false)
+	exp_f.C, inv(exp_f.R⁻¹)
+end
+
+# ╔═╡ decc9330-26e9-466e-8fd5-f8ae2b8fd970
+let
+	K = 1
+	γ = ones(K)
+	a = 2
+	b = 1e-4
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
@@ -505,7 +536,12 @@ VBEM procedure is able to converge to results competitive to PPCA packages (ML, 
 
 # ╔═╡ 3d55a597-b5d0-4e9d-9b05-71aa166b9d93
 md"""
-Compare with existing PCA package
+# Compare with existing PCA package
+"""
+
+# ╔═╡ af951991-f16e-4c93-94fb-b905e0c5d619
+md"""
+Standarad PCA
 """
 
 # ╔═╡ 491489f9-373f-44ab-a6b7-c3714017536c
@@ -514,17 +550,32 @@ let
 	loadings(M), tresidualvar(M)
 end
 
+# ╔═╡ f49088fb-3cf5-4d91-94cd-9ead65596ce0
+md"""
+PPCA MLE
+"""
+
 # ╔═╡ ca26f018-b8d3-4a99-97e4-deff6f1e9bf0
 let
 	M = fit(PPCA, y_pca; maxoutdim=2) # default MLE
 	loadings(M), M
 end
 
+# ╔═╡ 2d89491c-6955-4813-a985-8f1336b6c65b
+md"""
+PPCA EM
+"""
+
 # ╔═╡ 0c2becba-7a86-4b1f-a742-8b663b821997
 let
 	M = fit(PPCA, y_pca; method=(:em), maxoutdim=2)
 	loadings(M), M
 end
+
+# ╔═╡ 9af47e01-b00f-4e43-ac25-f4c3b079181d
+md"""
+PPCA Bayes
+"""
 
 # ╔═╡ e63dfbf4-6481-46ab-ab6d-51cd337b5e3b
 let
@@ -551,7 +602,7 @@ begin
 	Σ_0_t = Diagonal(ones(2))
 	C_ = [1.0 0.0; 0.6 1.0; 0.3 0.2; 0.5 0.1; 0.1 0.3; 0.4 0.1; 0.8 0.2; 0.3 0.3; 0.4 0.6; 0.1 0.4] 
 	R_ = Diagonal(ones(10) .* 0.1)
-	y_10, x_2 = gen_data(zeros(2, 2), C_, Diagonal([1.0, 1.0]), R_, μ_0_t, Σ_0_t, T)
+	y_10, x_2 = gen_data(zeros(2, 2), C_, Diagonal([1.0, 1.0]), R_, μ_0_t, T)
 end;
 
 # ╔═╡ 31a9fbed-db80-46b3-978a-5033c5607457
@@ -627,6 +678,11 @@ md"""
 ## Gibbs Sampling alter.
 """
 
+# ╔═╡ e9d932d5-a753-4bce-99c4-eea7f9231a93
+md"""
+Encountered issues, use **Turing** instead for the time being...
+"""
+
 # ╔═╡ 17d2e734-ece9-4aa9-8419-014052f79d38
 function error_metrics(true_means, smoothed_means)
     T = size(true_means)[2]
@@ -640,9 +696,9 @@ end
 # ╔═╡ 9072572f-dc8d-4ec0-aa76-d25f2acab027
 let
 	K = 2
-	γ = ones(K) .* 100
-	a = 0.01
-	b = 0.01
+	γ = ones(K)
+	a = 2
+	b = 1e-3
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
 	exp_f, el = vb_ppca_c(y_pca, hpp, true)
 
@@ -655,9 +711,9 @@ end
 # ╔═╡ 8c11535b-feab-4833-8aff-3814bafed090
 let
 	K = 1
-	γ = ones(K) .* 100
-	a = 0.01
-	b = 0.01
+	γ = ones(K) 
+	a = 2
+	b = 1e-3
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
@@ -793,7 +849,7 @@ function gibbs_ppca(y, prior::G_Prior, mcmc=20000, burn_in=10000, thinning=1)
     Xs_samples = zeros(K, T, n_samples)
 	
  	C = rand(MvNormal(prior.μ_C, prior.Σ_C), P)'
-	ρ = rand(Gamma(prior.α, prior.β), P)
+	ρ = ones(P)
     R = Diagonal(1 ./ ρ)
 	
 	for iter in 1:(mcmc+burn_in)
@@ -811,16 +867,6 @@ function gibbs_ppca(y, prior::G_Prior, mcmc=20000, burn_in=10000, thinning=1)
     end
     return C_samples, R_samples, Xs_samples
 end
-
-# ╔═╡ 905a9e1a-1a4e-4c6c-b5ea-3c3e161ee6c5
-begin
-	prior = G_Prior(zeros(1), Matrix{Float64}(I, 1, 1), 2, 1e-4, zeros(1),  Matrix{Float64}(I * 1e7, 1, 1))
-	Cs_samples, Rs_samples, Xs_samples = gibbs_ppca(y_2, prior, 10000, 5000, 10)
-	Cs_samples, Rs_samples
-end
-
-# ╔═╡ c3a44ca3-8166-4511-aa0f-1dbc568db45f
-mean(Rs_samples, dims=3)[:, :, 1], mean(Cs_samples, dims=3)[:, :, 1]
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -2474,43 +2520,54 @@ version = "1.4.1+1"
 # ╟─38cfa6e8-8e34-425b-90f7-ef53b6b189df
 # ╟─5763062a-e218-4420-a767-bcf85c19839d
 # ╟─9a7d917d-be50-4946-bb0a-b77062819064
-# ╠═16b6597e-13f0-4752-ab0d-e639de1a9b0b
+# ╟─3cfefd5c-6037-4984-8f1f-4aed1327b601
+# ╠═4fe90ccd-e064-44e7-a1bd-25d6734645ea
+# ╟─2a88fc09-4c6a-4436-9d2d-fa2afd817fb6
+# ╠═9d880af9-d64f-4d1f-9603-48fb5410d1c7
 # ╟─9024aaad-b1fe-4311-9693-7652b8252d8f
 # ╠═e835abae-6496-4638-a990-f008ce5286cf
 # ╟─361256a9-67ff-4800-baea-06eb6f2347ff
-# ╠═1b0973cd-e4ff-4f13-af91-bbc981802a10
+# ╟─a3041cf3-c997-497a-9d99-602ec527985c
+# ╟─1b0973cd-e4ff-4f13-af91-bbc981802a10
 # ╟─9ab66239-2b93-4ded-8ef0-761e10b7e69e
 # ╠═c9f2a88e-da48-49ff-b987-02fa2231548e
 # ╟─9be0a627-7d71-4b83-9758-20149b1c8eee
 # ╠═3f01c2c3-8d79-4e22-a367-49f5c31785af
 # ╠═0e7e482f-deb7-4947-95bf-0854b0129086
 # ╟─03e29b61-f940-4759-b09b-be4be824c4e1
-# ╠═51aef7a8-4693-40df-8643-d77c67eafa37
-# ╠═947f80a7-e19c-4d54-80cc-f5269dde0c9d
+# ╟─51aef7a8-4693-40df-8643-d77c67eafa37
+# ╟─674b8de2-bc4f-4f6d-b4b9-e5c69f14928c
+# ╟─947f80a7-e19c-4d54-80cc-f5269dde0c9d
+# ╟─bb55b3fe-41cc-4a81-84b9-a3b8ba6b1e1f
 # ╠═41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
 # ╠═b21b7e93-16d6-493b-9fda-3831c003a3cc
+# ╟─aab8513f-a9ef-4104-89d2-a7df1a873dac
+# ╠═f7e1aa8c-8c36-43ee-9b62-e67fb7170766
+# ╟─1de7febb-bf90-4230-888a-655bf2ed4ace
 # ╠═c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
-# ╠═4fe90ccd-e064-44e7-a1bd-25d6734645ea
-# ╟─5e02e5a8-c783-4f94-8fc1-2ec7de4bc5a6
-# ╠═9d880af9-d64f-4d1f-9603-48fb5410d1c7
-# ╠═ff9a0bfc-bbea-411b-9508-4ee2e08974a0
 # ╟─ad62682b-2479-483e-80bc-c7381b5f06d6
+# ╠═ff9a0bfc-bbea-411b-9508-4ee2e08974a0
 # ╠═b6219371-4672-4f18-bd51-fc2ddf3854a6
+# ╟─6cd05f72-efa8-4365-94a7-240b5d662fe6
 # ╠═673f5967-8b97-429b-83d7-8503599af710
-# ╠═905a9e1a-1a4e-4c6c-b5ea-3c3e161ee6c5
-# ╠═c3a44ca3-8166-4511-aa0f-1dbc568db45f
+# ╟─d3581922-e492-49a6-a8be-74b3881d0791
+# ╠═decc9330-26e9-466e-8fd5-f8ae2b8fd970
 # ╟─09422a70-f43c-4b6b-9093-c1f0e5e1887f
-# ╟─4d73650c-cd93-4bb4-827e-f0a2edef17f1
-# ╟─50fde0ff-9da7-49fb-b060-508cca6e9709
+# ╠═4d73650c-cd93-4bb4-827e-f0a2edef17f1
+# ╠═50fde0ff-9da7-49fb-b060-508cca6e9709
 # ╠═43095945-3a72-4153-bd9b-c36a910a3826
 # ╟─fe415c83-2ca5-432b-80b9-3ec89718a7e7
-# ╟─9072572f-dc8d-4ec0-aa76-d25f2acab027
-# ╟─8c11535b-feab-4833-8aff-3814bafed090
+# ╠═9072572f-dc8d-4ec0-aa76-d25f2acab027
+# ╠═8c11535b-feab-4833-8aff-3814bafed090
 # ╟─74604b66-071b-42b4-b039-d3e484c89603
 # ╟─3d55a597-b5d0-4e9d-9b05-71aa166b9d93
+# ╟─af951991-f16e-4c93-94fb-b905e0c5d619
 # ╠═491489f9-373f-44ab-a6b7-c3714017536c
+# ╟─f49088fb-3cf5-4d91-94cd-9ead65596ce0
 # ╠═ca26f018-b8d3-4a99-97e4-deff6f1e9bf0
+# ╟─2d89491c-6955-4813-a985-8f1336b6c65b
 # ╠═0c2becba-7a86-4b1f-a742-8b663b821997
+# ╟─9af47e01-b00f-4e43-ac25-f4c3b079181d
 # ╠═e63dfbf4-6481-46ab-ab6d-51cd337b5e3b
 # ╟─d619fca8-b264-4b38-8bb7-84141a7697db
 # ╟─b87c1604-79df-4665-8e85-528f7ed16d72
@@ -2521,6 +2578,7 @@ version = "1.4.1+1"
 # ╠═88bbd6b3-f60e-4667-bdb0-34f060e9bfe1
 # ╠═6f45ed54-1c78-4e57-a17d-d50a2b9aeb93
 # ╟─36ad43a3-336e-4974-a1c3-130f22527733
+# ╟─e9d932d5-a753-4bce-99c4-eea7f9231a93
 # ╟─17d2e734-ece9-4aa9-8419-014052f79d38
 # ╟─93d5a737-ddee-4ce3-8072-b9c3a8d1b057
 # ╠═1bd6d913-987e-4274-ad93-48fcc88fa66b
@@ -2532,7 +2590,7 @@ version = "1.4.1+1"
 # ╠═3e47d037-284b-4e83-ad1c-6f3c2e37a782
 # ╟─fefb6196-dc71-471d-9df0-174d939aac3a
 # ╠═30f40475-a31d-48f8-82e9-6901039edcc0
-# ╟─9e8ec936-0290-4f73-9c99-8e00e73cbfef
+# ╠═9e8ec936-0290-4f73-9c99-8e00e73cbfef
 # ╠═dd406b8b-eeea-4518-a51c-41860cfa8780
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

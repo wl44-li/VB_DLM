@@ -19,6 +19,20 @@ end
 # ╔═╡ 38cfa6e8-8e34-425b-90f7-ef53b6b189df
 TableOfContents()
 
+# ╔═╡ b92bef9d-28ac-4bae-9168-0f0eee84232c
+md"""
+row column vector product
+"""
+
+# ╔═╡ 318e4fc8-499c-46f6-b9eb-3af6b1e3dff2
+let
+	x = [1, 2, 3] # 3 x 1 [ julia as column vector ]
+	w = [4, 5, 6] # 3 x 1 [ julia as column vector ]
+
+	println(x' * w) # dot product
+	x'w == w'x
+end
+
 # ╔═╡ 5763062a-e218-4420-a767-bcf85c19839d
 md"""
 # Probabilistic PCA
@@ -392,7 +406,7 @@ md"""
 """
 
 # ╔═╡ c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
-begin
+let
 	K = 2
 	γ = ones(K)
 	a = 2
@@ -409,7 +423,7 @@ md"""
 
 # ╔═╡ ff9a0bfc-bbea-411b-9508-4ee2e08974a0
 function test_trivial(n)
-	C_d2k1 = reshape([1.0, 0.5], 2, 1)
+	C_d2k1 = reshape([0.5, 0.5], 2, 1)
 	R_2 = Diagonal([1.0, 1.0])
 	D = 2
 	return gen_data([0.0], C_d2k1, [1.0], R_2, 0.0, n)
@@ -463,6 +477,7 @@ function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000
 	hss = HSS(W_C, S_C)
 	exp_np = missing
 	elbo_prev = -Inf
+	el_s = zeros(max_iter)
 
 	# cf. Beal Algorithm 5.3
 	for i in 1:max_iter
@@ -474,6 +489,7 @@ function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000
 		kl_C_ = sum([kl_C(zeros(K), hpp.γ, (qθ.μ_C)[s], qθ.Σ_C, exp_ρ[s]) for s in 1:D])
 			
 		elbo = log_Z_ - kl_ρ_ - kl_C_
+		el_s[i] = elbo
 
 		# Hyper-param learning 
 		if (hpp_learn)
@@ -485,6 +501,7 @@ function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000
 
 		if abs(elbo - elbo_prev) < tol
 			println("Stopped at iteration: $i")
+			el_s = el_s[1:i]
             break
 		end
 		
@@ -495,7 +512,7 @@ function vb_ppca_c(ys::Matrix{Float64}, hpp::HPP, hpp_learn=false, max_iter=1000
 		end
 	end
 		
-	return exp_np, elbo_prev
+	return exp_np, elbo_prev, el_s
 end
 
 # ╔═╡ 673f5967-8b97-429b-83d7-8503599af710
@@ -503,12 +520,14 @@ let
 	K = 1
 	γ = ones(K)
 	a = 2
-	b = 1e-4
+	b = 1e-3
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
-	exp_f, el = vb_ppca_c(y_2, hpp, false)
-	exp_f.C, inv(exp_f.R⁻¹)
+	exp_f, _, el = vb_ppca_c(y_2, hpp, false)
+	println("Inferred noise: ", inv(exp_f.R⁻¹)[1, 1], "\n")
+	show(stdout, "text/plain", exp_f.C)
+	plot(el, title="ELBO", label="")
 end
 
 # ╔═╡ decc9330-26e9-466e-8fd5-f8ae2b8fd970
@@ -516,12 +535,14 @@ let
 	K = 1
 	γ = ones(K)
 	a = 2
-	b = 1e-4
+	b = 1e-3
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
-	exp_f, el = vb_ppca_c(y_2, hpp, true)
-	exp_f.C, inv(exp_f.R⁻¹)
+	exp_f, _, el = vb_ppca_c(y_2, hpp, true)
+	println("Inferred noise: ", inv(exp_f.R⁻¹)[1, 1], "\n")
+	show(stdout, "text/plain", exp_f.C)
+	plot(el, title="ELBO", label="")
 end
 
 # ╔═╡ fe415c83-2ca5-432b-80b9-3ec89718a7e7
@@ -700,12 +721,13 @@ let
 	a = 2
 	b = 1e-3
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
-	exp_f, el = vb_ppca_c(y_pca, hpp, true)
-
+	exp_f, _, el = vb_ppca_c(y_pca, hpp, false)
 	Xs, _, _ = v_forward(y_pca, exp_f, hpp)
+	println("Inferred noise: ", inv(exp_f.R⁻¹)[1, 1], "\n")
 	println("latent x error: ", error_metrics(x_true, Xs))
-	println("elbo, k=2 ", el)
-	exp_f.C, inv(exp_f.R⁻¹)
+	show(stdout, "text/plain", exp_f.C)
+	println("\nelbo, k=2 ", el[end])
+	plot(el, title="ELBO", label="")
 end
 
 # ╔═╡ 8c11535b-feab-4833-8aff-3814bafed090
@@ -717,11 +739,12 @@ let
 	μ_0 = zeros(K)
 	Σ_0 = Matrix{Float64}(I, K, K)
 	hpp = HPP(γ, a, b, μ_0, Σ_0)
-	exp_f, el = vb_ppca_c(y_pca, hpp, true)
+	exp_f, _, el = vb_ppca_c(y_pca, hpp, false)
 	Xs, _, _ = v_forward(y_pca, exp_f, hpp)
 	println("latent x error: ", error_metrics(x_true, Xs))
-	println("elbo, k=1 ", el)
-	exp_f.C, inv(exp_f.R⁻¹)
+	show(stdout, "text/plain", exp_f.C)
+	println("\nelbo, k=1 ", el[end])
+	plot(el, title="ELBO", label="")
 end
 
 # ╔═╡ 93d5a737-ddee-4ce3-8072-b9c3a8d1b057
@@ -2518,6 +2541,8 @@ version = "1.4.1+1"
 # ╔═╡ Cell order:
 # ╠═cc904ce6-21bd-11ee-11da-ad91a6b43e16
 # ╟─38cfa6e8-8e34-425b-90f7-ef53b6b189df
+# ╟─b92bef9d-28ac-4bae-9168-0f0eee84232c
+# ╠═318e4fc8-499c-46f6-b9eb-3af6b1e3dff2
 # ╟─5763062a-e218-4420-a767-bcf85c19839d
 # ╟─9a7d917d-be50-4946-bb0a-b77062819064
 # ╟─3cfefd5c-6037-4984-8f1f-4aed1327b601
@@ -2542,20 +2567,20 @@ version = "1.4.1+1"
 # ╠═41fe84cd-9d89-4dcb-ae62-dfb49a7d20b4
 # ╠═b21b7e93-16d6-493b-9fda-3831c003a3cc
 # ╟─aab8513f-a9ef-4104-89d2-a7df1a873dac
-# ╠═f7e1aa8c-8c36-43ee-9b62-e67fb7170766
+# ╟─f7e1aa8c-8c36-43ee-9b62-e67fb7170766
 # ╟─1de7febb-bf90-4230-888a-655bf2ed4ace
-# ╠═c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
+# ╟─c6414a1b-4d74-481a-9ef3-3e4f2423ed7b
 # ╟─ad62682b-2479-483e-80bc-c7381b5f06d6
 # ╠═ff9a0bfc-bbea-411b-9508-4ee2e08974a0
 # ╠═b6219371-4672-4f18-bd51-fc2ddf3854a6
 # ╟─6cd05f72-efa8-4365-94a7-240b5d662fe6
-# ╠═673f5967-8b97-429b-83d7-8503599af710
+# ╟─673f5967-8b97-429b-83d7-8503599af710
 # ╟─d3581922-e492-49a6-a8be-74b3881d0791
 # ╠═decc9330-26e9-466e-8fd5-f8ae2b8fd970
 # ╟─09422a70-f43c-4b6b-9093-c1f0e5e1887f
-# ╠═4d73650c-cd93-4bb4-827e-f0a2edef17f1
+# ╟─4d73650c-cd93-4bb4-827e-f0a2edef17f1
+# ╟─43095945-3a72-4153-bd9b-c36a910a3826
 # ╠═50fde0ff-9da7-49fb-b060-508cca6e9709
-# ╠═43095945-3a72-4153-bd9b-c36a910a3826
 # ╟─fe415c83-2ca5-432b-80b9-3ec89718a7e7
 # ╠═9072572f-dc8d-4ec0-aa76-d25f2acab027
 # ╠═8c11535b-feab-4833-8aff-3814bafed090
